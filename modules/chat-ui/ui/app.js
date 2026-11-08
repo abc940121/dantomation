@@ -20,9 +20,34 @@
     try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { /* ignore */ }
     return true;
   }
+  // ---- pairing: a #p=<code> fragment (or a typed code) is swapped for a per-device token.
+  // The owner token never has to reach the phone. The code is single use and short lived.
+  let pairCode = null;
+  function takePair() {
+    let c = null;
+    try { c = D.pairFromHash(location.hash); } catch (e) { c = null; }
+    if (!c) return false;
+    pairCode = c;
+    try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { /* ignore */ }
+    return true;
+  }
+  async function redeemCode(code) {
+    try {
+      const ua = String((typeof navigator !== 'undefined' && navigator.userAgent) || '');
+      const r = await fetch('/m/device-pairing/redeem', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: code, label: /iPhone|iPad/.test(ua) ? 'iPhone' : /Android/.test(ua) ? 'Android phone' : 'browser' }) });
+      const b = await r.json();
+      if (!r.ok || !b || !b.token) return (b && b.error) || 'pairing failed';
+      token = b.token;
+      try { localStorage.setItem(TOKEN_KEY, token); } catch (e) { /* storage blocked: the token only lasts for this page */ }
+      return null;
+    } catch (e) { return 'pairing failed'; }
+  }
   takeHash();
+  takePair();
   if (!token) { try { token = localStorage.getItem(TOKEN_KEY); } catch (e) { token = null; } }
-  window.addEventListener('hashchange', () => { if (takeHash()) { $('auth').hidden = true; ui.needAuth = false; if (typeof boot === 'function') boot(); } });
+  window.addEventListener('hashchange', () => {
+    if (takePair()) { const c = pairCode; pairCode = null; redeemCode(c).then(err => { if (err) { showAuth(); $('pair-msg').textContent = err; } else { $('auth').hidden = true; ui.needAuth = false; boot(); } }); return; }
+    if (takeHash()) { $('auth').hidden = true; ui.needAuth = false; if (typeof boot === 'function') boot(); } });
 
   const headers = extra => Object.assign({}, token ? { Authorization: 'Bearer ' + token } : {}, extra || {});
   async function api(path, opts) {
@@ -41,6 +66,10 @@
     e.preventDefault();
     const v = $('token').value.trim();
     if (!v) return;
+    if (D.looksLikeCode(v)) { // a pairing code, not the owner token
+      redeemCode(v).then(err => { $('pair-msg').textContent = err || ''; if (!err) { $('token').value = ''; $('auth').hidden = true; ui.needAuth = false; boot(); } });
+      return;
+    }
     token = v;
     try { localStorage.setItem(TOKEN_KEY, v); } catch (err) { /* ignore */ }
     $('token').value = ''; $('auth').hidden = true; ui.needAuth = false;
@@ -279,5 +308,5 @@
     try { const b = await api('/api/bots'); if (b.ok) { D.applyBots(S, b.body); render(); } } catch (err) { /* ignore */ }
   }, 30000);
 
-  boot();
+  if (pairCode) { const c = pairCode; pairCode = null; redeemCode(c).then(err => { if (err) { showAuth(); $('pair-msg').textContent = err; } boot(); }); } else boot();
 })();

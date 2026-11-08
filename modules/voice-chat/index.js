@@ -5,6 +5,8 @@
 // The contract has no streaming responses yet, so utterance and poll answer once, with
 // {lines: [{say}..., {done: true, ...}]} (see DECISIONS.md, "S1-4 merge").
 const { vcFor, utteranceHandler, collect } = require('./routes');
+const { toSpeakable, speakableSentences } = require('./speak-text');
+const { SpeechPipeline, registerEngine, createEngine, engineNames } = require('./pipeline');
 
 const body = ctx => (ctx.body && typeof ctx.body === 'object' ? ctx.body : {});
 
@@ -16,12 +18,15 @@ module.exports = {
   dependsOn: ['approval-cards'], // its yes/no parser comes from that module's api
   routes: [
     { method: 'POST', path: '/utterance', description: 'one spoken utterance {text, spokenAt}; answers {lines:[{say}...,{done}]}',
-      handler: ctx => collect(write => utteranceHandler(vcFor(ctx), body(ctx), write, { closed: () => false })) },
+      handler: ctx => collect(write => utteranceHandler(vcFor(ctx), body(ctx), write, { closed: () => false, actor: ctx.actor })) },
     { method: 'POST', path: '/poll', description: 'announce a newly pending card; answers {lines:[...]}',
       handler: ctx => collect(async write => { const r = await vcFor(ctx).poll(write); write({ done: true, ...r }); }) },
     { method: 'POST', path: '/playback', description: 'the client reports TTS start/end {state, at}',
       handler: ctx => { const ok = vcFor(ctx).playback(body(ctx)); return { status: ok ? 200 : 400, json: { ok } }; } },
   ],
+  // The TTS-engine seam (see README, "Speech output"): another module that dependsOn
+  // voice-chat calls api.registerEngine(name, factory) with factory(opts) -> {synth, play}.
+  api: { toSpeakable, speakableSentences, SpeechPipeline, registerEngine, createEngine, engineNames },
   settings: {
     wake: { type: 'array', items: 'string', default: [], description: 'wake phrases; empty = the built-in English and Chinese set' },
     followup_s: { type: 'number', default: 8, min: 0, description: 'seconds after a spoken reply when no wake phrase is needed' },

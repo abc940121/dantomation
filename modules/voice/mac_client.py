@@ -40,6 +40,8 @@ import urllib.request
 import uuid
 import wave
 
+from speech_pipeline import SpeechPipeline
+
 BRIDGE_URL = os.environ.get('BRIDGE_URL', 'http://127.0.0.1:8790')
 BRIDGE_TOKEN = os.environ.get('BRIDGE_TOKEN', '')
 ASR_URL = os.environ.get('ASR_URL', 'http://127.0.0.1:8001/v1/audio/transcriptions')
@@ -47,6 +49,7 @@ ASR_MODEL = os.environ.get('ASR_MODEL', 'mlx-community/Qwen3-ASR-1.7B-8bit')
 TTS_URL = os.environ.get('TTS_URL', 'http://127.0.0.1:8001/v1/audio/speech')
 TTS_MODEL = os.environ.get('TTS_MODEL', 'mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit')
 
+PREFETCH = int(os.environ.get('TTS_PREFETCH', '2'))  # sentences synthesized ahead (voice-chat target)
 TAIL_S = 0.3  # the mic stays deaf this long after TTS ends
 RATE = 16000
 FRAME_MS = 20
@@ -133,21 +136,36 @@ def transcribe(wav_path: str) -> str:
         return json.loads(r.read()).get('text', '').strip()
 
 
+def _synth(sentence: str):
+    """TTS engine, half 1: sentence -> wav bytes from the local mlx_audio server, or None for macOS `say`."""
+    if TTS_URL == 'say':
+        return None
+    try:
+        req = urllib.request.Request(TTS_URL, data=json.dumps(
+            {'model': TTS_MODEL, 'input': sentence, 'response_format': 'wav'}).encode(),
+            headers={'Content-Type': 'application/json'})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return r.read()
+    except Exception as e:  # TTS server down -> still answer out loud
+        print(f'TTS server failed ({type(e).__name__}); using macOS say', file=sys.stderr)
+        return None
+
+
+def _play(sentence: str, wav) -> None:
+    """TTS engine, half 2: play what _synth returned (None = macOS `say`)."""
+    if wav is None:
+        subprocess.run(['say', sentence], check=False)
+        return
+    with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
+        f.write(wav)
+    try:
+        subprocess.run(['afplay', f.name], check=False)
+    finally:
+        os.unlink(f.name)
+
+
 def _speak(sentence: str) -> None:
-    if TTS_URL != 'say':
-        try:
-            req = urllib.request.Request(TTS_URL, data=json.dumps(
-                {'model': TTS_MODEL, 'input': sentence, 'response_format': 'wav'}).encode(),
-                headers={'Content-Type': 'application/json'})
-            with urllib.request.urlopen(req, timeout=30) as r, \
-                    tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
-                f.write(r.read())
-            subprocess.run(['afplay', f.name], check=False)
-            os.unlink(f.name)
-            return
-        except Exception as e:  # TTS server down -> still answer out loud
-            print(f'TTS server failed ({type(e).__name__}); using macOS say', file=sys.stderr)
-    subprocess.run(['say', sentence], check=False)
+    _play(sentence, _synth(sentence))
 
 
 def speak(sentence: str) -> None:
@@ -158,6 +176,26 @@ def speak(sentence: str) -> None:
     finally:
         GATE.end()
         report_playback('end')
+
+
+def _pipe_synth(sentence: str):
+    return sentence, _synth(sentence)
+
+
+def _pipe_play(item) -> None:
+    sentence, wav = item
+    GATE.start()
+    report_playback('start')
+    try:
+        _play(sentence, wav)
+    finally:
+        GATE.end()
+        report_playback('end')
+
+
+# voice-chat target only: speak sentence by sentence with prefetch; a new utterance cancels the rest.
+PIPE = SpeechPipeline(_pipe_synth, _pipe_play, prefetch=PREFETCH,
+                      on_error=lambda e, t: print(f'speech failed ({type(e).__name__})', file=sys.stderr))
 
 
 def _messages(r):
@@ -181,12 +219,18 @@ def ask(text: str, spoken_at_ms=None) -> None:
                                  headers=target['headers'])
     say_q: queue.Queue = queue.Queue()
     first: list[float] = []
+    piped = target['kind'] == 'voice-chat'
+    if piped:
+        PIPE.cancel()  # a new user utterance drops whatever was still queued
 
     def speaker():
         while (s := say_q.get()) is not None:
             if not first:
                 first.append(time.time() - t0)
-            speak(s)
+            if piped:
+                PIPE.push(s)
+            else:
+                speak(s)
 
     th = threading.Thread(target=speaker)
     th.start()
@@ -203,6 +247,8 @@ def ask(text: str, spoken_at_ms=None) -> None:
     finally:
         say_q.put(None)
         th.join()
+        if piped:
+            PIPE.join()
     if first:
         print(f'text sent -> first sentence to TTS: {first[0]:.2f} s '
               '(true first sound = this + ASR + end-of-speech wait + TTS first audio)', file=sys.stderr)
@@ -298,7 +344,7 @@ def poll_loop(every_s: float = 3.0) -> None:
             with urllib.request.urlopen(req, timeout=10) as r:
                 for msg in _messages(r):
                     if 'say' in msg:
-                        speak(msg['say'])
+                        PIPE.push(msg['say'])
         except Exception as e:
             print(f'poll failed ({type(e).__name__})', file=sys.stderr)
 

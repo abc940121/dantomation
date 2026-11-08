@@ -21,7 +21,7 @@ Off by default. It works alone and together with every other module. It only act
    `do` with no answer while a card is pending does not resume; it tells you the card is waiting.
 3. A yes approves exactly that input hash, once. The task resumes, the agent is told the card was approved, and the identical call passes once; the card is then marked used. A second identical call, or any changed input, needs a new card.
 4. A no denies it; the resumed agent is told not to retry or reword it.
-5. No answer in 10 minutes (`approval_cards.timeout_minutes`) counts as no. The resumed agent is told `denied (timeout)`.
+5. No answer in 15 minutes (`approval_cards.timeout_minutes`, default 15) counts as no and the card is closed for good.
 
 The card is a journal record, so a crash or power cut between the card and your answer loses nothing: the card is still pending after a restart and the same call does not create a second one.
 
@@ -70,5 +70,21 @@ Who may call the routes (the owner only) is the server's job.
 - **Answering is protected by convention.** The answer verb refuses when `HARNESS_TASK_ID` is set and the module blocks agent commands that name `dantomation`/`harness` followed by `do yes`, `do no` or `answer`. An agent that bypasses the guard (guard-base off, or an obfuscated command) could answer its own card.
 - Delete detection resolves path arguments textually. Wildcards and paths held in variables count as outside (it asks); a symlink inside the task folder that points outside is not seen.
 - Only calls that reach the guard are covered, and only inside an engine run. Calls made by you in your own shell are never asked about.
-- The agent must end its turn for the card to be answered; a task waiting on a card stays open. The 10 minutes are measured from card creation, not from when you first look.
+- The agent must end its turn for the card to be answered; a task waiting on a card stays open. The window is measured from card creation, not from when you first look.
 - Cards are matched on the exact tool input: a harmless difference (an extra space) makes a different hash and a new card.
+
+## Who decided, and where
+
+Every decision (`card_answer` record) carries `who`: `owner`, `device` (+ `device_id`, an opaque string such as a paired phone's id), `timeout`, or `system` (fail-closed paths, `cards.systemDeny`). It also carries `where`: `chat`, `phone`, `voice`, `cli` (null for timeout/system). The card UI shows it after the decision, for example `Denied · timeout` or `Approved · owner via phone` (`GET /m/approval-cards/cards/decided`, field `decision`). `POST .../answer` takes optional `{where}` from an owner caller (chat, phone, voice, cli). The `device_id` is never read from the body: when the caller authenticated with a device token the server sets the actor id `device:<id>` and the module records `who=device`, that id and `where=phone` (any body `where` or `device_id` is ignored). Callers cannot claim `timeout` or `system`; an unknown actor is refused.
+
+## Expiry
+
+Default 15 minutes: long enough to see a phone notification and answer away from the desk, short enough that a stale request does not hang a task. An expired card is journaled as `timeout` and is closed forever: a late yes is recorded as a timeout, it is never re-posted after a restart (the journal fold keeps it expired), and the same call in the same task gets the denial message, not a new card. A different call needs its own card.
+
+## Deny message
+
+After a no, a timeout or a system denial the agent is told to skip the step, not retry or reword it, tell the person why it was not done, and carry on with what does not depend on it. Approval stays hash-bound and once-only.
+
+## Voice hook (not wired)
+
+`POST /m/approval-cards/cards/:id/voice` with `{text}` (a device caller's id comes from its token, not the body), or `api.voiceAnswer(ctx, {card_id, text, device_id})`. Only a strict yes or no decides (recorded `where=voice`); anything else changes nothing and returns `{reask: true, say: "Please answer with a clear yes or no."}`.

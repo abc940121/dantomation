@@ -15,7 +15,7 @@ Routes and field names are provisional until S0 fixes the module route shape. Th
    - an approval card is pending and not parked;
    - the follow-up window is open: `voice_chat.followup_s` (default 8) seconds after the last spoken line.
 4. Pending card: the question is read once in one short sentence ("Allow <summary>, yes or no?"). The next utterance is accepted only if `parseAnswer` (the approval-cards closed word list) says yes or no. Unclear gets one re-ask ("Sorry, yes or no?"); a second unclear leaves the card pending, says so, and parks it until a wake phrase is spoken. Text that started while speech was playing is never taken as an answer.
-5. Otherwise the text goes to `POST /api/chat` for `voice_chat.bots` (default: the first bot). Sentences from SSE `message` events are spoken as they arrive: short, code blocks dropped, URLs never read out. A `tool_call` gives "Running <tool>." at most every `status_s` seconds (default 4). If a card becomes pending during the task, it is read aloud and the stream closes; the answer comes as the next utterance.
+5. Otherwise the text goes to `POST /api/chat` for `voice_chat.bots` (default: the first bot). Sentences from SSE `message` events are spoken as they arrive: short, code blocks replaced by a placeholder, URLs read as their domain. A `tool_call` gives "Running <tool>." at most every `status_s` seconds (default 4). If a card becomes pending during the task, it is read aloud and the stream closes; the answer comes as the next utterance.
 
 ### The wake word is text-level
 
@@ -33,6 +33,16 @@ Playback start/end is reported by the client to `POST /m/voice-chat/playback {st
 ### Other routes
 
 `POST /m/voice-chat/poll` announces a newly pending card without waiting for the user to speak (once per card, never while speech is playing). The client calls it about every 3 s.
+
+## Speech output
+
+What the bot says is rewritten before it is spoken (`speak-text.js`, pure, never throws): markdown, emoji and decorative symbols are dropped, tables become sentences ("Name: Bob, Age: 3."), a code block becomes "(code omitted)." (or the Traditional Chinese equivalent when the reply is Chinese), URLs are read as their domain and file paths as their last segment. A code-only reply produces nothing. Sentences split on `. ! ?` and on `。！？`.
+
+The Mac client (`modules/voice/mac_client.py`, `TEXT_TARGET=voice-chat` only) then speaks sentence by sentence through `speech_pipeline.py`: the first sentence starts at once and the next `TTS_PREFETCH` (default 2) are synthesized ahead by the same local TTS server as before. A new utterance cancels playback and drops the prefetched sentences (`PIPE.cancel()`). `pipeline.js` is the same logic in Node, with the engine injected; it is what the tests exercise.
+
+### TTS engine seam
+
+An engine is two functions, nothing else: `synth(text, {signal}) -> audio` and `play(audio, {signal}) -> Promise` (Python: `synth(text) -> audio`, `play(audio)`). Today's engine is the local mlx_audio server with macOS `say` as fallback (`_synth`/`_play` in `mac_client.py`). A later optional module that `dependsOn: ['voice-chat']` can call `ctx.api('voice-chat').registerEngine(name, factory)` and `createEngine(name, opts)` and hand the pipeline its own engine; no voice-chat edit is needed. No cloud engine ships here.
 
 ## What runs where
 
@@ -70,7 +80,9 @@ The Mac needs to reach the desktop's server. Same LAN is enough. Use Tailscale o
 ## Test
 
     node modules/voice-chat/test/voice-chat.js
+    node modules/voice-chat/test/speak-text.js
     node modules/voice/test/vad.js
+    python modules/voice/test/test_vad.py
 
 The Node suite runs against a mock of server API v0 on 127.0.0.1: wake phrase (English, Chinese), follow-up window, card read-aloud with yes/no/unclear/re-ask/parked, echo guard by timing and by text (including the assistant's own "Yes?" not being taken as an answer), speakable sanitizing, and the HTTP routes.
 

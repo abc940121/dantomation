@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.dirname(HERE))
 
 import vad  # noqa: E402
 import mac_client  # noqa: E402
+import speech_pipeline  # noqa: E402
 
 F = vad.FRAME_MS
 SAMPLES = vad.RATE * F // 1000
@@ -207,6 +208,52 @@ class Target(unittest.TestCase):
         self.assertEqual(mac_client.target_payload(turn, 'hi', 5), {'text': 'hi'})
         self.assertEqual(mac_client.target_payload(vc, 'hi', 5), {'text': 'hi', 'spokenAt': 5})
         self.assertIn('spokenAt', mac_client.target_payload(vc, 'hi'))
+
+
+class Pipeline(unittest.TestCase):
+    def make(self, prefetch=2):
+        import threading
+        self.log, self.gates, self.played = [], {}, []
+        self.release = threading.Event()
+
+        def synth(t):
+            self.log.append('synth:' + t)
+            g = self.gates.setdefault(t, threading.Event())
+            g.wait(2)
+            return 'A:' + t
+
+        def play(a):
+            self.played.append(a)
+            self.release.wait(2)
+
+        return speech_pipeline.SpeechPipeline(synth, play, prefetch=prefetch)
+
+    def test_prefetch_window_and_order(self):
+        p = self.make(2)
+        for t in 'abcde':
+            p.push(t)
+        time.sleep(0.1)
+        self.assertEqual(sorted(self.log), ['synth:a', 'synth:b', 'synth:c'])
+        for t in 'abcde':
+            self.gates.setdefault(t, __import__('threading').Event()).set()
+        self.release.set()
+        p.join(3)
+        self.assertEqual(self.played, ['A:a', 'A:b', 'A:c', 'A:d', 'A:e'])
+
+    def test_cancel_drops_queue(self):
+        p = self.make(3)
+        for t in ('one', 'two', 'three'):
+            p.push(t)
+        self.gates['one'] = self.gates.get('one') or __import__('threading').Event()
+        self.gates['one'].set()
+        time.sleep(0.1)
+        p.cancel()
+        for t in ('two', 'three'):
+            self.gates.setdefault(t, __import__('threading').Event()).set()
+        self.release.set()
+        p.join(3)
+        self.assertEqual(self.played, ['A:one'])
+        self.assertEqual(p.pending(), 0)
 
 
 class Gate(unittest.TestCase):

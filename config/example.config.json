@@ -12,7 +12,8 @@
     "hello-stub": false,
     "chat-ui": false,
     "worker": false,
-    "voice-chat": false
+    "voice-chat": false,
+    "rooms": false
   },
   "spend_limit_usd_per_session": 5
 }

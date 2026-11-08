@@ -166,5 +166,13 @@
     try { return decodeURIComponent(m[1]) || null; } catch { return null; }
   }
 
-  return { create, reduce, applyBots, applyTasks, applyCards, thread, pendingCards, pendingFor, unverifiedTotal, canUndo, remainingSec, fmtCountdown, chatBody, createSSEParser, tokenFromHash };
+  // Pairing: take "p=<pairing code>" out of a location hash (the QR or link from device-pairing).
+  function pairFromHash(hash) {
+    const m = /(?:^#|&)p=([\w-]{6,80})(?:&|$)/.exec(String(hash || ''));
+    return m ? m[1] : null;
+  }
+  // A typed or pasted value is a pairing code when it is six digits or starts with pc_.
+  const looksLikeCode = v => /^\d{3}\s?-?\s?\d{3}$/.test(String(v).trim()) || /^pc_[\w-]{10,80}$/.test(String(v).trim());
+
+  return { pairFromHash, looksLikeCode, create, reduce, applyBots, applyTasks, applyCards, thread, pendingCards, pendingFor, unverifiedTotal, canUndo, remainingSec, fmtCountdown, chatBody, createSSEParser, tokenFromHash };
 });

@@ -3,7 +3,7 @@
 // Run every suite under one module configuration and print one line per suite.
 //   node test/run-all.js core            all modules off (+ an end-to-end fake-engine task)
 //   node test/run-all.js <module>        only that module on (guard-base, guard-private-rules,
-//                                        checkpoint, voice, spend-count, approval-cards, claim-audit, hello-stub, chat-ui, worker, voice-chat)
+//                                        checkpoint, voice, spend-count, approval-cards, claim-audit, hello-stub, chat-ui, worker, voice-chat, device-pairing, rooms)
 //   node test/run-all.js all             all modules on
 //   node test/run-all.js default         no HARNESS_CONFIG: the owner's real config, if any
 //   node test/run-all.js every           core, each module alone, all
@@ -17,7 +17,7 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
-const MODULES = ['voice', 'voice-chat', 'spend-count', 'guard-base', 'guard-private-rules', 'checkpoint', 'approval-cards', 'claim-audit', 'hello-stub', 'chat-ui', 'worker'];
+const MODULES = ['voice', 'voice-chat', 'spend-count', 'guard-base', 'guard-private-rules', 'checkpoint', 'approval-cards', 'claim-audit', 'hello-stub', 'chat-ui', 'worker', 'device-pairing', 'rooms'];
 // [label, file, modules it needs on (empty: runs in any mode)]
 const SUITES = [
   ['modules', 'test/modules.js', []],
@@ -46,6 +46,8 @@ const SUITES = [
   ['hello-stub', 'modules/hello-stub/test/hello-stub.js', []],
   ['chat-ui', 'modules/chat-ui/test/chat-ui.js', ['chat-ui']],
   ['worker', 'modules/worker/test/worker.js', ['worker']],
+  ['device-pairing', 'modules/device-pairing/test/device-pairing.js', ['device-pairing']],
+  ['rooms', 'modules/rooms/test/rooms.js', []],
   ['public-boundary', 'test/public-boundary.js', ['guard-base']],
 ];
 

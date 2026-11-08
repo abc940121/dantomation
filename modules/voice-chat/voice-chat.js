@@ -72,20 +72,24 @@ function createVoiceChat({ cfg, now = Date.now, api, parseAnswer } = {}) {
     return botIds;
   }
 
-  async function answerCard(card, answer, emit) {
+  // The answer goes to approval-cards' voice hook, so it is journaled where=voice. When the
+  // caller is a paired device, its id rides along and the card shows device <id> via voice.
+  async function answerCard(card, answer, emit, ctx) {
+    const a = ctx && ctx.actor && typeof ctx.actor.id === 'string' ? ctx.actor.id : '';
+    const payload = { text: answer, ...(a.startsWith('device:') && a.length > 7 ? { device_id: a.slice(7) } : {}) };
     let r;
-    try { r = await A.json('POST', `/api/cards/${encodeURIComponent(card.id)}`, { answer }); } catch { r = { status: 0 }; }
-    if (r.status >= 200 && r.status < 300) { cards.delete(card.id); speak(emit, answer === 'yes' ? 'Approved.' : 'Denied.'); }
+    try { r = await A.json('POST', `/m/approval-cards/cards/${encodeURIComponent(card.id)}/voice`, payload); } catch { r = { status: 0 }; }
+    if (r.status >= 200 && r.status < 300 && r.body && (r.body.answer === 'yes' || r.body.answer === 'no')) { cards.delete(card.id); speak(emit, r.body.answer === 'yes' ? 'Approved.' : 'Denied.'); }
     else if (r.status === 404 || r.status === 410) { cards.delete(card.id); speak(emit, 'That request is no longer pending.'); }
     else speak(emit, 'I could not send your answer. The request is still pending.');
   }
 
   // true when the utterance was consumed by the card; false lets chat have it.
-  async function handleCard(card, rest, wake, emit) {
+  async function handleCard(card, rest, wake, emit, ctx) {
     const st = cardSt(card.id);
     if (!st.announced) { st.announced = true; st.asks = 0; speak(emit, cardPrompt(card)); return true; }
     const a = parseAnswer(rest);
-    if (a === 'yes' || a === 'no') { await answerCard(card, a, emit); return true; }
+    if (a === 'yes' || a === 'no') { await answerCard(card, a, emit, ctx); return true; }
     if (wake.matched && rest) return false;   // a spoken command, not an answer
     if (st.parked) return false;
     st.asks++;
@@ -156,7 +160,7 @@ function createVoiceChat({ cfg, now = Date.now, api, parseAnswer } = {}) {
     const card = await pendingCard();
     const live = card && (!cardSt(card.id).parked || wake.matched);
     if (!wake.matched && !live && !followupOpen()) return { ignored: 'no-wake' };
-    if (live && await handleCard(card, wake.rest, wake, emit)) return {};
+    if (live && await handleCard(card, wake.rest, wake, emit, ctx)) return {};
     if (!wake.rest) { speak(emit, 'Yes?'); return {}; }
     await chat(wake.rest, emit, ctx);
     return {};

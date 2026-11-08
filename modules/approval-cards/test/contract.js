@@ -25,7 +25,7 @@ const check = (label, ok, info) => { results.push(!!ok); console.log(`${ok ? 'PA
     const reg = M.registry({ modules: { 'approval-cards': true }, approval_cards: { timeout_minutes: 5 } });
     check('loads with no errors', reg.errors.length === 0, reg.errors.join(' | '));
     const routes = reg.listRoutes().map(r => `${r.method} ${r.path}`);
-    check('routes are namespaced under /m/approval-cards', routes.join(',') === 'GET /m/approval-cards/cards,POST /m/approval-cards/cards/:id/answer', routes.join(','));
+    check('routes are namespaced under /m/approval-cards', routes.join(',') === 'GET /m/approval-cards/cards,GET /m/approval-cards/cards/decided,POST /m/approval-cards/cards/:id/voice,POST /m/approval-cards/cards/:id/answer', routes.join(','));
     const panels = reg.listPanels();
     check('panel is listed and its entry file exists', panels.length === 1 && panels[0].mount === 'chat' && panels[0].url === '/m/approval-cards/ui/cards-panel.js' && fs.existsSync(panels[0].file));
     const s = reg.settingsFor('approval-cards');
@@ -40,7 +40,7 @@ const check = (label, ok, info) => { results.push(!!ok); console.log(`${ok ? 'PA
     check('create emits card.created after the journal write', emitted.length === 1 && emitted[0][0] === 'card.created' && emitted[0][1].card_id === card.card_id && J.readAll().records.some(x => x.type === 'card' && x.card_id === card.card_id));
     check('the card mirror is in state/m/approval-cards/', fs.existsSync(path.join(sdir, card.card_id + '.json')));
     check('card expiry uses the timeout_minutes setting', Date.parse(card.expires_at) - Date.parse(card.created_at) === 5 * 60000);
-    const call = (method, url, body) => { const f = reg.findRoute(method, url); return f ? reg.callRoute(f, { body, core: { J }, actor: { kind: 'owner', id: 'test' } }) : Promise.resolve({ status: 'no route' }); };
+    const call = (method, url, body) => { const f = reg.findRoute(method, url); return f ? reg.callRoute(f, { body, core: { J }, actor: { kind: 'owner', id: '' } }) : Promise.resolve({ status: 'no route' }); };
     let r = await call('GET', '/m/approval-cards/cards');
     check('GET /cards lists the pending card', r.status === 200 && r.json.cards.length === 1 && r.json.cards[0].card_id === card.card_id);
     r = await call('POST', `/m/approval-cards/cards/${card.card_id}/answer`, {});
@@ -63,6 +63,11 @@ const check = (label, ok, info) => { results.push(!!ok); console.log(`${ok ? 'PA
     check('timeout_minutes under 1 is a load error', low.mods.length === 0 && /timeout_minutes/.test(low.errors.join(' ')), low.errors.join(' | '));
   } catch (e) { check('no exception', false, e.stack); }
   finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+  try { // decision source, expiry, deny message, voice hook (own process and state dir)
+    const sub = require('child_process').spawnSync(process.execPath, [path.join(__dirname, 'source.js')], { encoding: 'utf8', env: { ...process.env, HARNESS_STATE_DIR: path.join(tmp, 'src-state') } });
+    process.stdout.write(sub.stdout || '');
+    check('source.js (decision source, expiry, deny message, voice hook) passes', sub.status === 0, (sub.stderr || '').slice(0, 200));
+  } catch (e) { check('source.js ran', false, e.message); }
   const n = results.filter(Boolean).length;
   console.log(`\nresult: ${n}/${results.length}`);
   process.exit(n === results.length ? 0 : 1);

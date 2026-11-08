@@ -84,6 +84,7 @@ const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
   check('chatBody all / list / empty', eq(D.chatBody(true, new Set(), ' hi '), { bots: 'all', text: 'hi' }) && eq(D.chatBody(false, new Set(['a', 'b']), 'x'), { bots: ['a', 'b'], text: 'x' }) && D.chatBody(false, new Set(), 'x') === null && D.chatBody(true, new Set(), '  ') === null);
   check('remainingSec / fmtCountdown', D.remainingSec('2030-01-01T00:00:10Z', Date.parse('2030-01-01T00:00:00Z')) === 10 && D.remainingSec(1000, 5000) === 0 && D.remainingSec('junk', 0) === null && D.fmtCountdown(125) === '2:05' && D.fmtCountdown(0) === 'expired' && D.fmtCountdown(null) === '');
   check('tokenFromHash', D.tokenFromHash('#t=abc%2B1') === 'abc+1' && D.tokenFromHash('#x=1&t=zz') === 'zz' && D.tokenFromHash('') === null && D.tokenFromHash('#t=') === null);
+  check('pairFromHash / looksLikeCode', D.pairFromHash('#p=pc_abcDEF-123_xyz') === 'pc_abcDEF-123_xyz' && D.pairFromHash('#t=x') === null && D.pairFromHash('#p=12') === null && D.looksLikeCode('123456') && D.looksLikeCode('123 456') && D.looksLikeCode('pc_abcdefghijklmnop') && !D.looksLikeCode('some-owner-token-value'));
 
   // SSE parser: split across chunks, CRLF, comments, bad JSON
   const got = [];

@@ -28,7 +28,7 @@ function mockServer() {
     const json = (code, o) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
     if (url.pathname === '/api/bots') return json(200, m.bots);
     if (url.pathname === '/api/cards' && req.method === 'GET') return json(200, m.cards);
-    if (url.pathname.startsWith('/api/cards/')) return body().then(b => { m.answers.push({ id: url.pathname.split('/').pop(), ...b }); if (m.answerStatus === 200) m.cards = []; json(m.answerStatus, {}); });
+    if (/^\/m\/approval-cards\/cards\/[^/]+\/voice$/.test(url.pathname)) return body().then(b => { m.answers.push({ id: url.pathname.split('/')[4], answer: b.text, ...b }); if (m.answerStatus === 200) m.cards = []; json(m.answerStatus, { answer: b.text }); });
     if (url.pathname === '/api/events') {
       res.writeHead(200, { 'Content-Type': 'text/event-stream' }); res.write(': open\n\n'); m.sse.push(res); req.on('close', () => { m.sse = m.sse.filter(x => x !== res); }); return;
     }
@@ -166,12 +166,15 @@ function mockServer() {
   check('text memory expires after 10 s (similarity is not forever)', vc.guard.check('Yes?', undefined) === null);
   check('similarity: identical 1, unrelated low, Chinese works', similarity('Run the tests', 'run the tests!') === 1 && similarity('open the door', 'weather forecast') < 0.3 && similarity('我来运行测试', '我来运行测试吧') > 0.8);
 
+  // ---- speak-text and pipeline (pure)
+  await require('./speak-text').run(check);
+
   // ---- speakable sanitizing
   const sp = new Speakable();
   const got = [...sp.feed('Done. Here is code:\n```js\nconst a = 1;\nrm -rf /\n```\nSee https://example.com/x?y=1 and www.foo.com for more. Next'), ...sp.feed(' sentence here.\n```py\nprint(1)'), ...sp.feed('\nstill code\n``` After code.'), ...sp.flush()];
   const joined = got.join(' | ');
   check('sanitize: fenced code (also across chunks) dropped', !/const a|rm -rf|print|still code/.test(joined) && /After code/.test(joined) && /Next sentence here/.test(joined), joined);
-  check('sanitize: URLs never read out', !/http|example\.com|www/.test(joined), joined);
+  check('sanitize: URLs spoken as the domain only', !/http|www|\/x|y=1/.test(joined) && /example\.com/.test(joined) && /foo\.com/.test(joined), joined);
   check('sanitize: markdown stripped, inline code kept as words', cleanLine('**Bold** and `npm test` [docs](http://x.y) # head') === 'Bold and npm test docs head');
   const long = new Speakable().feed('word '.repeat(200) + '.');
   check('sanitize: long sentence is chunked short', long.length > 1 && long.every(s => s.length <= 170), long.map(s => s.length).join(','));
@@ -187,7 +190,7 @@ function mockServer() {
     ['task_end', { task: 't-b1', state: 'done' }],
   ]];
   o = await run(vc, 'hey assistant go');
-  check('chat stream: sentences spoken, code/URL gone, one status line within 4 s', o.say.join('|') === 'Working.|See now.|Running Bash.|All done', o.say.join('|'));
+  check('chat stream: sentences spoken, code placeholder, URL as domain, one status line within 4 s', o.say.join('|') === 'Working.|(code omitted).|See a.b now.|Running Bash.|All done.', o.say.join('|'));
   clock += 5000;
   m.script = [[['tool_call', { task: 't-b1', bot: 'b1', callId: '3', tool: 'Edit', summary: '' }], ['tool_call', { task: 't-b1', bot: 'b1', callId: '4', tool: 'Bash', summary: '' }], ['task_end', { task: 't-b1', state: 'done' }]]];
   o = await run(vc, 'again');

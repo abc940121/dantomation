@@ -25,6 +25,10 @@ export function mount(el, { base, fetch }) {
       row.append(button('yes', c), button('no', c));
       return row;
     }) : [Object.assign(document.createElement('div'), { textContent: 'no cards waiting' })]));
+    try { // decided cards keep showing who decided, e.g. "Denied · timeout"
+      const d = await (await fetch(`${base}/cards/decided`)).json();
+      for (const c of d.cards || []) box.append(Object.assign(document.createElement('div'), { textContent: `${c.card_id}: ${c.summary} - ${c.decision}` }));
+    } catch { /* the pending list still works */ }
   }
   refresh();
   return () => { stopped = true; box.remove(); };
