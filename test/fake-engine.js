@@ -7,6 +7,7 @@
 // Bash call through the guard hook (guards/guard.js, hook JSON on stdin), so the
 // checkpoint module snapshots the folder; it also makes a second change (step 2),
 // so a test has two undo points. A guard block (exit 2) stops it, as it would stop the model.
+const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
@@ -37,4 +38,6 @@ if (viaGuard) {
   eff(['write', task, 's2-write', 'out.txt'], request + '\nsecond change\n');
   eff(['step', task, '2', 'done']);
 }
+// Opt-in HARNESS_FAKE_STREAM=<file>: its lines (stream-json, as the real engine prints) go to stdout, which the harness logs.
+if (process.env.HARNESS_FAKE_STREAM) process.stdout.write(fs.readFileSync(process.env.HARNESS_FAKE_STREAM, 'utf8'));
 eff(['task-done', task]);

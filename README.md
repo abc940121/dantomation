@@ -85,6 +85,7 @@ All hooks are optional. `beforeTool` runs inside the guard, for every tool call;
 | [`spend-count`](modules/spend-count/README.md) | block a session over the spend limit | off |
 | [`voice`](modules/voice/README.md) | voice bridge, `voice_busy` block | off |
 | [`approval-cards`](modules/approval-cards/README.md) | risky actions stop and ask you yes/no (`do yes` / `do no`) instead of running | off |
+| [`claim-audit`](modules/claim-audit/README.md) | checks "done"/"tested" claims in the final report against journal lines and command outputs; `status` lists the unverified ones | off |
 
 If an enabled module cannot load (unknown name, missing folder, throws on require, bad exports), `harness.js start`/`resume` exits 2 naming the module, and the guard blocks every call.
 
@@ -115,7 +116,7 @@ Everything specific to one owner lives outside this repo, in one file read at ru
 ## Tests
 
     node test/run-all.js core     # every module off: end-to-end fake-engine task + the crash/resume suites; module suites SKIP
-    node test/run-all.js <module> # one module on (guard-base, guard-private-rules, checkpoint, voice, spend-count, approval-cards)
+    node test/run-all.js <module> # one module on (guard-base, guard-private-rules, checkpoint, voice, spend-count, approval-cards, claim-audit)
     node test/run-all.js all      # every module on: all suites
     node test/run-all.js every    # core, each module alone, all
     node test/run-all.js default  # no HARNESS_CONFIG: your own config, if any

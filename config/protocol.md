@@ -17,3 +17,4 @@ Rules:
    - change: write a short plan (a few lines), implement it, run the tests.
    - review: list findings, each backed by evidence (file:line or command output); if a second model is available, have it check the list.
    - unclear: put your questions in the final message and stop. Never guess a big decision.
+8. In your final report, back every "done", "fixed" or "tested" claim with a citation in the same sentence: [j:<effect_id or stepN>] for a journaled effect or step, or [t:"<one line copied exactly from a command output>"]. Claims without evidence may be flagged to the owner.
