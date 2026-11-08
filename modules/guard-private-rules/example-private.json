@@ -1,0 +1,9 @@
+{
+  "_comment": "Sample private rules. Copy next to your config, point private_rules at it, and replace these harmless samples with your own red lines. Never commit your real file. match: shell (the command) | path (file a tool touches, or a path in a shell command; forward slashes) | content (text being written). access: write (default; only blocks calls that change something) | any (also blocks reads). pattern is a JavaScript regex, case-insensitive unless flags says otherwise.",
+  "rules": [
+    { "kind": "private_path", "match": "path", "pattern": "/example-archive/", "access": "write", "reason": "the example archive folder is read-only for agents" },
+    { "kind": "private_path", "match": "path", "pattern": "/example-diary/", "access": "any", "reason": "the example diary folder is off limits" },
+    { "kind": "private_shell", "match": "shell", "pattern": "\\bshutdown(\\.exe)?\\b", "reason": "agents do not shut the machine down" },
+    { "kind": "private_content", "match": "content", "pattern": "DO-NOT-PUBLISH", "flags": "", "reason": "text marked DO-NOT-PUBLISH stays out of files agents write" }
+  ]
+}

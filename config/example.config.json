@@ -1,0 +1,12 @@
+{
+  "_comment": "Copy to ~/.harness/config.json (or set HARNESS_CONFIG) and edit. All keys optional; anything left out comes from config/harness.config.json.",
+  "owner_name": "the owner",
+  "modules": {
+    "guard-base": true,
+    "checkpoint": true,
+    "guard-private-rules": false,
+    "spend-count": false,
+    "voice": false
+  },
+  "spend_limit_usd_per_session": 5
+}

@@ -1,0 +1,43 @@
+{
+  "modules": {
+    "voice": false,
+    "spend-count": false,
+    "guard-base": true,
+    "guard-private-rules": false,
+    "checkpoint": true
+  },
+  "spend_limit_usd_per_session": 5,
+  "prices_usd_per_mtok": {
+    "opus": {
+      "input": 5,
+      "output": 25
+    },
+    "sonnet": {
+      "input": 3,
+      "output": 15
+    },
+    "haiku": {
+      "input": 1,
+      "output": 5
+    },
+    "default": {
+      "input": 5,
+      "output": 25
+    }
+  },
+  "strip_env": [
+    "*_API_KEY",
+    "*_AUTH_TOKEN",
+    "ANTHROPIC_*",
+    "OPENAI_*",
+    "CLAUDE_CODE_USE_BEDROCK",
+    "CLAUDE_CODE_USE_VERTEX",
+    "CLAUDE_CODE_PLUGIN_DIRS",
+    "HARNESS_OWNER"
+  ],
+  "engine": {
+    "claude_tools": "Bash,Read",
+    "setting_sources": "local"
+  },
+  "_spend_note": "Notional USD from token counts x this price table; the subscription is not billed per token."
+}
