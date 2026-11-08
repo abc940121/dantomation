@@ -235,6 +235,20 @@ const journalOf = e => { try { return fs.readFileSync(path.join(e.state, 'journa
     await m.close(); clean(e);
   }
 
+  // 8c. the engine's final answer rides in result.reply
+  {
+    const e = env(), m = await mockServer().listen();
+    const sf = path.join(os.tmpdir(), 'stream-' + process.pid + '.jsonl');
+    fs.writeFileSync(sf, JSON.stringify({ type: 'result', result: '  the answer is 42  ' }) + '\n');
+    m.push({ id: 'tk2', task: 't-tk2', kind: 'task', payload: { prompt: 'answer me' } });
+    const w = startWorker(e, m.url(), ['--max-jobs', '1'], { HARNESS_ENGINE_SCRIPT: path.resolve(__dirname, '..', '..', '..', 'test', 'fake-engine.js'), HARNESS_FAKE_DELAY_MS: '0', HARNESS_FAKE_STREAM: sf });
+    const c = await Promise.race([w.done, sleep(60000).then(() => 'timeout')]);
+    const r = m.results.tk2 || {};
+    check('task job: the engine answer is in result.reply (scrubbed, trimmed)', c === 0 && r.result && r.result.reply === 'the answer is 42', { c, r, out: w.out });
+    fs.rmSync(sf, { force: true });
+    await m.close(); clean(e);
+  }
+
   // 9. deadline
   {
     const e = env(), m = await mockServer().listen();

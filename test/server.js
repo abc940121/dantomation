@@ -243,6 +243,21 @@ async function main() {
   note('worker: result posted twice applied once', r1.body.applied === true && r2.body.applied === false && jr.length === 1, `${r1.raw} ${r2.raw} ${jr.length}`);
   note('worker: task done after result', (await req(port2, 'GET', `/api/tasks/${t1.body.id}`)).body.state === 'done');
 
+  const wAll = await sse(port2, 0, e => e.some(x => x.type === 'task_end' && x.task === t1.body.id), 10000);
+  note('worker: result without reply keeps the old final message', wAll.some(e => e.type === 'message' && e.task === t1.body.id && e.final === true && e.text === 'all done'), JSON.stringify(wAll.filter(e => e.type === 'message' && e.task === t1.body.id)));
+  const tr = await req(port2, 'POST', '/api/tasks', { bot: 'remote', prompt: 'with a reply' });
+  const cr = await req(port2, 'POST', '/api/worker/claim', { workerId: 'w1' });
+  const tokR = ownerToken();
+  await req(port2, 'POST', `/api/worker/jobs/${cr.body.job.id}/result`, { workerId: 'w1', ok: true, result: { exit: 0, stdout: 'task x done', finished: true, reply: 'worker says hi ' + tokR } });
+  const rAll = await sse(port2, 0, e => e.some(x => x.type === 'task_end' && x.task === tr.body.id), 10000);
+  const rMsg = rAll.filter(e => e.type === 'message' && e.task === tr.body.id && e.final === true);
+  note('worker: result.reply reaches the chat as one final message, scrubbed', rMsg.length === 1 && rMsg[0].text.startsWith('worker says hi') && !JSON.stringify(rAll).includes(tokR), JSON.stringify(rMsg));
+  const tn = await req(port2, 'POST', '/api/tasks', { bot: 'remote', prompt: 'bad reply' });
+  const cn = await req(port2, 'POST', '/api/worker/claim', { workerId: 'w1' });
+  await req(port2, 'POST', `/api/worker/jobs/${cn.body.job.id}/result`, { workerId: 'w1', ok: true, result: { text: 'plain', reply: { x: 1 } } });
+  const nAll = await sse(port2, 0, e => e.some(x => x.type === 'task_end' && x.task === tn.body.id), 10000);
+  note('worker: a non-string reply is ignored', nAll.some(e => e.type === 'message' && e.task === tn.body.id && e.final === true && e.text === 'plain'), JSON.stringify(nAll.filter(e => e.task === tn.body.id)));
+
   const t2 = await req(port2, 'POST', '/api/tasks', { bot: 'remote', prompt: 'will time out' });
   const c2 = await req(port2, 'POST', '/api/worker/claim', { workerId: 'w1' });
   const job2 = c2.body.job;

@@ -219,7 +219,11 @@ async function main(argv) {
         const open = J.openTask(J.readAll().records);
         const timedOut = !!(r.result && r.result.timedOut);
         if (timedOut && open) J.append({ type: 'task_done', task_id: open.task_id, aborted: true, note: 'worker deadline' });
-        return { ...r, result: { ...(r.result || {}), finished: r.ok && !timedOut, workdir: path.basename(wd) } };
+        // the engine answer: the harness journaled a reply record for this run; its id is in "task <id> done"
+        const m = /task (\S+) done/.exec((r.result && r.result.stdout) || '');
+        const rep = m && J.readAll().records.filter(x => x.type === 'reply' && x.task_id === m[1] && typeof x.text === 'string').pop();
+        const reply = rep ? M.scrubAll(rep.text).slice(0, 4000) : undefined; // scrub first, clip after
+        return { ...r, result: { ...(r.result || {}), finished: r.ok && !timedOut, workdir: path.basename(wd), ...(reply ? { reply } : {}) } };
       });
   }
 
