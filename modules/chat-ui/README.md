@@ -7,6 +7,7 @@ Turn it on with `"chat-ui": true` under `modules` in the config. The module only
 ## What it shows
 
 - **Roster.** Bots from `GET /api/bots`, each with a status dot (idle, busy, offline) and a "waiting" count when a bot has a pending approval card. Tap a bot to read only its thread, or "All activity" for the combined view.
+- **Rooms.** When the rooms module is on (`GET /m/rooms/rooms` answers), the roster also lists rooms. Pick one to see its lines with speaker labels (polled every 3 s with `?since=`) and send with `POST .../say`. When rooms is off nothing changes. A paired device may read rooms and say, never the summary.
 - **Sending.** Under the thread, toggle "All bots" or any number of bots, type, and send (`POST /api/chat`). Opening a bot's thread preselects that bot. Ctrl/Cmd+Enter sends.
 - **Threads.** One block per task: your message, the bot's messages (a non-final message is a live bubble that the next message replaces), and the task state.
 - **Tool chips.** Each `tool_call` is a chip that goes from running to ok or failed on `tool_result`. Tap it for the summaries.

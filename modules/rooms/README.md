@@ -1,6 +1,6 @@
 # rooms
 
-Multi-character rooms with local routing and safe context replay. Off by default; API only (no chat-ui picker).
+Multi-character rooms with local routing and safe context replay. Off by default; the chat-ui shows a room picker when this module is on.
 
 Enable: set `"rooms": true` under `modules` in the config, and define `settings.rooms`:
 
@@ -10,6 +10,10 @@ Enable: set `"rooms": true` under `modules` in the config, and define `settings.
   { "id": "bob", "name": "Bob", "neverLead": true, "addressedOnly": true, "contextLines": 3, "noRoomMemory": true }
 ] } }
 ```
+
+Room ids must match `[A-Za-z0-9_-]+` (the device allowlist only admits that shape). A room with any other id (for example `dev.team`) is skipped and listed in `problems`.
+
+A room's transcript loads in full on first open (no paging yet).
 
 Routes (under `/m/rooms`): `GET /rooms`, `GET /rooms/:id/messages?since=`, `POST /rooms/:id/say {text}` (202, answers arrive as transcript lines), `POST /rooms/:id/summary {text}`.
 

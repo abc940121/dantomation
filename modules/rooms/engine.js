@@ -15,6 +15,8 @@ const DEFAULT_WINDOW = 20;
 function normalize(rooms) {
   const out = {}, problems = [];
   for (const [id, r] of Object.entries(rooms || {})) {
+    // Room ids must be word characters or "-": the device allowlist only matches that shape (fail closed).
+    if (!/^[\w-]+$/.test(id)) { problems.push(`room ${JSON.stringify(id)}: id must match [A-Za-z0-9_-]+ (room skipped)`); continue; }
     const members = (Array.isArray(r && r.members) ? r.members : []).filter(m => m && typeof m.id === 'string' && m.id)
       .map(m => ({ ...m, name: String(m.name || m.id), bot: m.bot === undefined ? m.id : m.bot }));
     if (new Set(members.map(m => m.id.toLowerCase())).size !== members.length) problems.push(`room ${id}: duplicate member id`);

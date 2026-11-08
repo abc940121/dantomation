@@ -241,6 +241,26 @@ function assetTests() {
   check('no names or user paths in module files', !fs.readdirSync(path.join(__dirname, '..'), { recursive: true }).filter(f => /\.(js|html|css|md)$/.test(f)).some(f => /\bDan\b|C:\\Users|\/Users\//.test(fs.readFileSync(path.join(__dirname, '..', f), 'utf8'))));
   check('manifest: contract 1, one panel, entry exists under ui/, served at /m/chat-ui/ui/', mod.name === 'chat-ui' && mod.contract === 1 && mod.panels.length === 1 && /^ui\//.test(mod.panels[0].entry) && fs.existsSync(path.join(__dirname, '..', mod.panels[0].entry)) && MOUNT === '/m/chat-ui/ui/');
   hashTests();
+  roomTests();
+}
+
+// rooms.js: pure helpers for the room picker, and the app wiring is static-checked.
+function roomTests() {
+  const RM = require(path.join(UI, 'rooms.js'));
+  const list = RM.parseRooms({ ok: true, body: { rooms: [{ id: 'dev', name: 'Dev', members: [{}, {}] }, { id: 'x' }, { nope: 1 }] } });
+  check('rooms: list parsed, bad rows dropped, name falls back to id', list.length === 2 && list[0].members === 2 && list[1].name === 'x');
+  check('rooms: module off (404 / no body / bad shape) gives no rooms', RM.parseRooms({ ok: false, status: 404, body: null }).length === 0 && RM.parseRooms({ ok: true, body: {} }).length === 0 && RM.parseRooms(null).length === 0);
+  const a = RM.merge([], [{ id: 'm1', text: 'a' }, { id: 'm2', text: 'b' }]);
+  const b = RM.merge(a, [{ id: 'm2', text: 'b' }, { id: 'm3', text: 'c' }, null]);
+  check('rooms: merge by id, no duplicates, order kept; lastId is the newest', b.length === 3 && RM.lastId(b) === 'm3' && RM.lastId([]) === null);
+  check('rooms: paths are encoded and match the module routes', RM.messagesPath('a/b', 'm 1') === '/m/rooms/rooms/a%2Fb/messages?since=m%201' && RM.sayPath('dev') === '/m/rooms/rooms/dev/say' && RM.messagesPath('dev') === '/m/rooms/rooms/dev/messages');
+  check('rooms: say body trims and refuses empty', eq(RM.sayBody('  hi '), { text: 'hi' }) && RM.sayBody('   ') === null && RM.sayBody(undefined) === null);
+  check('rooms: label prefers the speaker label', RM.label({ label: 'Ann', speaker: 'ann' }) === 'Ann' && RM.label({ speaker: 'ann' }) === 'ann' && RM.label(null) === '?');
+  const app = fs.readFileSync(path.join(UI, 'app.js'), 'utf8');
+  check('rooms: app never summarises and only calls say/messages/list', !/\/summary/.test(app + fs.readFileSync(path.join(UI, 'rooms.js'), 'utf8')) && /RM\.sayPath/.test(app));
+  check('rooms: stale poll responses are dropped by a selection generation', /roomGen\+\+/.test(app) && /gen === roomGen/.test(app) && (app.match(/roomGen\+\+/g) || []).length >= 3);
+  check('rooms: a finished send clears the composer only if room and text are unchanged', /\$\('text'\)\.value === sentText/.test(app) && /ui\.room === sentRoom && roomGen === sentGen/.test(app));
+  check('rooms: index.html loads rooms.js before app.js', /rooms\.js[^]*app\.js/.test(fs.readFileSync(path.join(UI, 'index.html'), 'utf8')));
 }
 
 // app.js run in a vm with a stub DOM: the #t= token is taken at load and again on hashchange.

@@ -102,3 +102,8 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: .9em; }
   .bubble, .chip { max-width: 70%; }
   .bubble.user { max-width: 70%; }
 }
+
+.room-line { margin: 6px 0; }
+.room-line .who { display: block; font-size: .8rem; font-weight: 600; color: var(--muted); }
+.room-line.mine { text-align: right; }
+.room-line.mine .bubble { text-align: left; }

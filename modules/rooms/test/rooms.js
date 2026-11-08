@@ -58,6 +58,10 @@ const idLines = p => p.split('\n').filter(l => l.startsWith('- [id='));
   await nl2.eng.say('dev', '@bob you');
   check('no lead: a mention still answers', who(nl2.store).join() === 'bob');
 
+  // ---- room id shape
+  const badId = make({ 'dev.team': ROOM().dev, 'ok-room_1': ROOM().dev }, {});
+  check('room ids outside [\w-] are skipped with a problem', badId.eng.rooms().map(r => r.id).join() === 'ok-room_1' && badId.eng.problems.length === 1 && /dev\.team/.test(badId.eng.problems[0]));
+
   // ---- never-lead
   const nvRoom = () => ROOM({ members: [{ id: 'ann', name: 'Ann', neverLead: true }, { id: 'bob', name: 'Bob' }] });
   const nv = make(nvRoom(), { ann: 'x' });

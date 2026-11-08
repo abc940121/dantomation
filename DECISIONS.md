@@ -143,6 +143,8 @@ M5: the pure function auditReport(text, evidence) is exported and tested on its 
 - The `#t=` owner-token link is deprecated in favour of device pairing but not removed yet; the owner token keeps working until a later round removes it.
 - Open: the pairing lockout is global (30 s after 5 bad guesses, for all clients), so one bad actor can briefly stop a legitimate pairing; per-source limiting is not done.
 - Voice has no barge-in yet: the client is half-duplex (echo guard), so speaking over the bot is not detected until the client can listen while it plays.
-- Rooms is API only for now; a picker in chat-ui is an open item.
+- Room picker in chat-ui is feature-detected: it appears only when GET /m/rooms/rooms succeeds, with no core or config coupling. Paired devices get list rooms, read messages and say only; the summary stays owner-only.
+- Room ids must match [A-Za-z0-9_-]+. The rooms module skips others with a `problems` entry, because the device allowlist admits only that shape and stays narrow (fail closed).
+- Open: a room's transcript loads in full on first open (no paging yet). The chat-ui race guards (stale poll, composer clear) are covered by static checks only.
 - Possible future optional module: paid cloud voice, off by default, using the user's own key. Not built; local ASR/TTS stays the default.
 - Open: the commit-crash suite failed once inside `node test/run-all.js core` during the integration work and passed on rerun; treated as a timing flake and tracked, cause not found yet.

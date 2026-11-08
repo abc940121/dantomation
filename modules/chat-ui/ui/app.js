@@ -4,8 +4,10 @@
 (function () {
   const D = window.DantoState;
   const S = D.create();
+  const RM = window.DantoRooms;
+  const rooms = { list: [], msgs: [], busy: false }; // stays empty (and invisible) while the rooms module is off
   const TOKEN_KEY = 'dantomation.token';
-  const ui = { view: null, all: false, targets: new Set(), openChips: new Set(), confirmUndo: null, cardMsg: {}, busyCards: new Set(), conn: 'connecting', needAuth: false };
+  const ui = { view: null, all: false, targets: new Set(), openChips: new Set(), confirmUndo: null, cardMsg: {}, busyCards: new Set(), conn: 'connecting', needAuth: false, room: null };
   const $ = id => document.getElementById(id);
 
   // ---- token: a #t= fragment is stripped from the URL and kept in localStorage.
@@ -99,7 +101,9 @@
   function render() { if (!queued) { queued = true; requestAnimationFrame(() => { queued = false; draw(); }); } }
 
   function draw() {
-    drawTop(); drawRoster(); drawThread(); drawTargets();
+    drawTop(); drawRoster(); if (ui.room) drawRoom(); else drawThread(); drawTargets();
+    $('targets').hidden = !!ui.room;
+    $('text').placeholder = ui.room ? 'Say something to the room' : 'Message';
   }
 
   function drawTop() {
@@ -123,11 +127,37 @@
         h('span', null, b.name),
         h('span', { class: 'meta' }, b.status + (b.runsOn === 'worker' ? ' / worker' : '') + (pend[id] ? ' / ' + pend[id] + ' waiting' : ''))));
     }
+    for (const r of rooms.list) {
+      items.push(h('button', { type: 'button', class: 'room-btn', 'aria-current': String(ui.room === r.id), onclick: () => selectRoom(r.id) },
+        h('span', null, r.name), h('span', { class: 'meta' }, 'room / ' + r.members + (r.members === 1 ? ' member' : ' members'))));
+    }
     $('roster').replaceChildren(...items);
   }
 
+  let roomGen = 0; // bumped on every room pick and on leaving room mode; stale poll responses are dropped
+  function selectRoom(id) {
+    roomGen++;
+    ui.room = id; rooms.msgs = []; stickBottom = true; render();
+    if (id) pollRoom();
+  }
+  async function pollRoom() {
+    const id = ui.room, gen = roomGen;
+    if (!id || rooms.busy || ui.needAuth) return;
+    rooms.busy = true;
+    try {
+      const r = await api(RM.messagesPath(id, RM.lastId(rooms.msgs)));
+      if (r.ok && r.body && ui.room === id && gen === roomGen) { const n = RM.merge(rooms.msgs, r.body.messages); if (n.length !== rooms.msgs.length) { rooms.msgs = n; render(); } }
+    } catch (err) { /* retry on the next poll */ }
+    rooms.busy = false;
+  }
+  setInterval(pollRoom, 3000);
+  async function loadRooms() {
+    try { const r = await api(RM.listPath()); rooms.list = RM.parseRooms(r); } catch (err) { rooms.list = []; }
+    if (ui.room && !rooms.list.some(r => r.id === ui.room)) { ui.room = null; roomGen++; }
+  }
+
   function selectView(id) {
-    ui.view = id;
+    ui.view = id; ui.room = null; roomGen++;
     if (id) { ui.all = false; ui.targets = new Set([id]); }
     render(); stickBottom = true;
   }
@@ -142,6 +172,16 @@
   }
 
   let stickBottom = true;
+  function drawRoom() {
+    const box = $('thread');
+    stickBottom = stickBottom || box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+    if (!rooms.msgs.length) { box.replaceChildren(h('p', { class: 'empty' }, 'No lines in this room yet. Say something below.')); return; }
+    box.replaceChildren(...rooms.msgs.map(m => h('div', { class: 'room-line' + (m.kind === 'human' ? ' mine' : '') },
+      h('span', { class: 'who' }, RM.label(m)), h('div', { class: 'bubble' + (m.kind === 'human' ? ' user' : '') }, String(m.text == null ? '' : m.text)))));
+    if (stickBottom) box.scrollTop = box.scrollHeight;
+    stickBottom = false;
+  }
+
   function drawThread() {
     const box = $('thread');
     stickBottom = stickBottom || box.scrollHeight - box.scrollTop - box.clientHeight < 80;
@@ -246,6 +286,18 @@
   $('composer').addEventListener('submit', async e => {
     e.preventDefault();
     const msg = $('send-msg');
+    if (ui.room) {
+      const rb = RM.sayBody($('text').value);
+      if (!rb) { msg.textContent = 'Type a message first.'; return; }
+      $('send').disabled = true; msg.textContent = '';
+      const sentRoom = ui.room, sentGen = roomGen, sentText = $('text').value;
+      try {
+        const r = await post(RM.sayPath(ui.room), rb);
+        if (r.ok) { if (ui.room === sentRoom && roomGen === sentGen && $('text').value === sentText) $('text').value = ''; stickBottom = true; pollRoom(); } else msg.textContent = 'Send failed' + (r.body && r.body.error ? ': ' + r.body.error : ' (' + r.status + ')');
+      } catch (err) { msg.textContent = 'Send failed: could not reach the server.'; }
+      $('send').disabled = false;
+      return;
+    }
     const body = D.chatBody(ui.all, ui.targets, $('text').value);
     if (!body) { msg.textContent = $('text').value.trim() ? 'Pick at least one bot to send to.' : 'Type a message first.'; return; }
     $('send').disabled = true; msg.textContent = '';
@@ -300,6 +352,7 @@
       if (t.ok) D.applyTasks(S, t.body);
       if (c.ok) D.applyCards(S, c.body);
     } catch (err) { /* unauthorized shows the token form; others retry via the stream */ }
+    await loadRooms();
     render(); stream();
   }
   // Refresh the roster now and then so offline/busy changes without events show up.

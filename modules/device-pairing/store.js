@@ -140,7 +140,7 @@ function revokeLocked(id) {
 }
 
 // Deny by default. A device token may do exactly this: read the roster, tasks, cards, status
-// and the event stream; send chat; answer an approval card; stop a task; talk to voice-chat.
+// and the event stream; send chat; answer an approval card; stop a task; talk to voice-chat; read rooms and speak in one (never the summary).
 // No task creation outside chat, undo, resume, config, module settings, worker routes,
 // pairing admin, or any other module route.
 const ALLOW = [
@@ -150,6 +150,9 @@ const ALLOW = [
   ['POST', /^\/api\/cards\/card-[0-9a-f]+$/i],
   ['POST', /^\/api\/tasks\/[\w-]+\/stop$/],
   ['POST', /^\/m\/voice-chat\/(utterance|poll|playback)$/],
+  ['GET', /^\/m\/rooms\/rooms$/],
+  ['GET', /^\/m\/rooms\/rooms\/[\w-]+\/messages$/],
+  ['POST', /^\/m\/rooms\/rooms\/[\w-]+\/say$/],
 ];
 const allows = (method, p) => ALLOW.some(([m, re]) => m === method && re.test(String(p)));
 
