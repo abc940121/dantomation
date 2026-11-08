@@ -75,9 +75,10 @@ function engineSpec(prompt) {
 const EXEC_LOCK = path.join(J.STATE, 'executor.lock');
 
 function runEngine(task, nonce) {
+  // onTaskStart first: a module may journal a note the prompt should show.
+  M.notify(MODS, 'onTaskStart', { task, config: CONFIG });
   const spec = engineSpec(J.buildPrompt(J.readAll().records, task));
   J.append({ type: 'engine_start', task_id: task.task_id, stripped_env: spec.stripped, resumed: !!task.resumed });
-  M.notify(MODS, 'onTaskStart', { task, config: CONFIG });
   const logFile = path.join(J.STATE, `engine-${task.task_id}.jsonl`);
   const out = fs.openSync(logFile, 'a');
   // The guard snapshots this folder before every mutating tool call.
@@ -162,7 +163,7 @@ function main() {
     const request = rest.filter((_, i) => i !== wi && i !== wi + 1 || wi < 0).join(' ');
     if (!request) { console.error('usage: harness start "<request>"'); process.exit(2); }
     const task_id = 't' + J.newId();
-    const workdir = path.resolve(wi >= 0 ? rest[wi + 1] : path.join(J.ROOT, 'work', task_id));
+    const workdir = path.resolve(wi >= 0 ? rest[wi + 1] : path.join(process.env.HARNESS_WORK_DIR || path.join(J.ROOT, 'work'), task_id));
     ensureWorkdir(workdir);
     const t = J.append({ type: 'task_start', task_id, request, workdir });
     return runEngine(t, nonce);

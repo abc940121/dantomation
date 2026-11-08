@@ -1,0 +1,10 @@
+{
+  "_comment": "Default risky-action list for the approval-cards module. A rule is {id, match: shell|url (or a list of them), pattern (JavaScript regex source), flags (default i), summary, outside_workdir?}. match shell tests the Bash/PowerShell command; url tests the url of a fetch tool. outside_workdir: the rule only counts when a path argument of the matched command points outside the task folder. Extend or switch off rules in the config under approval_cards (risky, skip); see the module README.",
+  "rules": [
+    { "id": "git_push", "match": "shell", "pattern": "\\bgit\\b[^;&|\\n]*\\bpush\\b", "summary": "pushes commits to a remote repository" },
+    { "id": "delete_outside_workdir", "match": "shell", "pattern": "\\b(rm|del|erase|rmdir|rd|unlink|Remove-Item|ri)\\b", "outside_workdir": true, "summary": "deletes files outside the task folder" },
+    { "id": "package_install", "match": "shell", "pattern": "\\b(npm|pnpm|yarn)\\s+(install|i|add|ci)\\b|\\bpip3?\\s+install\\b|\\bpython3?\\s+-m\\s+pip\\s+install\\b|\\bwinget\\s+install\\b|\\bchoco\\s+install\\b|\\bscoop\\s+install\\b|\\b(apt|apt-get|brew|cargo|gem)\\s+install\\b|\\bgo\\s+install\\b", "summary": "installs software packages" },
+    { "id": "publish", "match": "shell", "pattern": "\\bgh\\s+(release|repo)\\b|\\b(npm|yarn|pnpm)\\s+publish\\b|\\btwine\\s+upload\\b|\\bcargo\\s+publish\\b|\\bdocker\\s+push\\b", "summary": "publishes or changes something public" },
+    { "id": "spend_money", "match": ["shell", "url"], "pattern": "https?://(api\\.openai\\.com|api\\.anthropic\\.com|generativelanguage\\.googleapis\\.com|api\\.mistral\\.ai|api\\.cohere\\.(ai|com)|api\\.x\\.ai|api\\.groq\\.com|api\\.deepseek\\.com|openrouter\\.ai|api\\.stripe\\.com|api\\.twilio\\.com|api\\.elevenlabs\\.io)", "summary": "calls a paid API, which may spend money" }
+  ]
+}

@@ -2,6 +2,38 @@
 
 The name is dan + automation.
 
+## Quickstart
+
+Three verbs: `do`, `status`, `undo`. The agent chooses how to work (diagnose a bug, plan a change, review, or ask questions) from your request.
+
+**Prerequisites**
+
+- Node.js 18 or newer (`node --version`).
+- Claude Code installed (`npm install -g @anthropic-ai/claude-code`) and logged in with your subscription (run `claude` once and sign in). No API key is used; the harness removes API-key variables from the engine's environment.
+- Git on your PATH.
+
+**Use it** (from the folder you cloned):
+
+```sh quickstart
+node bin/dantomation.js do "create hello.txt that says hello"
+node bin/dantomation.js status
+node bin/dantomation.js undo
+node bin/dantomation.js undo
+```
+
+- `do "<request>"` starts a task in a fresh folder under `work/` (add `--workdir <dir>` to use your own). If it is interrupted (shutdown, kill), run `node bin/dantomation.js do` with no request to resume it. Starting a second task while one is open is refused, with the resume command in the message.
+- `status` prints the open task (request, steps done, last step), the last finished task, how many undo points exist, which modules are on, and any config warning.
+- `undo` rolls the latest task's folder back to the state before the agent's last change; run it again to step back one more. It needs the `checkpoint` module (on by default) and works only for tasks started while it was on. It cannot run while a task is running, and agents cannot run it. When nothing is left it says so. Each undo first takes a fresh checkpoint and prints the line that brings the undone state back (`HARNESS_OWNER=1 node bin/harness.js restore <task> <n>`), so an undo can itself be undone.
+- With the `approval-cards` module on, a risky action (git push, deleting outside the task folder, installs, publishing, paid API calls) stops and waits for you. `status` shows the card; answer with `node bin/dantomation.js do yes` or `do no` (an unclear answer asks again; no answer for 10 minutes counts as no). See [`approval-cards`](modules/approval-cards/README.md).
+- Undo is protected by convention only (see Known limits).
+
+Shortcuts: `bin/dantomation` (sh) and `bin/dantomation.cmd` (Windows) run the same thing; put `bin` on your PATH to type `dantomation do "..."`.
+
+**Where the config lives.** One file outside the repo: `HARNESS_CONFIG=<file>`, else `~/.harness/config.json`. If it is missing the harness runs with safe defaults (`guard-base` and `checkpoint` on) and `status` shows a warning. To create it, copy `config/example.config.json` there. The journal and checkpoints are kept in `state/`, guard blocks in `logs/` (override with `HARNESS_STATE_DIR`, `HARNESS_LOG_DIR`; `HARNESS_WORK_DIR` moves the task folders).
+
+The rest of this file is the lower-level reference for `bin/harness.js`, the layers and the modules.
+
+
 A small agent harness for a Windows desktop that may shut down at any moment. Built from an empty folder. Pure Node (v18+), with no dependencies and no installs. MIT.
 
 ## Layers
@@ -30,7 +62,7 @@ The core is always on: the journal, effects, the executor lock, the engine launc
 3. **Guard** (`guards/guard.js`, the dispatcher)
    - One PreToolUse hook. It reads the hook JSON, calls each enabled module's `beforeTool` in config order, and blocks on the first hit (exit 2, `[guard] BLOCKED (kind): reason ...` on stderr, one line in `logs/guard.jsonl`). No hit: allow. With every module off the guard allows everything.
    - It fails closed: unreadable input, an unreadable config, or an enabled module that cannot load blocks every call.
-   - What it blocks is up to the modules: `guard-base` (paid API keys, data deletion, skipped git hooks, secrets, agents naming the owner-only restore), `guard-private-rules` (the owner's red lines, self-protection of the config), `spend-count` (session spend), `voice` (voice turns while a task runs), `checkpoint` (snapshot before each mutating call).
+   - What it blocks is up to the modules: `guard-base` (paid API keys, data deletion, skipped git hooks, secrets, agents naming restore, undo or HARNESS_OWNER), `guard-private-rules` (the owner's red lines, self-protection of the config), `spend-count` (session spend), `voice` (voice turns while a task runs), `checkpoint` (snapshot before each mutating call).
 4. **One executor**
    - `start`/`resume` take `state/executor.lock` (harness pid + engine pid). While any pid in it is alive, a second `start`/`resume` exits 4 and changes nothing. After taking the lock, the harness re-reads the journal, so it acts on what is true under the lock.
    - Each lock carries a random nonce. A lock is released only by the holder of its nonce. A lock whose pids are all dead is taken over by renaming it to a unique `.stale` name, re-checking that the renamed file is still the dead one (else putting it back), then creating a new lock exclusively. Two processes racing for one stale lock: exactly one wins (`test/lock-race.js`, 50 rounds).
@@ -47,11 +79,12 @@ All hooks are optional. `beforeTool` runs inside the guard, for every tool call;
 
 | Module | What it does | Default |
 |---|---|---|
-| [`guard-base`](modules/guard-base/README.md) | API keys, deletion, hook skip, secrets, owner-only restore rule | on |
+| [`guard-base`](modules/guard-base/README.md) | API keys, deletion, hook skip, secrets, rule against agents running restore, undo or naming HARNESS_OWNER | on |
 | [`checkpoint`](modules/checkpoint/README.md) | snapshot before each mutating call; owner-only `harness.js restore` | on |
 | [`guard-private-rules`](modules/guard-private-rules/README.md) | owner's rules file, self-protection of the config | off |
 | [`spend-count`](modules/spend-count/README.md) | block a session over the spend limit | off |
 | [`voice`](modules/voice/README.md) | voice bridge, `voice_busy` block | off |
+| [`approval-cards`](modules/approval-cards/README.md) | risky actions stop and ask you yes/no (`do yes` / `do no`) instead of running | off |
 
 If an enabled module cannot load (unknown name, missing folder, throws on require, bad exports), `harness.js start`/`resume` exits 2 naming the module, and the guard blocks every call.
 
@@ -82,13 +115,14 @@ Everything specific to one owner lives outside this repo, in one file read at ru
 ## Tests
 
     node test/run-all.js core     # every module off: end-to-end fake-engine task + the crash/resume suites; module suites SKIP
-    node test/run-all.js <module> # one module on (guard-base, guard-private-rules, checkpoint, voice, spend-count)
+    node test/run-all.js <module> # one module on (guard-base, guard-private-rules, checkpoint, voice, spend-count, approval-cards)
     node test/run-all.js all      # every module on: all suites
     node test/run-all.js every    # core, each module alone, all
     node test/run-all.js default  # no HARNESS_CONFIG: your own config, if any
 
 `run-all` writes a temp config under the OS temp dir, passes it as `HARNESS_CONFIG`, runs each suite and prints one PASS/FAIL/SKIP line. Suites can also be run alone:
 
+    node test/entry.js           # Quickstart lines from this README, run literally against the fake engine: do, status, undo, undo, guard
     node test/journal-prompt.js  # current-task vs history, torn line, append after torn line, unreadable journal -> exit 5
     node test/lock-race.js       # 50 rounds: two processes race for one stale lock, exactly one holds it
     node test/effect-verify.js   # write/message/push reconcile rules, params mismatch -> UNCERTAIN
@@ -111,11 +145,14 @@ A module suite prints `SKIP` when its module is off in the current config. Tests
 ## Seams (not built)
 
 - **Voice entry, entry skills:** call `harness.js start`.
-- **Approval cards:** read `effect_uncertain` lines and guard blocks.
+- **Voice answers to approval cards:** the `approval-cards` module exports `parseAnswer(text)`; a voice entry can pass the spoken answer through it and call the module's `answer` command.
 - **Dispatch to the Windows worker:** `effect.js message` writes to `state/outbox/`. A dispatcher can take messages from there; the engine spawn in `runEngine` is the place to run tasks remotely.
 - **Codex/OpenCode:** a second spawner beside `runEngine` (`HARNESS_CLAUDE` already overrides the binary).
 
 ## Known limits
+
+- **Undo is protected by convention only.** `dantomation undo` refuses inside an engine (`HARNESS_TASK_ID` is set) and guard-base blocks agent spellings of it, but that is pattern matching, not a sandbox. An agent that gets past the guard (guard-base switched off, or an obfuscated command) could still run undo. The checkpoint taken just before every undo keeps that recoverable with `restore`.
+- The same holds for answering approval cards: the answer verb refuses inside an engine and the module blocks agent spellings of it; with the guard bypassed an agent could answer its own card.
 
 Core limits are here; each module's limits (the guard is not a sandbox, checkpoint coverage, spend accounting, voice) are in its README.
 

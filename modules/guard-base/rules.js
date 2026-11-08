@@ -10,12 +10,12 @@ const { SECRET_LITERAL, redact } = require('../../lib/redact');
 const KEY_NAME = /\b[A-Z0-9_]*(API_KEY|AUTH_TOKEN)\b/;
 const SECRET_FILE = /(^|[\s"'\/\\=@<])(\.env(\.[\w.-]+)?|[\w.-]*\.(pem|key|p12|pfx)|id_(rsa|ed25519|ecdsa)|\.credentials\.json|credentials(\.json)?|\.npmrc|\.netrc|\.pgpass)(["'\s]|$)/i;
 
-const OWNER_ONLY = /HARNESS_OWNER|harness(\.js)?["']?\s+restore\b/i;
+const OWNER_ONLY = /HARNESS_OWNER|(harness|dantomation)(\.(js|cmd))?["']?\s+(restore|undo)\b/i;
 
 function shellRules(cmd, cwd) {
   const c = cmd.replace(/\s+/g, ' ');
   // f) owner-only restore
-  if (OWNER_ONLY.test(c)) return ['owner_only', 'restore and HARNESS_OWNER are for the owner only'];
+  if (OWNER_ONLY.test(c)) return ['owner_only', 'restore, undo and HARNESS_OWNER are for the person at the keyboard only'];
   // a) paid API keys: any *_API_KEY / *_AUTH_TOKEN name, key literals, key flags/helpers
   if (KEY_NAME.test(c)) return ['api_key', 'command sets or uses an API key variable'];
   if (/sk-ant-/.test(c)) return ['api_key', 'command contains an Anthropic key literal'];
@@ -69,7 +69,7 @@ function fileRules(tool, ti) {
     if (SECRET_LITERAL.test(content)) return ['secret', 'writing a secret literal into a file'];
     if (/\b(ANTHROPIC|OPENAI|GEMINI|GOOGLE|AZURE_OPENAI|MISTRAL|COHERE|GROQ|XAI|DEEPSEEK|OPENROUTER)_(API_KEY|AUTH_TOKEN)\s*[=:]|apiKeyHelper/.test(content)) return ['api_key', 'writing API key config'];
     if (/core\.hooksPath|--no-verify/.test(content)) return ['hook_skip', 'writing a hook bypass into a file'];
-    if (OWNER_ONLY.test(content)) return ['owner_only', 'writing the owner-only restore into a file'];
+    if (OWNER_ONLY.test(content)) return ['owner_only', 'writing the owner-only restore/undo into a file'];
   }
   if (/^(Write|Edit|MultiEdit)$/.test(tool) && /(^|[\\/])\.env(\.|$)/i.test(p)) return ['api_key', 'writing an .env file'];
   if (/^(WebFetch)$/.test(tool) && SECRET_LITERAL.test(JSON.stringify(ti))) return ['secret', 'sending a secret in a request'];

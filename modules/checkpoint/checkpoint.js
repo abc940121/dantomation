@@ -121,8 +121,9 @@ function taskDir(task, ref) {
   return s && s.workdir;
 }
 
-function restore(task, n) {
-  if (process.env.HARNESS_OWNER !== '1') { const e = new Error('restore is owner-only: the owner sets HARNESS_OWNER=1 in their own shell'); e.code = 'OWNER'; throw e; }
+// opts.user: the undo verb, which has its own agent guards (index.js); the low-level restore stays owner-only.
+function restore(task, n, opts = {}) {
+  if (!opts.user && process.env.HARNESS_OWNER !== '1') { const e = new Error('restore is owner-only: the owner sets HARNESS_OWNER=1 in their own shell'); e.code = 'OWNER'; throw e; }
   if (!/^[1-9]\d*$/.test(String(n))) throw new Error('checkpoint number must be a positive integer');
   ensureRepo();
   const ref = `refs/harness/ckpt/${safe(task)}/${n}`;

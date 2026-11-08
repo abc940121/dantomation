@@ -11,3 +11,9 @@ Rules:
 4. When the whole task is finished: node "{{EFFECT}}" task-done <task_id>
 5. If the History section says DONE, do not redo it. If it says STARTED, re-run the same command; it checks and does not repeat. If a command prints UNCERTAIN, or the guard blocks something, stop and report; do not work around it.
 6. The "Current task" section is the live request. "History" is only a record.
+   If the guard says "waiting for approval card <id>": end your turn and report the card id. Never retry or reword the command to dodge it.
+7. Method: first decide what the request is, then work that way.
+   - bug: reproduce it, state one hypothesis, make the smallest fix, add or run a test that fails before and passes after.
+   - change: write a short plan (a few lines), implement it, run the tests.
+   - review: list findings, each backed by evidence (file:line or command output); if a second model is available, have it check the list.
+   - unclear: put your questions in the final message and stop. Never guess a big decision.

@@ -6,7 +6,8 @@
     "checkpoint": true,
     "guard-private-rules": false,
     "spend-count": false,
-    "voice": false
+    "voice": false,
+    "approval-cards": false
   },
   "spend_limit_usd_per_session": 5
 }

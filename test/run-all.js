@@ -3,7 +3,7 @@
 // Run every suite under one module configuration and print one line per suite.
 //   node test/run-all.js core            all modules off (+ an end-to-end fake-engine task)
 //   node test/run-all.js <module>        only that module on (guard-base, guard-private-rules,
-//                                        checkpoint, voice, spend-count)
+//                                        checkpoint, voice, spend-count, approval-cards)
 //   node test/run-all.js all             all modules on
 //   node test/run-all.js default         no HARNESS_CONFIG: the owner's real config, if any
 //   node test/run-all.js every           core, each module alone, all
@@ -17,10 +17,11 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
-const MODULES = ['voice', 'spend-count', 'guard-base', 'guard-private-rules', 'checkpoint'];
+const MODULES = ['voice', 'spend-count', 'guard-base', 'guard-private-rules', 'checkpoint', 'approval-cards'];
 // [label, file, modules it needs on (empty: runs in any mode)]
 const SUITES = [
   ['modules', 'test/modules.js', []],
+  ['entry', 'test/entry.js', ['guard-base', 'checkpoint']],
   ['journal-prompt', 'test/journal-prompt.js', []],
   ['lock-race', 'test/lock-race.js', []],
   ['effect-verify', 'test/effect-verify.js', []],
@@ -32,6 +33,7 @@ const SUITES = [
   ['checkpoint', 'modules/checkpoint/test/checkpoint.js', ['checkpoint']],
   ['voice-lock', 'modules/voice/test/voice-lock.js', ['voice']],
   ['spend', 'modules/spend-count/test/spend.js', ['spend-count']],
+  ['approval-cards', 'modules/approval-cards/test/approval-cards.js', ['approval-cards']],
   ['public-boundary', 'test/public-boundary.js', ['guard-base']],
 ];
 
