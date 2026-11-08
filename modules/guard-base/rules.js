@@ -8,7 +8,7 @@ const { SECRET_LITERAL, redact } = require('../../lib/redact');
 
 // ---- rules on shell commands -------------------------------------------
 const KEY_NAME = /\b[A-Z0-9_]*(API_KEY|AUTH_TOKEN)\b/;
-const SECRET_FILE = /(^|[\s"'\/\\=@<])(\.env(\.[\w.-]+)?|[\w.-]*\.(pem|key|p12|pfx)|id_(rsa|ed25519|ecdsa)|\.credentials\.json|credentials(\.json)?|\.npmrc|\.netrc|\.pgpass)(["'\s]|$)/i;
+const SECRET_FILE = /(^|[\s"'\/\\=@<])(\.env(\.[\w.-]+)?|[\w.-]*\.(pem|key|p12|pfx)|id_(rsa|ed25519|ecdsa)|\.credentials\.json|server\.token|credentials(\.json)?|\.npmrc|\.netrc|\.pgpass)(["'\s]|$)/i;
 
 const OWNER_ONLY = /HARNESS_OWNER|(harness|dantomation)(\.(js|cmd))?["']?\s+(restore|undo)\b/i;
 
@@ -63,6 +63,7 @@ function hardResetRisk(cwd) {
 function fileRules(tool, ti) {
   const p = String(ti.file_path || ti.notebook_path || ti.path || '');
   if (/^(Read|Grep|Glob)$/.test(tool) && SECRET_FILE.test(' ' + p.replace(/\\/g, '/').split('/').pop() + ' ')) return ['secret', 'reading a secret file'];
+  if (/^(Glob|Grep)$/.test(tool) && /server\.token/i.test(String(ti.pattern || '') + ' ' + String(ti.glob || ''))) return ['secret', 'searching for the server token'];
   if (tool === 'Grep' && SECRET_FILE.test(' ' + String(ti.glob || '') + ' ')) return ['secret', 'searching secret files'];
   const content = [ti.content, ti.new_string, ti.new_source].filter(Boolean).join('\n');
   if (content) {

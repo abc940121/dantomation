@@ -29,7 +29,9 @@ function sessionSpend(transcript) {
 }
 
 module.exports = {
+  contract: 1,
   name: 'spend-count',
+  description: 'Counts the session spend from the transcript and blocks once it is over spend_limit_usd_per_session.',
   beforeTool({ input }) {
     if (!input.transcript_path) return null;
     const limit = Number(process.env.HARNESS_SPEND_LIMIT_USD || CONFIG.spend_limit_usd_per_session);
@@ -37,5 +39,5 @@ module.exports = {
     log('spend.jsonl', { session_id: input.session_id, usd: Number(usd.toFixed(4)), limit });
     return usd > limit ? ['spend', `session spend $${usd.toFixed(2)} is over the $${limit} limit`] : null;
   },
-  sessionSpend,
+  api: { sessionSpend },
 };

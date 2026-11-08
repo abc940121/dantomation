@@ -16,6 +16,18 @@ None. Every file in this repo was written new for this repo. No file, function o
 | `modules/voice/harness_seam.js` | voice bridge contributor, 2026-11-08 | uses only exports of `bin/harness.js` and `lib/journal.js` |
 | `modules/voice/mac_client.py` | voice bridge contributor, 2026-11-08 | stdlib Python; talks to a local ASR/TTS server (see THIRD_PARTY.md) |
 
+## Written new for modules/voice-chat/ and the hands-free client (MIT)
+
+No code was copied from any source. The similarity function (character-bigram Dice), the sentence splitter, the energy VAD and the wake-phrase matcher are original.
+
+| File | Author | Note |
+|---|---|---|
+| `modules/voice-chat/index.js`, `voice-chat.js`, `speak.js`, `echo.js`, `api.js` | written new in the S4 milestone | Node stdlib only; uses `modules/approval-cards/parse.js` for yes/no |
+| `modules/voice-chat/test/voice-chat.js` | written new in the S4 milestone | mock of server API v0 on 127.0.0.1 |
+| `modules/voice/vad.py` | written new in the S4 milestone | energy VAD, Python stdlib only |
+| `modules/voice/test/test_vad.py`, `modules/voice/test/vad.js` | written new in the S4 milestone | synthetic PCM; the JS file only launches the Python tests |
+| `modules/voice/mac_client.py` (target switch, mute gate, `--listen`, poll) | extends the file by the voice bridge contributor | additions written new in the S4 milestone |
+
 ## Ideas referenced (no code)
 
 | Idea | Where it came from | License | How it was used |

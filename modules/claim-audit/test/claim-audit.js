@@ -11,7 +11,7 @@ const { spawnSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..', '..', '..');
 const cur = require(path.join(ROOT, 'lib', 'config')).load();
-const { auditReport } = require('..');
+const { auditReport } = require('../audit');
 const results = [];
 const check = (label, ok, info) => { results.push(!!ok); console.log(`${ok ? 'PASS' : 'FAIL'} ${label}${info ? ': ' + info : ''}`); };
 

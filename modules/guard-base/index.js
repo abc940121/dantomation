@@ -3,10 +3,15 @@
 const rules = require('./rules');
 const { isShell } = require('../../lib/shell');
 
+function beforeTool({ tool, ti, cwd }) {
+  return isShell(tool) ? rules.shellRules(String(ti.command || ''), cwd) : rules.fileRules(tool, ti);
+}
+
 module.exports = {
+  contract: 1,
   name: 'guard-base',
-  beforeTool({ tool, ti, cwd }) {
-    return isShell(tool) ? rules.shellRules(String(ti.command || ''), cwd) : rules.fileRules(tool, ti);
-  },
-  rules,
+  runsOn: ['main', 'worker'],
+  description: 'Blocks generic dangerous operations (destructive shell commands, secret writes, protected files).',
+  beforeTool,
+  api: { rules, beforeTool },
 };

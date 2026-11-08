@@ -19,7 +19,20 @@ const EFFECT = path.join(__dirname, '..', 'bin', 'effect.js');
 const GUARD = path.join(__dirname, '..', 'guards', 'guard.js');
 const eff = (a, input) => spawnSync(process.execPath, [EFFECT, ...a], { input: input || '', encoding: 'utf8' });
 const viaGuard = process.env.HARNESS_FAKE_GUARD === '1';
+// HARNESS_FAKE_HOOKS=1: act like the real engine and run the hook commands from the --settings file
+// the harness passed (PreToolUse before the write, PostToolUse after it), with a tool_use_id.
+let hookN = 0;
+const hooks = (() => { try { return JSON.parse(fs.readFileSync(args[args.indexOf('--settings') + 1], 'utf8')).hooks || {}; } catch { return {}; } })();
+function hookRun(kind, a, id) {
+  const h = process.env.HARNESS_FAKE_HOOKS === '1' && hooks[kind] && hooks[kind][0] && hooks[kind][0].hooks[0];
+  if (!h) return;
+  const command = "node \"" + EFFECT + "\" " + a.join(" ");
+  const input = { session_id: 'fake', tool_name: 'Bash', tool_input: { command }, cwd: process.cwd(), tool_use_id: id, tool_response: { stdout: '' } };
+  const r = spawnSync(h.command, { shell: true, input: JSON.stringify(input), encoding: 'utf8' });
+  if (r.status !== 0) { process.stderr.write(r.stderr || 'hook blocked'); process.exit(2); }
+}
 function guarded(a) {
+  if (process.env.HARNESS_FAKE_HOOKS === '1') { hookRun('PreToolUse', a, 'toolu_fake' + (++hookN)); return; }
   if (!viaGuard) return;
   const command = `node "${EFFECT}" ${a.join(' ')}`;
   const r = spawnSync(process.execPath, [GUARD], { input: JSON.stringify({ session_id: 'fake', tool_name: 'Bash', tool_input: { command }, cwd: process.cwd() }), encoding: 'utf8' });
@@ -30,6 +43,7 @@ Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(process.env.
 eff(['step', task, '1', 'started', request]);
 guarded(['write', task, 's1-write', 'out.txt']);
 eff(['write', task, 's1-write', 'out.txt'], request + '\n');
+hookRun('PostToolUse', ['write', task, 's1-write', 'out.txt'], 'toolu_fake1');
 eff(['message', task, 's1-message', 'owner'], request);
 eff(['step', task, '1', 'done']);
 if (viaGuard) {

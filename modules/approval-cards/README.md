@@ -12,7 +12,7 @@ Off by default. It works alone and together with every other module. It only act
 
 ## How it works
 
-1. The agent makes a risky call. The guard writes a card (id, task, tool, the exact input, its sha256, a one-line summary, created_at, expires_at) to the journal and `state/cards/<id>.json`, and blocks the call with `waiting for approval card <id>; stop and end your turn`.
+1. The agent makes a risky call. The guard writes a card (id, task, tool, the exact input, its sha256, a one-line summary, created_at, expires_at) to the journal (records carry `module: "approval-cards"`) and the mirror `state/m/approval-cards/<id>.json`, and blocks the call with `waiting for approval card <id>; stop and end your turn`.
 2. You see it in `node bin/dantomation.js status` (it lists the pending card and how to answer). You answer with the existing `do` verb:
 
         node bin/dantomation.js do yes        # or: do no
@@ -27,7 +27,7 @@ The card is a journal record, so a crash or power cut between the card and your 
 
 ## Answers (`parseAnswer`)
 
-`parseAnswer(text)` returns `'yes'`, `'no'` or `'unclear'` and is exported (a voice entry can call it). It is strict: the whole answer must be made of known words.
+`parseAnswer(text)` returns `'yes'`, `'no'` or `'unclear'` and is exported as `api.parseAnswer` (also `parse.js`; a voice entry can call it). It is strict: the whole answer must be made of known words.
 
 - yes: yes, y, ok, okay, approve, confirm, agree, go ahead, 是, 好, 可以, 確定, 同意, and close variants (yess, OK!, 好的, yes please).
 - no: no, n, nope, deny, stop, cancel, 不要, 不, 否, 取消, and close variants.
@@ -45,11 +45,24 @@ Defaults are in `default-risky.json`: `git push`; deleting files outside the tas
       "skip": [ "package_install" ]
     }
 
+The `approval_cards` section is checked against the module's settings schema when the module is on: an unknown key or a wrong type (for example `"timeout_minutes": "10"`) is a load error naming the key, and the guard blocks every call until it is fixed.
+
 A rule is `id`, `match` (`shell`, `url`, or a list), `pattern` (JavaScript regex source), optional `flags`, `summary`, and `outside_workdir` (only count when a path argument points outside the task folder).
+
+## Routes and panel (module contract 1)
+
+For the coming server and web UI (not built yet), the module declares:
+
+- `GET /m/approval-cards/cards` -> `{cards: [...]}`, the pending cards.
+- `POST /m/approval-cards/cards/:id/answer` with body `{text}` -> `{card_id, answer, resume}`; 400 without text, 404 when the card is not pending. The text goes through `parseAnswer` and is recorded exactly like `do yes` / `do no`.
+- Panel `cards` (`ui/cards-panel.js`, mount `chat`): lists pending cards with yes/no buttons.
+
+Who may call the routes (the owner only) is the server's job.
 
 ## Test
 
     node modules/approval-cards/test/approval-cards.js
+    node modules/approval-cards/test/contract.js   # routes, panel, settings, in-process
 
 ## Known limits
 

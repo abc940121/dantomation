@@ -1,11 +1,13 @@
 {
   "modules": {
     "voice": false,
+    "voice-chat": false,
     "spend-count": false,
     "guard-base": true,
     "guard-private-rules": false,
     "checkpoint": true
   },
+  "modules_hook_timeout_ms": 5000,
   "spend_limit_usd_per_session": 5,
   "prices_usd_per_mtok": {
     "opus": {

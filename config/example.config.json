@@ -8,7 +8,11 @@
     "spend-count": false,
     "voice": false,
     "approval-cards": false,
-    "claim-audit": false
+    "claim-audit": false,
+    "hello-stub": false,
+    "chat-ui": false,
+    "worker": false,
+    "voice-chat": false
   },
   "spend_limit_usd_per_session": 5
 }

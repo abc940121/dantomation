@@ -3,7 +3,7 @@
 // Run every suite under one module configuration and print one line per suite.
 //   node test/run-all.js core            all modules off (+ an end-to-end fake-engine task)
 //   node test/run-all.js <module>        only that module on (guard-base, guard-private-rules,
-//                                        checkpoint, voice, spend-count, approval-cards, claim-audit)
+//                                        checkpoint, voice, spend-count, approval-cards, claim-audit, hello-stub, chat-ui, worker, voice-chat)
 //   node test/run-all.js all             all modules on
 //   node test/run-all.js default         no HARNESS_CONFIG: the owner's real config, if any
 //   node test/run-all.js every           core, each module alone, all
@@ -17,10 +17,13 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
-const MODULES = ['voice', 'spend-count', 'guard-base', 'guard-private-rules', 'checkpoint', 'approval-cards', 'claim-audit'];
+const MODULES = ['voice', 'voice-chat', 'spend-count', 'guard-base', 'guard-private-rules', 'checkpoint', 'approval-cards', 'claim-audit', 'hello-stub', 'chat-ui', 'worker'];
 // [label, file, modules it needs on (empty: runs in any mode)]
 const SUITES = [
   ['modules', 'test/modules.js', []],
+  ['module-contract', 'test/module-contract.js', []],
+  ['module-events', 'test/module-events.js', []],
+  ['module-seams', 'test/module-seams.js', []],
   ['entry', 'test/entry.js', ['guard-base', 'checkpoint']],
   ['journal-prompt', 'test/journal-prompt.js', []],
   ['lock-race', 'test/lock-race.js', []],
@@ -28,13 +31,21 @@ const SUITES = [
   ['commit-crash', 'test/commit-crash.js', []],
   ['executor-race', 'test/executor-race.js', []],
   ['push-reconcile', 'test/push-reconcile.js', []],
+  ['server', 'test/server.js', []],
+  ['integration', 'test/integration.js', ['chat-ui', 'approval-cards']],
   ['guard-base', 'modules/guard-base/test/guard-base.js', ['guard-base']],
   ['private-rules', 'modules/guard-private-rules/test/private-rules.js', ['guard-private-rules']],
   ['checkpoint', 'modules/checkpoint/test/checkpoint.js', ['checkpoint']],
   ['voice-lock', 'modules/voice/test/voice-lock.js', ['voice']],
+  ['voice-chat', 'modules/voice-chat/test/voice-chat.js', ['voice-chat']],
+  ['voice-vad', 'modules/voice/test/vad.js', ['voice']],
   ['spend', 'modules/spend-count/test/spend.js', ['spend-count']],
   ['approval-cards', 'modules/approval-cards/test/approval-cards.js', ['approval-cards']],
+  ['approval-cards-contract', 'modules/approval-cards/test/contract.js', []],
   ['claim-audit', 'modules/claim-audit/test/claim-audit.js', ['claim-audit']],
+  ['hello-stub', 'modules/hello-stub/test/hello-stub.js', []],
+  ['chat-ui', 'modules/chat-ui/test/chat-ui.js', ['chat-ui']],
+  ['worker', 'modules/worker/test/worker.js', ['worker']],
   ['public-boundary', 'test/public-boundary.js', ['guard-base']],
 ];
 

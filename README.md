@@ -71,23 +71,29 @@ The core is always on: the journal, effects, the executor lock, the engine launc
 
 ## Modules
 
-Each module lives in `modules/<name>/` with its own `README.md` (what it does, how to turn it on, Known limits), its tests in `modules/<name>/test/`, and an `index.js` that exports the hook interface. A module may require core (`lib/`); core never requires a module. The loader (`lib/modules.js`) picks the enabled ones from the config at run time with a computed path, so no static `require` of `modules/` exists in `bin/`, `lib/` or `guards/`.
+Each module lives in `modules/<name>/` with its own `README.md` (what it does, how to turn it on, Known limits), its tests in `modules/<name>/test/`, and an `index.js` that exports a manifest. The contract is [`docs/MODULES.md`](docs/MODULES.md); [`modules/hello-stub`](modules/hello-stub/README.md) is the template to copy. A module may require core (`lib/`); core never requires a module. The loader (`lib/modules.js`) picks the enabled ones from the config at run time with a computed path, so no static `require` of `modules/` exists in `bin/`, `lib/` or `guards/`.
 
-    { name, beforeTool(ctx) -> null | [kind, reason], afterTool(ctx), onTaskStart(ctx), onTaskEnd(ctx), commands?: {name: fn} }
+    { contract: 1, name, description?, runsOn?, priority?, dependsOn?,
+      beforeTool?, statusLines?, on?, emits?,
+      commands?, routes?, panels?, jobs?, settings?, api? }
 
-All hooks are optional. `beforeTool` runs inside the guard, for every tool call; a hit blocks. `afterTool` runs from `guard.js --after` and never blocks. `onTaskStart` and `onTaskEnd` run in `bin/harness.js` around the engine. `commands` adds `harness.js <name>` subcommands (an unknown subcommand is looked up there).
+Every field but `contract` and `name` is optional, and every callback may be async. `beforeTool` runs inside the guard, for every tool call; a hit blocks, and a hook slower than `modules_hook_timeout_ms` (default 5000) is a `module_timeout` block. `on` subscribes to core events (`task.start`, `task.end`, `tool.done`), emitted after the journal write; a failing handler is reported and never stops anything. A module reaches another only through `dependsOn` plus `ctx.api(name)`, writes state only through `ctx.state` (`state/m/<name>/` and namespaced journal records), and keeps secrets in `type: 'secret'` settings set with `harness.js secret`, never in the config, and reads them only through `ctx.secret(key)`. Modules are trusted code in the harness process; these rules are not a sandbox. Routes declare `access` (owner by default), `prepareTurn` adds context lines to the engine prompt, `provides` lists tools, bots and engines for others, and `stateVersion` + `migrate` and `uninstall` (`harness.js uninstall <name>`) cover a module's state over time. `commands` adds `harness.js <name>` subcommands (an unknown subcommand is looked up there). `routes` are served under `/m/<name>/`, panels under `/m/<name>/ui/`, and `jobs` run in the server, all through the registry (`lib/modules.js` `registry()`); the server also has `GET/PATCH /api/settings/<module>` (owner token) and an optional worker token (`node bin/dantomation.js token new --worker`) that may only call worker routes. `settings` is a schema: the config section `"<name with - as _>"` is checked against it and the module gets the result as `ctx.settings`. A module without `contract` is a legacy contract-0 module: it loads with a printed warning and only its old hooks and `commands` are read.
 
 | Module | What it does | Default |
 |---|---|---|
 | [`guard-base`](modules/guard-base/README.md) | API keys, deletion, hook skip, secrets, rule against agents running restore, undo or naming HARNESS_OWNER | on |
 | [`checkpoint`](modules/checkpoint/README.md) | snapshot before each mutating call; owner-only `harness.js restore` | on |
+| [`worker`](modules/worker/README.md) | provisional: pull-based worker for a second machine (outbound HTTP only) | off |
 | [`guard-private-rules`](modules/guard-private-rules/README.md) | owner's rules file, self-protection of the config | off |
 | [`spend-count`](modules/spend-count/README.md) | block a session over the spend limit | off |
 | [`voice`](modules/voice/README.md) | voice bridge, `voice_busy` block | off |
+| [`voice-chat`](modules/voice-chat/README.md) | hands-free voice: text wake phrase, spoken approval cards, echo guard (needs the voice client) | off |
 | [`approval-cards`](modules/approval-cards/README.md) | risky actions stop and ask you yes/no (`do yes` / `do no`) instead of running | off |
 | [`claim-audit`](modules/claim-audit/README.md) | checks "done"/"tested" claims in the final report against journal lines and command outputs; `status` lists the unverified ones | off |
+| [`hello-stub`](modules/hello-stub/README.md) | template: one of every contract part (hook, command, route, panel, job, settings) | off |
+| [`chat-ui`](modules/chat-ui/README.md) | phone-first web chat for the server: roster, per-bot threads, tool chips, approval cards, undo | off |
 
-If an enabled module cannot load (unknown name, missing folder, throws on require, bad exports), `harness.js start`/`resume` exits 2 naming the module, and the guard blocks every call.
+If an enabled module cannot load (unknown name, missing folder, throws on require, bad manifest, bad config section), `harness.js start`/`resume` exits 2 naming the module, and the guard blocks every call.
 
 Other features checked and kept in core: the stale-lock wait for a "transient" holder in `bin/harness.js` (a generic lock-record field, not voice-specific; see the voice README), the `strip_env` of the engine environment (a safety property of the engine launch), and `effect.js`.
 
@@ -116,7 +122,7 @@ Everything specific to one owner lives outside this repo, in one file read at ru
 ## Tests
 
     node test/run-all.js core     # every module off: end-to-end fake-engine task + the crash/resume suites; module suites SKIP
-    node test/run-all.js <module> # one module on (guard-base, guard-private-rules, checkpoint, voice, spend-count, approval-cards, claim-audit)
+    node test/run-all.js <module> # one module on (guard-base, guard-private-rules, checkpoint, voice, spend-count, approval-cards, claim-audit, hello-stub, chat-ui, worker, voice-chat)
     node test/run-all.js all      # every module on: all suites
     node test/run-all.js every    # core, each module alone, all
     node test/run-all.js default  # no HARNESS_CONFIG: your own config, if any
@@ -135,18 +141,23 @@ Everything specific to one owner lives outside this repo, in one file read at ru
     node test/a3-resume.js a3|a3b-write|a3b-commit   # kill + resume
     node test/cost-engine.js     # session-start tokens, auth source, env
     node test/modules.js         # loader: auto-enable of private rules, load failures fail closed, no static require of modules/
+    node test/module-contract.js # contract proof: add a module folder = hook, command, route, panel, job, settings with zero core edits; remove = gone; bad manifests
     node modules/guard-base/test/guard-base.js
     node modules/guard-private-rules/test/private-rules.js
     node modules/checkpoint/test/checkpoint.js
     node modules/voice/test/voice-lock.js
+    node modules/voice/test/vad.js   # Python unittest for the VAD and client target switch (SKIP without python)
+    node modules/voice-chat/test/voice-chat.js
     node modules/spend-count/test/spend.js
+    node modules/approval-cards/test/contract.js
+    node modules/hello-stub/test/hello-stub.js
 
 A module suite prints `SKIP` when its module is off in the current config. Tests that need an engine but no model call set `HARNESS_ENGINE_SCRIPT=<absolute path>/test/fake-engine.js`. On `master`, `public-boundary`'s "history of HEAD" check fails by design (the history predates the public split); its tree check must pass.
 
 ## Seams (not built)
 
 - **Voice entry, entry skills:** call `harness.js start`.
-- **Voice answers to approval cards:** the `approval-cards` module exports `parseAnswer(text)`; a voice entry can pass the spoken answer through it and call the module's `answer` command.
+- **Voice answers to approval cards:** the `approval-cards` module exports `api.parseAnswer(text)`; a voice entry can pass the spoken answer through it and call the module's `answer` command.
 - **Dispatch to the Windows worker:** `effect.js message` writes to `state/outbox/`. A dispatcher can take messages from there; the engine spawn in `runEngine` is the place to run tasks remotely.
 - **Codex/OpenCode:** a second spawner beside `runEngine` (`HARNESS_CLAUDE` already overrides the binary).
 

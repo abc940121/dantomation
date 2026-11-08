@@ -47,7 +47,10 @@ function privateRules(tool, ti, rules = RULES) {
 }
 
 module.exports = {
+  contract: 1,
   name: 'guard-private-rules',
+  runsOn: ['main', 'worker'],
+  description: "Blocks the owner's own rules from the private rules file named in the run-time config.",
   beforeTool: ({ tool, ti }) => privateRules(tool, ti),
-  privateRules,
+  api: { privateRules },
 };

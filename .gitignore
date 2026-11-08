@@ -2,3 +2,5 @@ state/
 logs/
 work/
 node_modules/
+__pycache__/
+*.pyc

@@ -14,7 +14,7 @@ const ROOT = path.resolve(__dirname, '..', '..', '..');
 const GUARD = path.join(ROOT, 'guards', 'guard.js');
 const DANT = path.join(ROOT, 'bin', 'dantomation.js');
 const cur = require(path.join(ROOT, 'lib', 'config')).load();
-const { parseAnswer } = require('..');
+const { parseAnswer } = require('../parse');
 const results = [];
 const check = (label, ok, info) => { results.push(!!ok); console.log(`${ok ? 'PASS' : 'FAIL'} ${label}${info ? ': ' + info : ''}`); };
 
@@ -73,7 +73,7 @@ const c1 = cards()[0] || {};
 check('the card has id, task, tool, exact input, sha256, summary, created_at, expires_at',
   c1.card_id === id1 && c1.task_id === 't1' && c1.tool === 'Bash' && c1.input && c1.input.command === CMD && /^[0-9a-f]{64}$/.test(c1.sha256) && c1.summary && c1.created_at && Date.parse(c1.expires_at) - Date.parse(c1.created_at) === 600000,
   JSON.stringify({ id: c1.card_id, expires_in_min: (Date.parse(c1.expires_at) - Date.parse(c1.created_at)) / 60000 }));
-check('the card is mirrored to state/cards/<id>.json', fs.existsSync(path.join(state, 'cards', id1 + '.json')));
+check('the card is mirrored to state/m/approval-cards/<id>.json', fs.existsSync(path.join(state, 'm', 'approval-cards', id1 + '.json')));
 const again = hook(CMD, 't1');
 check('the same call while pending reuses the card (no duplicate)', again.status === 2 && cardId(again) === id1 && cards().length === 1);
 
@@ -108,7 +108,7 @@ const pass2 = hook(CMD, 't1');
 check('a second identical call needs a new card', pass2.status === 2 && cardId(pass2) && cardId(pass2) !== id1 && cards().length === 3);
 
 // 5. a clear no denies
-fs.writeFileSync(jfile, ''); fs.rmSync(path.join(state, 'cards'), { recursive: true, force: true });
+fs.writeFileSync(jfile, ''); fs.rmSync(path.join(state, 'm', 'approval-cards'), { recursive: true, force: true });
 startTask('t3');
 const r3 = hook('npm install left-pad', 't3');
 const n = dant(['do', 'no']);
@@ -116,7 +116,7 @@ check('"do no" denies the card; the resumed agent is told', n.status === 0 && /d
 check('after a no, the same call is not approved (a fresh card, still blocked)', hook('npm install left-pad', 't3').status === 2);
 
 // 6. timeout is no
-fs.writeFileSync(jfile, ''); fs.rmSync(path.join(state, 'cards'), { recursive: true, force: true });
+fs.writeFileSync(jfile, ''); fs.rmSync(path.join(state, 'm', 'approval-cards'), { recursive: true, force: true });
 startTask('t4');
 const r4 = hook(CMD, 't4');
 const id4 = cardId(r4);
@@ -130,7 +130,7 @@ check('the resumed agent is told "denied (timeout)"', /denied \(timeout\)/.test(
 check('the expired card does not approve a retry', hook(CMD, 't4', late).status === 2);
 
 // 7. other rules and extension
-fs.writeFileSync(jfile, ''); fs.rmSync(path.join(state, 'cards'), { recursive: true, force: true });
+fs.writeFileSync(jfile, ''); fs.rmSync(path.join(state, 'm', 'approval-cards'), { recursive: true, force: true });
 startTask('t5');
 const blocked = c => hook(c, 't5', {}, 'Bash').status === 2 && /approval card/.test(hook(c, 't5').stderr);
 check('pip/winget installs, gh release, npm publish each ask', ['pip install requests', 'winget install Foo.Bar', 'gh release create v1', 'npm publish', 'gh repo create x'].every(blocked));
@@ -152,7 +152,7 @@ if (cur.modules['guard-base']) {
 
 // 9. module off: behaviour unchanged
 const offCfg = path.join(tmp, 'off.json');
-fs.writeFileSync(offCfg, JSON.stringify({ owner_name: 'Tester', modules: { ...cur.modules, 'approval-cards': false }, approval_cards: { timeout_minutes: 10 } }));
+fs.writeFileSync(offCfg, JSON.stringify({ owner_name: 'Tester', modules: { ...cur.modules, 'approval-cards': false, 'voice-chat': false }, approval_cards: { timeout_minutes: 10 } }));
 const offEnv = { HARNESS_CONFIG: offCfg };
 const nCards = cards().length;
 const offPush = hook(CMD, 't5', offEnv);

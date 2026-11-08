@@ -56,10 +56,22 @@ function undoCmd(args, { J, EXEC_LOCK }) {
   } catch (e) { console.error(`undo failed: ${e.message.split(String.fromCharCode(10))[0]}`); process.exitCode = 1; } finally { J.unlock(EXEC_LOCK, l.nonce); }
 }
 
+// dantomation status line.
+function statusLines(Jn) {
+  const u = undoInfo(Jn);
+  return [`undo points: ${u.count}${u.task ? ` (task ${u.task})` : ''}`];
+}
+
+// Snapshots live in state/ckpt (a git dir per task), not state/m/checkpoint/: a
+// documented exception (docs/MODULES.md); restore needs them at a fixed place.
 module.exports = {
-  undoInfo,
+  contract: 1,
   name: 'checkpoint',
+  runsOn: ['main', 'worker'],
+  description: 'Snapshots the task folder before every mutating tool call; owner commands restore and undo.',
   priority: 90, // last: snapshot only calls that nothing else blocked or held for approval
+  statusLines,
+  api: { undoInfo, undoStack, checkpoint: ck.checkpoint },
   // Inside a harness task (HARNESS_TASK_ID + HARNESS_TASK_DIR, set by runEngine).
   // If the snapshot fails the call is blocked (fail closed).
   beforeTool({ tool, ti }) {

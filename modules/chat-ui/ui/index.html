@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>Chat</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <header id="top">
+    <h1>Chat</h1>
+    <span id="claims-badge" class="badge" hidden></span>
+    <button id="waiting" class="badge warn" type="button" hidden></button>
+    <span id="conn" class="conn" data-state="connecting">connecting</span>
+  </header>
+  <nav id="roster" aria-label="Bots"></nav>
+  <main id="thread" aria-live="polite"></main>
+  <form id="composer" autocomplete="off">
+    <div id="targets" role="group" aria-label="Send to"></div>
+    <div class="row">
+      <textarea id="text" rows="2" placeholder="Message" aria-label="Message"></textarea>
+      <button id="send" type="submit">Send</button>
+    </div>
+    <p id="send-msg" class="hint" role="status"></p>
+  </form>
+  <section id="auth" hidden>
+    <form id="auth-form">
+      <h2>Access token</h2>
+      <p class="hint">Paste the token made by <code>dantomation token new</code>. It is kept in this browser only.</p>
+      <input id="token" type="password" autocomplete="off" aria-label="Token">
+      <button type="submit">Save</button>
+    </form>
+  </section>
+</div>
+<script src="state.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

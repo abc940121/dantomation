@@ -1,11 +1,16 @@
 'use strict';
 // Card store. The journal is the single source of truth (append-only, fsynced);
-// state/cards/<id>.json is a readable mirror, rewritten from the journal.
+// <module state dir>/<id>.json (state/m/approval-cards/) is a readable mirror,
+// rewritten from the journal.
 //   card         {card_id, task_id, tool, input, sha256, summary, rule, created_at, expires_at}
 //   card_answer  {card_id, answer: yes | no | timeout | unclear}
 //   card_used    {card_id}
 // Card state is a fold over those records, so a crash at any point leaves a card
 // either fully there (pending) or not there; resuming never makes a second one.
+// io = { J, state, emit }: J (lib/journal) for reads, the module's ctx.state for
+// every write (records carry module: "approval-cards"), ctx.emit for card.* events.
+// Events go out after the journal write: card.created {card_id, task_id, summary,
+// rule, expires_at} and card.answered {card_id, task_id, answer} (yes | no | timeout).
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -23,8 +28,9 @@ const canon = v => Array.isArray(v) ? '[' + v.map(canon).join(',') + ']'
   : JSON.stringify(v === undefined ? null : v);
 const hashOf = (tool, input) => crypto.createHash('sha256').update(tool + '\n' + canon(input)).digest('hex');
 
-function timeoutMs(cfg) {
-  const m = Number(cfg && cfg.approval_cards && cfg.approval_cards.timeout_minutes);
+// settings: the module's validated settings (core checked the config section).
+function timeoutMs(settings) {
+  const m = Number(settings && settings.timeout_minutes);
   return (Number.isFinite(m) && m > 0 ? m : DEFAULT_TIMEOUT_MIN) * 60000;
 }
 
@@ -44,10 +50,9 @@ function fold(records) {
 }
 const isExpired = c => c.state === 'pending' && now() >= Date.parse(c.expires_at);
 
-function mirror(J, cards) {
+function mirror(io, cards) {
   try {
-    const dir = path.join(J.STATE, 'cards');
-    fs.mkdirSync(dir, { recursive: true });
+    const dir = io.state.dir;
     for (const c of cards) {
       const f = path.join(dir, c.card_id + '.json');
       fs.writeFileSync(f + '.tmp', JSON.stringify({ ...c, state: isExpired(c) ? 'expired' : c.state }, null, 2));
@@ -56,30 +61,37 @@ function mirror(J, cards) {
   } catch { /* the journal is authoritative; a failed mirror changes nothing */ }
 }
 
-function create(J, { task_id, tool, input, summary, rule }, cfg) {
+async function create(io, { task_id, tool, input, summary, rule }, settings) {
   const card_id = 'card-' + crypto.randomBytes(3).toString('hex');
   const t = now();
-  const rec = J.append({ type: 'card', card_id, task_id, tool, input, sha256: hashOf(tool, input), summary, rule,
-    created_at: new Date(t).toISOString(), expires_at: new Date(t + timeoutMs(cfg)).toISOString() });
-  mirror(J, [{ ...rec, state: 'pending', unclear: 0 }]);
+  const rec = io.state.append({ type: 'card', card_id, task_id, tool, input, sha256: hashOf(tool, input), summary, rule,
+    created_at: new Date(t).toISOString(), expires_at: new Date(t + timeoutMs(settings)).toISOString() });
+  mirror(io, [{ ...rec, state: 'pending', unclear: 0 }]);
+  await io.emit('card.created', { card_id, task_id, summary, rule, expires_at: rec.expires_at });
   return rec;
 }
 
-const note = (J, task_id, text) => J.append({ type: 'history_note', task_id, note: text });
+const note = (io, task_id, text) => io.state.append({ type: 'history_note', task_id, note: text });
+
+// One answer record; yes / no / timeout also emit card.answered.
+async function answered(io, card, answer, extra) {
+  io.state.append({ type: 'card_answer', card_id: card.card_id, task_id: card.task_id, answer, ...extra });
+  if (answer !== 'unclear') await io.emit('card.answered', { card_id: card.card_id, task_id: card.task_id, answer });
+}
 
 // Pending cards past their deadline become "no" (timeout), once, with a note for the resumed agent.
-function sweep(J) {
+async function sweep(io) {
   const out = [];
-  for (const c of fold(J.readAll().records).values()) {
+  for (const c of fold(io.J.readAll().records).values()) {
     if (!isExpired(c)) continue;
-    J.append({ type: 'card_answer', card_id: c.card_id, task_id: c.task_id, answer: 'timeout' });
-    note(J, c.task_id, `card ${c.card_id} denied (timeout): the owner did not answer in time (${c.summary}). Do not retry or reword it; report that it was not approved.`);
+    note(io, c.task_id, `card ${c.card_id} denied (timeout): the owner did not answer in time (${c.summary}). Do not retry or reword it; report that it was not approved.`);
+    await answered(io, c, 'timeout');
     out.push(c.card_id);
   }
-  if (out.length) mirror(J, [...fold(J.readAll().records).values()].filter(c => out.includes(c.card_id)));
+  if (out.length) mirror(io, [...fold(io.J.readAll().records).values()].filter(c => out.includes(c.card_id)));
   return out;
 }
 
 const pending = records => [...fold(records).values()].filter(c => c.state === 'pending' && !isExpired(c));
 
-module.exports = { fold, create, sweep, pending, note, mirror, hashOf, isExpired, now, timeoutMs, canon };
+module.exports = { fold, create, sweep, answered, pending, note, mirror, hashOf, isExpired, now, timeoutMs, canon };
