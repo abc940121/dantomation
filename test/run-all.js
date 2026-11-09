@@ -114,15 +114,15 @@ async function runSuite([label, file, needs], enabled, env) {
 
 async function runMode(mode, opts) {
   let cfg = null, enabled, suites = SUITES;
+  // locked modules (guard-base) cannot be off, so every mode with a temp config keeps them on
+  const LOCKED = Object.keys(require('../lib/config').LOCKED);
   if (mode === 'default') enabled = null;
   else if (mode.startsWith('module:')) {
     const name = mode.slice(7);
     suites = moduleSuites(name);
-    enabled = [...new Set([name, ...suites.flatMap(s => s[2])])];
+    enabled = [...new Set([...LOCKED, name, ...suites.flatMap(s => s[2])])];
     cfg = tempConfig(enabled);
   } else {
-    // locked modules (guard-base) cannot be off, so 'core' and single-module modes keep them on
-    const LOCKED = Object.keys(require('../lib/config').LOCKED);
     enabled = mode === 'all' ? MODULES : [...new Set([...LOCKED, ...(mode === 'core' ? [] : [mode])])];
     cfg = tempConfig(enabled);
   }

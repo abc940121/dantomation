@@ -32,6 +32,7 @@ const TOPIC = 'zq-secret-topic-91x';
   const base = `http://127.0.0.1:${srv.address().port}`;
   const settle = () => new Promise(r => setTimeout(r, 50));
   const mk = cfg => M.registry({ modules: { ntfy: true }, ntfy: cfg });
+  const sentReset = keep => M.registry({ modules: { ntfy: true } }).api('ntfy').reset(keep);
   const status = async r => (await M.statusLines(r.mods, J)).join('\n');
 
   try {
@@ -98,13 +99,30 @@ const TOPIC = 'zq-secret-topic-91x';
     const st2 = await status(reg);
     check('status shows a good last ping', /ntfy: topic set; last ping sent .*\(task_finished\)/.test(st2), st2);
 
-    reg = mk({ server: base, max_per_minute: 1 });
-    const before = hits.length;
-    for (let i = 0; i < 3; i++) await M.emit(reg.mods, 'card.created', { card_id: 'c' + i, task_id: 'r' + i, summary: 's' });
+    reg = mk({ server: base, max_per_minute: 2 });
+    let b = hits.length;
+    for (let i = 0; i < 4; i++) await M.emit(reg.mods, 'card.created', { card_id: 'c' + i, task_id: 'a' + i, summary: 's' });
+    await M.emit(reg.mods, 'task.end', { task_id: 'b1', code: 2, workdir: '/w' });
     await settle();
-    check('rate cap drops extra pings', hits.length - before <= 1, String(hits.length - before));
+    check('priority pings (approval, blocked) pass the cap', hits.length - b === 5, String(hits.length - b));
+
+    // fresh window: first two finished pings send, the next three are held; the following allowed send is coalesced
+    sentReset();
+    reg = mk({ server: base, max_per_minute: 2 });
+    b = hits.length;
+    for (let i = 1; i <= 5; i++) await M.emit(reg.mods, 'task.end', { task_id: 'f' + i, code: 0, workdir: '/w' });
+    await settle();
+    check('finished pings beyond the cap are held, not sent', hits.length - b === 2, String(hits.length - b));
     const st3 = await status(reg);
-    check('rate-capped drop is journaled and shown', /last ping FAILED .*max_per_minute/.test(st3), st3);
+    check('held ping is journaled and status explains it', /last ping FAILED .*held and coalesced/.test(st3), st3);
+    sentReset(true); // window frees; the held backlog stays
+    await M.emit(reg.mods, 'task.end', { task_id: 'f6', code: 0, workdir: '/w' });
+    await settle();
+    check('next allowed send is one coalesced message with count and latest', hits.length - b === 3 && hits[hits.length - 1].body === '4 pings held, latest: finished f6', hits[hits.length - 1].body);
+    await M.emit(reg.mods, 'task.end', { task_id: 'f7', code: 0, workdir: '/w' });
+    await settle();
+    check('counter reset after the summary', hits[hits.length - 1].body === 'Task finished: f7', hits[hits.length - 1].body);
+    check('no message or header ever holds the topic', hits.every(h => !h.body.includes(TOPIC) && !JSON.stringify(h.headers).includes(TOPIC)));
 
     reg = mk({ server: 'ftp://x.example' });
     const n2 = hits.length;

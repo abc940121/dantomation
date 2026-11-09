@@ -147,7 +147,7 @@ Every module is off by default, except the two safety modules `guard-base` and `
 | `voice`, `voice-chat` | voice bridge and hands-free layer | microphone and speaker through the voice client | off | ✓ |
 | `rooms`, `chat-endpoint` | multi-bot rooms; a bot behind an OpenAI-style URL | sends room text to the URL you configure | off | ✓ |
 | `worker` | runs queued jobs on a second machine | one work folder on that machine; outbound HTTP | off | ✓ |
-| `ntfy` | push pings (task finished, blocked, approval waiting) to your phone | outbound HTTP POST to the ntfy server you configure | off | |
+| `ntfy` | push pings (task finished, blocked, approval waiting) to your phone | outbound HTTP POST to the ntfy server you configure; the topic is a secret: set it with `node bin/harness.js secret ntfy topic`, never written into config | off | |
 | `ccusage` | per-day / per-session Claude Code token and cost reports (runs the ccusage program via npx) | runs `npx`; reads Claude Code logs through it | off | |
 | `spend-count`, `claim-audit`, `engine-router`, `routines`, `search`, … | see each module's README | see its README | off | |
 

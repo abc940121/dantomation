@@ -106,7 +106,9 @@ const run = (reg, cmd, extra = {}) => M.beforeTool(reg.mods, { tool: 'Bash', ti:
     process.env.GL_STUB_MODE = 'slow';
     const fast = M.registry({ modules: { gitleaks: true }, gitleaks: { scan_timeout_ms: 500 } });
     r = await run(fast, 'git commit -m x');
-    check('scan timeout blocks', r && /timed out/.test(r[1]), JSON.stringify(r));
+    check('scan timeout blocks', r && /timed out/.test(r[1]) && /scan_timeout_ms/.test(r[1]), JSON.stringify(r));
+    r = await run(fast, 'git push');
+    check('push timeout names scan_timeout_ms and no_remote_commits', r && /timed out/.test(r[1]) && /scan_timeout_ms/.test(r[1]) && /no_remote_commits/.test(r[1]), JSON.stringify(r));
 
     // missing binary
     noStub();

@@ -30,7 +30,7 @@ function resolveBin(name) {
 }
 
 // -> { status: 'clean'|'findings'|'missing'|'error', findings: [{rule,file,line}], detail }
-function runGitleaks(args, { cwd, bin, timeoutMs, signal }) {
+function runGitleaks(args, { cwd, bin, timeoutMs, signal, push }) {
   return new Promise(resolve => {
     const exe = resolveBin(bin);
     if (!exe) return resolve({ status: 'missing', findings: [], detail: `${bin} not found on PATH` });
@@ -43,7 +43,7 @@ function runGitleaks(args, { cwd, bin, timeoutMs, signal }) {
     let child;
     try { child = shell ? spawn([`"${exe}"`, ...full.map(a => (/\s/.test(a) ? `"${a}"` : a))].join(' '), { cwd, shell: true, stdio: 'ignore', windowsHide: true }) : spawn(exe, full, { cwd, stdio: 'ignore', windowsHide: true }); } catch (e) { return finish({ status: 'error', findings: [], detail: `cannot run gitleaks (${e.code || 'spawn'})` }); }
     const kill = () => { try { child.kill(); } catch { /* gone */ } };
-    const timer = setTimeout(() => { kill(); finish({ status: 'error', findings: [], detail: `scan timed out after ${timeoutMs} ms` }); }, timeoutMs);
+    const timer = setTimeout(() => { kill(); finish({ status: 'error', findings: [], detail: `scan timed out after ${timeoutMs} ms; raise scan_timeout_ms${push ? ' (for a push with no remote-tracking branches, no_remote_commits also bounds how much history is scanned)' : ''}` }); }, timeoutMs);
     if (signal) signal.addEventListener('abort', () => { kill(); finish({ status: 'error', findings: [], detail: 'scan aborted' }); }, { once: true });
     child.on('error', e => { clearTimeout(timer); finish({ status: 'error', findings: [], detail: `cannot run gitleaks (${e.code || 'spawn'})` }); });
     child.on('close', code => {
@@ -88,7 +88,7 @@ async function beforeTool({ tool, ti, cwd, settings, state, signal }) {
   const dir = c.dir ? path.resolve(cwd || process.cwd(), c.dir) : (cwd || process.cwd());
   const p = c.op === 'push' ? pushArgs(dir, settings.no_remote_commits) : { args: argsFor(c.op) };
   if (p.capped) process.stderr.write(`gitleaks module: no remote-tracking branches here, so this git push scans only the last ${settings.no_remote_commits} of ${p.capped} commits (setting no_remote_commits). Run "gitleaks git" in the repo for a full history check.\n`);
-  const r = await runGitleaks(p.args, { cwd: dir, bin: settings.binary, timeoutMs: settings.scan_timeout_ms, signal });
+  const r = await runGitleaks(p.args, { cwd: dir, bin: settings.binary, timeoutMs: settings.scan_timeout_ms, signal, push: c.op === 'push' });
   if (r.status === 'clean') return null;
   if (r.status === 'findings') return ['secret_scan', `gitleaks found ${r.findings.length} possible secret(s) before git ${c.op}: ${fmt(r.findings)}. Remove them, then retry.`];
   if (r.status === 'missing' && settings.on_missing === 'allow') { warnMissing(c.op); return null; }

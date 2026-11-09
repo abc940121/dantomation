@@ -9,6 +9,8 @@ const TAGS = { finished: 'white_check_mark', blocked: 'warning', approval: 'rais
 const PRIORITY = { finished: '3', blocked: '4', approval: '4' };
 const WINDOW_MS = 60000, titles = new Map(); // task_id -> short title (only when include_title)
 const sent = []; // send timestamps, for the per-minute cap
+const PRIORITY_KINDS = new Set(['blocked', 'approval']); // never held by the cap
+const held = { count: 0, kind: null, id: null, timer: null, ctx: null }; // rate-capped 'finished' pings, coalesced
 
 const safeId = v => (typeof v === 'string' && /^[A-Za-z0-9._:-]{1,64}$/.test(v) ? v : null);
 const cleanTitle = v => String(v == null ? '' : v).split(/\r?\n/)[0].replace(/[^\x20-\x7e]/g, '').trim().slice(0, 60);
@@ -30,7 +32,7 @@ function message(kind, taskId, title, extra) {
 }
 
 // Returns {sent:boolean, reason?}. Never throws; never carries the topic.
-async function ping(ctx, kind, taskId, extra) {
+async function ping(ctx, kind, taskId, extra, flush) {
   const s = ctx.settings;
   if (s['kind_' + KINDS[kind]] === false) return { sent: false, reason: 'kind_off' };
   const topic = ctx.secret('topic');
@@ -43,8 +45,21 @@ async function ping(ctx, kind, taskId, extra) {
   if (!base) return drop('bad_server');
   const now = Date.now();
   while (sent.length && now - sent[0] > WINDOW_MS) sent.shift();
-  if (sent.length >= s.max_per_minute) return drop('rate_limited');
+  const capped = sent.length >= s.max_per_minute;
+  if (capped && (flush || !PRIORITY_KINDS.has(kind))) {
+    if (!flush) { held.count++; held.kind = kind; held.id = id; held.ctx = ctx; }
+    scheduleFlush(sent[0] + WINDOW_MS - now + 50);
+    if (!flush) record(ctx, kind, id, false, 0, 'rate_limited');
+    return { sent: false, reason: 'rate_limited', held: true };
+  }
   sent.push(now);
+  // Piggyback: this send is allowed, so a held backlog goes out as one summary after it.
+  // A flush sends the backlog alone; a normal 'finished' ping joins it as the latest. Priority pings send as-is.
+  let backlog = null;
+  if (held.count && (flush || !PRIORITY_KINDS.has(kind))) {
+    backlog = flush ? { n: held.count, kind: held.kind, id: held.id } : { n: held.count + 1, kind, id };
+    held.count = 0; held.kind = held.id = null;
+  }
 
   const title = s.include_title && id ? cleanTitle(titles.get(id)) : '';
   const headers = { 'Content-Type': 'text/plain; charset=utf-8', Title: `Taskmote: ${HEAD[kind]}`, Tags: TAGS[kind], Priority: PRIORITY[kind] };
@@ -56,13 +71,27 @@ async function ping(ctx, kind, taskId, extra) {
   const onAbort = () => ac.abort();
   if (ctx.signal) ctx.signal.addEventListener('abort', onAbort, { once: true });
   try {
-    const res = await fetch(`${base}/${topic}`, { method: 'POST', body: message(kind, id, title, extra), headers, redirect: 'error', signal: ac.signal });
+    const res = await fetch(`${base}/${topic}`, { method: 'POST', body: backlog ? summary(backlog) : message(kind, id, title, extra), headers, redirect: 'error', signal: ac.signal });
     status = res.status; ok = res.ok;
     try { await res.arrayBuffer(); } catch { /* body unused */ }
   } catch (e) { why = e && e.name === 'AbortError' ? 'timeout' : 'network'; } // never e.message: it may carry the URL
   finally { clearTimeout(timer); if (ctx.signal) ctx.signal.removeEventListener('abort', onAbort); }
   record(ctx, kind, id, ok, status, why);
   return ok ? { sent: true } : { sent: false, reason: why || 'http_' + status };
+}
+
+const summary = b => `${b.n} pings held, latest: ${b.kind}${b.id ? ' ' + b.id : ''}`;
+
+// A held backlog must not wait forever: when the minute window frees, send one coalesced message.
+function scheduleFlush(ms) {
+  if (held.timer) return;
+  held.timer = setTimeout(async () => {
+    held.timer = null;
+    if (!held.count || !held.ctx) return;
+    const { kind, id, ctx } = held;
+    try { await ping(ctx, kind, id, null, true); } catch { /* a flush never throws */ }
+  }, Math.max(50, Math.min(ms, WINDOW_MS + 100)));
+  if (held.timer.unref) held.timer.unref();
 }
 
 function record(ctx, kind, id, ok, status, why) {
@@ -73,7 +102,7 @@ function record(ctx, kind, id, ok, status, why) {
 const WHY = {
   bad_topic: 'the topic is not 4-64 letters, digits, _ or -; set it again with: node bin/harness.js secret ntfy topic',
   bad_server: 'the "server" setting is not a plain http(s) URL',
-  rate_limited: 'over "max_per_minute"; extra pings were dropped',
+  rate_limited: 'over "max_per_minute"; extra finished pings were held and coalesced into one message (blocked and approval pings always send)',
   timeout: 'the server did not answer within "timeout_ms"',
   network: 'could not reach the server (check "server" and the network)',
 };
@@ -111,7 +140,7 @@ module.exports = {
     kind_task_finished: { type: 'boolean', default: true, description: 'ping when a task ends with exit 0' },
     kind_task_blocked: { type: 'boolean', default: true, description: 'ping when a task is stalled or ends with a non-zero exit' },
     kind_approval_waiting: { type: 'boolean', default: true, description: 'ping when an approval card is waiting' },
-    max_per_minute: { type: 'integer', default: 20, min: 1, max: 600, description: 'most pings sent per minute; extra ones are dropped' },
+    max_per_minute: { type: 'integer', default: 20, min: 1, max: 600, description: 'most pings sent per minute; extra finished pings are held and sent as one summary (blocked and approval pings are never held)' },
     timeout_ms: { type: 'integer', default: 4000, min: 500, max: 4500, description: 'give up on one send after this long' },
   },
   on: {
@@ -131,5 +160,5 @@ module.exports = {
     'card.created': safely(({ task_id }, ctx) => ping(ctx, 'approval', task_id)),
   },
   statusLines: (J, ctx) => { try { return [statusLine(J, ctx)]; } catch { return ['ntfy: status unreadable']; } },
-  api: { serverUrl, topicOk },
+  api: { serverUrl, topicOk, reset(windowOnly) { sent.length = 0; if (windowOnly) return; held.count = 0; held.kind = held.id = null; if (held.timer) { clearTimeout(held.timer); held.timer = null; } } }, // reset: tests only
 };

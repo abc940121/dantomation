@@ -14,6 +14,8 @@ No ntfy code is used. Each ping is one HTTP POST to `<server>/<topic>` with a pl
 
 The message holds only the kind, the task id and, if `include_title` is on, the first line of the task request (ASCII, 60 characters). Card summaries, watchdog details, commands and file contents are never sent. If `app_url` is set it is sent as the tap-to-open link.
 
+The topic is a secret: set it with `node bin/harness.js secret ntfy topic`; it is never written into config.
+
 ## Setup
 
 1. Install the ntfy app on your phone (or use the web app at your server).
@@ -24,11 +26,11 @@ The message holds only the kind, the task id and, if `include_title` is on, the 
 ## Settings (config section `ntfy`)
 
 - `server` string, default `https://ntfy.sh` (http or https, no credentials in the URL)
-- `topic` secret, write-only, never logged; the journal gets `ntfy_sent {kind, task_id, ok, status, why?}` only; with a topic set, dropped pings (bad topic, bad server, rate cap, timeout, network) are journaled too
+- `topic` secret, write-only, never logged; the journal gets `ntfy_sent {kind, task_id, ok, status, why?}` only; with a topic set, failed or held pings (bad topic, bad server, rate cap, timeout, network) are journaled too
 - `app_url` string, default empty
 - `include_title` boolean, default false
 - `kind_task_finished`, `kind_task_blocked`, `kind_approval_waiting` booleans, default true
-- `max_per_minute` integer 1..600, default 20; extra pings are dropped
+- `max_per_minute` integer 1..600, default 20; over the cap, extra finished pings are held and sent as one summary ("N pings held, latest: finished <id>"); blocked and approval pings are never held
 - `timeout_ms` integer 500..4500, default 4000
 
 A failed send never stops a task. `taskmote status` shows one ntfy line: no topic (silent), the last ping sent, or the last failure and which setting to fix. Events reach this module only inside the process that emits them (no cross-process transport yet), so a card created in another process does not ping.
