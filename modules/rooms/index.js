@@ -57,7 +57,8 @@ function engineFor(ctx) {
       if (rep) return rep.text;
       const job = recs.filter(r => r.type === 'job_done' && r.result && typeof r.result.reply === 'string').pop();
       if (job) return job.result.reply;
-      if (recs.some(r => r.type === 'engine_exit') || Date.now() >= graceEnd) return '';
+      let lastStart = -1; recs.forEach((r, i) => { if (r.type === 'engine_start') lastStart = i; });
+      if (recs.some((r, i) => i > lastStart && r.type === 'engine_exit') || Date.now() >= graceEnd) return '';
       if (signal && signal.aborted) return '';
       await sleep(s.poll_ms);
     }
@@ -72,7 +73,7 @@ const guard = (fn) => ctx => {
 };
 
 module.exports = {
-  contract: 1,
+  contract: 2,
   name: 'rooms',
   description: 'Multi-character rooms: fixed local routing, per-room queue, post limits, safe context replay.',
   runsOn: 'main',

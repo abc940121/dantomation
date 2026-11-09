@@ -50,7 +50,7 @@ function handler(ctx) {
 }
 
 module.exports = {
-  contract: 1,
+  contract: 2,
   name: 'search',
   description: 'Full-text search over tasks, messages and room transcripts (owner only).',
   runsOn: 'main',

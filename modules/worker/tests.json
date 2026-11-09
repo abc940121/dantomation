@@ -1,0 +1,11 @@
+{
+  "suites": [
+    {
+      "label": "worker",
+      "file": "test/worker.js",
+      "needs": [
+        "worker"
+      ]
+    }
+  ]
+}

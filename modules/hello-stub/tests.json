@@ -1,0 +1,9 @@
+{
+  "suites": [
+    {
+      "label": "hello-stub",
+      "file": "test/hello-stub.js",
+      "needs": []
+    }
+  ]
+}

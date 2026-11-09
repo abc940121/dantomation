@@ -1,0 +1,11 @@
+{
+  "suites": [
+    {
+      "label": "guard-base",
+      "file": "test/guard-base.js",
+      "needs": [
+        "guard-base"
+      ]
+    }
+  ]
+}

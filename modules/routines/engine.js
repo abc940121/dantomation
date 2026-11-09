@@ -38,23 +38,42 @@ function arm(r, now) {
   else { r.cursor = now; delete r.next_at; }
 }
 
-async function fire(ctx, s, r, now, why) {
+// Durably reserve the occurrence (quota, re-arm, pending marker) BEFORE enqueue, finalize after.
+// A crash in between leaves `pending`; reconcile() clears it without re-enqueueing (at most once).
+async function fire(ctx, s, r, now, why, occ) {
   rollDay(s, now);
   if (s.runs_today >= ctx.settings.max_runs_per_day) {
     r.last_error = 'daily cap reached';
     ctx.state.append({ type: 'routine_skipped', routine: r.id, reason: 'daily_cap', why });
     return { fired: false, reason: 'daily_cap' };
   }
+  s.runs_today++; r.pending = String(occ);
+  store.save(ctx.state.dir, s);
   try {
     const t = await ctx.tasks.enqueue(r.bot, r.prompt);
-    s.runs_today++; r.runs = (r.runs || 0) + 1; r.last_run = now; r.last_task_id = (t && t.id) || null; r.last_error = null;
-    ctx.state.append({ type: 'routine_fired', routine: r.id, bot: r.bot, task_id: r.last_task_id, why });
+    r.runs = (r.runs || 0) + 1; r.last_run = now; r.last_task_id = (t && t.id) || null; r.last_error = null;
+    delete r.pending;
+    store.save(ctx.state.dir, s);
+    ctx.state.append({ type: 'routine_fired', routine: r.id, bot: r.bot, task_id: r.last_task_id, why, occurrence: String(occ) });
     return { fired: true, task_id: r.last_task_id };
   } catch (e) {
+    s.runs_today = Math.max(0, s.runs_today - 1); delete r.pending;
     r.last_error = String((e && e.message) || e).slice(0, 200);
+    store.save(ctx.state.dir, s);
     ctx.state.append({ type: 'routine_error', routine: r.id, why, error: r.last_error });
     return { fired: false, reason: 'enqueue_failed' };
   }
+}
+
+// A leftover `pending` means a crash between reserve and confirm: the quota stays spent, nothing is re-enqueued.
+function reconcile(ctx, s) {
+  let changed = false;
+  for (const r of Object.values(s.routines)) {
+    if (r.pending === undefined) continue;
+    ctx.state.append({ type: 'routine_error', routine: r.id, why: 'reconcile', error: 'interrupted before confirmation', occurrence: String(r.pending) });
+    r.last_error = 'interrupted before confirmation'; delete r.pending; changed = true;
+  }
+  if (changed) store.save(ctx.state.dir, s);
 }
 
 // One scheduler pass. A routine that is due (including runs missed while the server was down)
@@ -62,27 +81,32 @@ async function fire(ctx, s, r, now, why) {
 function tick(ctx, now = Date.now()) {
   return store.locked(async () => {
     const dir = ctx.state.dir, s = store.load(dir), fired = [];
+    reconcile(ctx, s);
     for (const r of Object.values(s.routines)) {
       if (r.paused) continue;
       let p; try { p = parse(r.schedule); } catch { continue; }
       const due = p.kind === 'interval' ? now >= (r.next_at || 0) : cronDue(p, r.cursor ?? now, now);
       if (!due) { if (p.kind === 'cron') r.cursor = now; continue; }
-      const res = await fire(ctx, s, r, now, 'schedule');
+      const occ = `${r.id}@${p.kind === 'interval' ? (r.next_at || 0) : now}`;
+      arm(r, now); // re-arm is persisted together with the reservation
+      const res = await fire(ctx, s, r, now, 'schedule', occ);
       if (res.fired) fired.push(r.id);
-      arm(r, now);
     }
     store.save(dir, s);
     return fired;
   });
 }
 
+// Routine ids come from URLs: shape-check and own-property-check every lookup.
+const lookup = (s, id) => (typeof id === 'string' && ID_RE.test(id) && Object.prototype.hasOwnProperty.call(s.routines, id)) ? s.routines[id] : undefined;
+
 const api = {
   list: ctx => store.locked(async () => Object.values(store.load(ctx.state.dir).routines).map(view)),
-  get: (ctx, id) => store.locked(async () => { const r = store.load(ctx.state.dir).routines[id]; return r ? view(r) : null; }),
+  get: (ctx, id) => store.locked(async () => { const r = lookup(store.load(ctx.state.dir), id); return r ? view(r) : null; }),
   create: (ctx, body, now = Date.now()) => store.locked(async () => {
     const v = validate(body, { partial: false, settings: ctx.settings });
     const s = store.load(ctx.state.dir);
-    if (s.routines[v.id]) throw httpErr('id exists', 409);
+    if (lookup(s, v.id)) throw httpErr('id exists', 409);
     if (Object.keys(s.routines).length >= ctx.settings.max_routines) throw bad(`at most ${ctx.settings.max_routines} routines`);
     const r = { ...v, paused: !!v.paused, created: now, runs: 0 };
     arm(r, now); s.routines[r.id] = r; store.save(ctx.state.dir, s);
@@ -92,7 +116,7 @@ const api = {
   update: (ctx, id, body, now = Date.now()) => store.locked(async () => {
     const v = validate(body, { partial: true, settings: ctx.settings });
     if (v.id !== undefined && v.id !== id) throw bad('id cannot change');
-    const s = store.load(ctx.state.dir), r = s.routines[id];
+    const s = store.load(ctx.state.dir), r = lookup(s, id);
     if (!r) throw httpErr('not found', 404);
     Object.assign(r, v);
     if (v.schedule !== undefined || v.paused === false) arm(r, now); // resuming never fires a backlog
@@ -102,14 +126,15 @@ const api = {
   }),
   remove: (ctx, id) => store.locked(async () => {
     const s = store.load(ctx.state.dir);
-    if (!s.routines[id]) throw httpErr('not found', 404);
+    if (!lookup(s, id)) throw httpErr('not found', 404);
     delete s.routines[id]; store.save(ctx.state.dir, s);
     ctx.state.append({ type: 'routine_deleted', routine: id });
   }),
   runNow: (ctx, id, now = Date.now()) => store.locked(async () => {
-    const s = store.load(ctx.state.dir), r = s.routines[id];
+    const s = store.load(ctx.state.dir); reconcile(ctx, s);
+    const r = lookup(s, id);
     if (!r) throw httpErr('not found', 404);
-    const res = await fire(ctx, s, r, now, 'run_now'); // does not move the schedule
+    const res = await fire(ctx, s, r, now, 'run_now', `${r.id}@run_now:${now}`); // does not move the schedule
     store.save(ctx.state.dir, s);
     return { ...res, routine: view(r) };
   }),

@@ -4,7 +4,7 @@
 // /m/chat-ui/ui/ (registry.uiFile). The standalone page is /m/chat-ui/ui/index.html;
 // ui/panel.js is the panel entry that mounts it inside another UI.
 module.exports = {
-  contract: 1,
+  contract: 2,
   name: 'chat-ui',
   description: 'Phone-first web chat for the dantomation server.',
   runsOn: 'main',

@@ -11,7 +11,7 @@ for everything else ("which colour?", "ship today?"). Off by default:
 ## Flow
 
 1. Asker: `dantomation question ask "Which colour?" Red Green Blue --free` prints
-   `{"question_id":"q-1a2b3c",...}`. Inside a task the question is tied to
+   `{"question_id":"q-1a2b3c4d5e6f708192a3b4c5",...}`. Inside a task the question is tied to
    `HARNESS_TASK_ID`.
 2. Owner: sees it in the `Questions` chat panel, `status`, or
    `dantomation question list`, and answers with a button, the route, or

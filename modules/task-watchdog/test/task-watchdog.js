@@ -84,8 +84,57 @@ const P = '/m/task-watchdog';
     const c2 = (await get(`${P}/tasks/c2`)).json;
     check('cancel failure recorded, task still flagged', c2.stalled && c2.stalled.cancelled === false && !!c2.stalled.cancel_error, JSON.stringify(c2.stalled));
 
+    // review fixes: persisted cancel request, no lost updates, reconcile of force-stopped tasks
+    {
+      const taskFile = id => path.join(tmp, 'state', 'm', 'task-watchdog', 'tasks', `${id}.json`);
+      const readRec = id => JSON.parse(fs.readFileSync(taskFile(id), 'utf8'));
+      const cfg = { cancel_enabled: true };
+      // guard-like process: ctx.tasks rejects. Any reason leaves a persisted request.
+      const guardReg = M.registry({ modules: { 'task-watchdog': true }, task_watchdog: cfg });
+      await M.emit(guardReg.mods, 'task.start', { task_id: 'g1', request: 'x', workdir: '.', resumed: false });
+      for (let i = 0; i < 3; i++) await M.emit(guardReg.mods, 'tool.done', { task_id: 'g1', tool: 'Bash', input: { c: 'q' }, ok: false });
+      const g1 = readRec('g1').stalled;
+      check('guard process: repeat_error leaves a persisted cancel request', g1.reason === 'repeat_error' && g1.cancel_requested && !g1.cancelled && !!g1.cancel_error, JSON.stringify(g1));
+      const calls = [];
+      const serverReg = M.registry({ modules: { 'task-watchdog': true }, task_watchdog: cfg },
+        { tasks: { cancel: async id => { calls.push(id); }, enqueue: async () => {}, get: async () => null } });
+      await serverReg.callRoute(serverReg.findRoute('GET', `${P}/stalled`), { actor: owner });
+      check('server sweep services the request regardless of reason', calls.filter(x => x === 'g1').length === 1 && readRec('g1').stalled.cancelled === true && readRec('g1').stalled.cancel_error === null, calls.join());
+      await serverReg.callRoute(serverReg.findRoute('GET', `${P}/stalled`), { actor: owner });
+      check('serviced request is not cancelled again', calls.filter(x => x === 'g1').length === 1);
+
+      // concurrent events of one task from several callers must not lose updates
+      await M.emit(guardReg.mods, 'task.start', { task_id: 'k1', request: 'x', workdir: '.', resumed: false });
+      await Promise.all(Array.from({ length: 20 }, () => M.emit(guardReg.mods, 'tool.done', { task_id: 'k1', tool: 'Read', input: {}, ok: true })));
+      check('concurrent tool.done events are all counted', readRec('k1').tool_events === 20, String(readRec('k1').tool_events));
+
+      // slow cancel in flight while progress arrives: the progress must not be overwritten
+      let release; const gate = new Promise(r => { release = r; });
+      const slowReg = M.registry({ modules: { 'task-watchdog': true }, task_watchdog: cfg },
+        { tasks: { cancel: async () => { await gate; }, enqueue: async () => {}, get: async () => null } });
+      await M.emit(slowReg.mods, 'task.start', { task_id: 's1', request: 'x', workdir: '.', resumed: false });
+      const bad3 = { task_id: 's1', tool: 'Bash', input: { c: 'w' }, ok: false };
+      await M.emit(slowReg.mods, 'tool.done', bad3); await M.emit(slowReg.mods, 'tool.done', bad3);
+      const inflight = M.emit(slowReg.mods, 'tool.done', bad3);
+      await new Promise(r => setTimeout(r, 50));
+      await M.emit(guardReg.mods, 'tool.done', { task_id: 's1', tool: 'Read', input: {}, ok: true });
+      release(); await inflight;
+      const s1 = readRec('s1');
+      check('cancel finishing late does not overwrite newer progress', s1.stalled === null && s1.progress_since_start === true && s1.err_count === 0, JSON.stringify(s1.stalled));
+
+      // force-stopped task (no task.end): server sweep marks it inactive
+      await M.emit(guardReg.mods, 'task.start', { task_id: 'e1', request: 'x', workdir: '.', resumed: false });
+      await M.emit(guardReg.mods, 'task.start', { task_id: 'e2', request: 'x', workdir: '.', resumed: false });
+      const recReg = M.registry({ modules: { 'task-watchdog': true }, task_watchdog: {} },
+        { tasks: { cancel: async () => {}, enqueue: async () => {}, get: async id => ({ id, state: id === 'e1' ? 'stopped' : 'running' }) } });
+      await recReg.callRoute(recReg.findRoute('GET', `${P}/tasks`), { query: {}, actor: owner });
+      check('terminal task state marks the tracked task inactive', readRec('e1').active === false && !!readRec('e1').ended_ts);
+      check('running task stays active', readRec('e2').active === true);
+      check('no leftover lock files', !fs.readdirSync(path.dirname(taskFile('e1'))).some(n => n.endsWith('.lock')));
+    }
+
     // routes
-    const lst = await get(`${P}/tasks`, { flagged: '1', limit: '10' });
+    const lst =await get(`${P}/tasks`, { flagged: '1', limit: '10' });
     check('tasks?flagged=1 lists flagged', lst.status === 200 && lst.json.tasks.length >= 3 && lst.json.tasks.every(t => t.stalled));
     check('bad limit is 400', (await get(`${P}/tasks`, { limit: '9999' })).status === 400);
     check('bad flagged is 400', (await get(`${P}/tasks`, { flagged: 'x' })).status === 400);

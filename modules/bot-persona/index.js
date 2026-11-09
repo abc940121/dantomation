@@ -59,7 +59,7 @@ const wrap = fn => async ctx => {
 };
 
 module.exports = {
-  contract: 1,
+  contract: 2,
   name: 'bot-persona',
   description: 'Per-bot persona text and memory notes from the owner, added to the bot prompt as labeled data.',
   runsOn: 'main',
@@ -70,7 +70,7 @@ module.exports = {
       handler: wrap(ctx => ({ status: 200, json: { bots: storeOf(ctx).list(), known: knownBots(ctx.config), limits: limits(ctx.settings) } })) },
     { method: 'GET', path: '/bots/:bot', description: 'persona and memory text of one bot', access: 'owner',
       handler: wrap(ctx => { requireKnown(ctx, ctx.params.bot); return { status: 200, json: view(ctx, ctx.params.bot) }; }) },
-    { method: 'PUT', path: '/bots/:bot', description: 'set {persona?, memory?}; an empty string clears that part', access: 'owner',
+    { method: 'PATCH', path: '/bots/:bot', description: 'set {persona?, memory?}; an empty string clears that part', access: 'owner',
       handler: wrap(ctx => { apply(ctx, ctx.params.bot, ctx.body); return { status: 200, json: view(ctx, ctx.params.bot) }; }) },
     { method: 'DELETE', path: '/bots/:bot', description: 'clear persona and memory; ?part=persona|memory clears one', access: 'owner',
       handler: wrap(ctx => {

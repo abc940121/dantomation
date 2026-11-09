@@ -119,6 +119,33 @@ const owner = { kind: 'owner', id: 'test' };
     const f = await call('POST', '/m/routines/routines/morning/run');
     check('enqueue failure reported', f.status === 502 && f.json.routine.last_error === 'queue down', JSON.stringify(f.json));
 
+    // reservation before enqueue: state is durable while enqueue is in flight
+    edit(s => { s.day = '2000-01-01'; s.runs_today = 0; s.routines.morning.next_at = 0; delete s.routines.morning.pending; });
+    let snap = null;
+    const ctxSnap = { ...ctx, tasks: { enqueue: async () => { snap = JSON.parse(fs.readFileSync(file, 'utf8')); return { id: 'tsnap' }; } } };
+    await api.tick(ctxSnap, Date.now());
+    check('occurrence reserved before enqueue', snap && snap.routines.morning.pending && snap.routines.morning.next_at > Date.now() && snap.runs_today === 1, JSON.stringify(snap && snap.routines.morning));
+    check('pending cleared after confirm', JSON.parse(fs.readFileSync(file, 'utf8')).routines.morning.pending === undefined);
+
+    // crash between enqueue and save: leftover pending is reconciled, never re-enqueued
+    edit(s => { s.routines.morning.pending = 'morning@0'; s.routines.morning.next_at = Date.now() + 3600e3; });
+    const nCrash = enq.length;
+    await api.tick(ctx, Date.now());
+    const after = JSON.parse(fs.readFileSync(file, 'utf8')).routines.morning;
+    check('crash leftover not re-enqueued', enq.length === nCrash && after.pending === undefined && /interrupted/.test(after.last_error));
+
+    // prototype safety on id lookups
+    const protoBefore = ({}).polluted;
+    for (const id of ['__proto__', 'constructor', 'toString', 'hasOwnProperty']) {
+      const x = await call('PATCH', '/m/routines/routines/' + id, { prompt: 'polluted' });
+      const g = await call('GET', '/m/routines/routines/' + id);
+      const d = await call('DELETE', '/m/routines/routines/' + id);
+      const u = await call('POST', '/m/routines/routines/' + id + '/run');
+      check('proto id ' + id + ' is 404', [x.status, g.status, d.status, u.status].every(c => c === 404), `${x.status} ${g.status} ${d.status} ${u.status}`);
+    }
+    check('Object.prototype not polluted', ({}).prompt === undefined && ({}).polluted === protoBefore && Object.prototype.prompt === undefined);
+    check('proto id create refused', (await call('POST', '/m/routines/routines', { ...good, id: '__proto__' })).status === 400);
+
     // journal: records exist, prompt text never journaled
     const recs = J.readAll().records.filter(x => x.module === 'routines');
     check('records written', ['routine_created', 'routine_fired', 'routine_error', 'routine_skipped'].every(t => recs.some(x => x.type === t)));

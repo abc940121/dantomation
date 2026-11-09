@@ -1,0 +1,11 @@
+{
+  "suites": [
+    {
+      "label": "checkpoint",
+      "file": "test/checkpoint.js",
+      "needs": [
+        "checkpoint"
+      ]
+    }
+  ]
+}

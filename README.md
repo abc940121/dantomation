@@ -122,7 +122,8 @@ Everything specific to one owner lives outside this repo, in one file read at ru
 ## Tests
 
     node test/run-all.js core     # every module off: end-to-end fake-engine task + the crash/resume suites; module suites SKIP
-    node test/run-all.js <module> # one module on (guard-base, guard-private-rules, checkpoint, voice, spend-count, approval-cards, claim-audit, hello-stub, chat-ui, worker, voice-chat)
+    node test/run-all.js <module> # one module on (any folder under modules/)
+    node test/run-all.js module <name>  # only that module's suites (from modules/<name>/tests.json)
     node test/run-all.js all      # every module on: all suites
     node test/run-all.js every    # core, each module alone, all
     node test/run-all.js default  # no HARNESS_CONFIG: your own config, if any

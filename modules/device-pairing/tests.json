@@ -1,0 +1,11 @@
+{
+  "suites": [
+    {
+      "label": "device-pairing",
+      "file": "test/device-pairing.js",
+      "needs": [
+        "device-pairing"
+      ]
+    }
+  ]
+}

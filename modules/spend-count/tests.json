@@ -1,0 +1,11 @@
+{
+  "suites": [
+    {
+      "label": "spend",
+      "file": "test/spend.js",
+      "needs": [
+        "spend-count"
+      ]
+    }
+  ]
+}

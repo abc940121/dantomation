@@ -1,0 +1,16 @@
+{
+  "suites": [
+    {
+      "label": "approval-cards",
+      "file": "test/approval-cards.js",
+      "needs": [
+        "approval-cards"
+      ]
+    },
+    {
+      "label": "approval-cards-contract",
+      "file": "test/contract.js",
+      "needs": []
+    }
+  ]
+}

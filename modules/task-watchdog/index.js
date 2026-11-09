@@ -56,30 +56,100 @@ function signature(p) {
   return crypto.createHash('sha256').update(text).digest('hex').slice(0, 16);
 }
 
-// ---- trigger ----
-async function trigger(ctx, rec, reason, detail, now) {
-  if (rec.stalled && rec.stalled.reason === reason) return false; // already flagged for this reason
-  rec.stalled = { reason, detail: clip(detail, 200), ts: now, cancel_requested: false, cancelled: false, cancel_error: null, dismissed: false };
-  rec.history = (rec.history || []).concat({ reason, ts: now }).slice(-20);
-  if (ctx.settings.cancel_enabled) {
-    rec.stalled.cancel_requested = true;
-    try { await ctx.tasks.cancel(rec.task_id); rec.stalled.cancelled = true; }
-    catch (e) { rec.stalled.cancel_error = clip(e && e.message, 200); }
+// ---- per-task lock: guard, harness and server processes all touch the same file ----
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const LOCK_STALE_MS = 5000;
+async function withLock(ctx, id, fn) {
+  const lock = `${fileOf(ctx, id)}.lock`;
+  const t0 = Date.now();
+  for (;;) {
+    try { fs.closeSync(fs.openSync(lock, 'wx')); break; }
+    catch (e) {
+      // Windows reports EPERM/EACCES/EBUSY while the old lock file is delete-pending: retry those.
+      const transient = e && (e.code === 'EPERM' || e.code === 'EACCES' || e.code === 'EBUSY');
+      if (!e || (e.code !== 'EEXIST' && !(transient && Date.now() - t0 <= LOCK_STALE_MS))) break; // cannot lock (read-only dir etc.): run unlocked rather than block events
+      if (transient) { await sleep(5 + Math.floor(Math.random() * 15)); continue; }
+      let age = 0; try { age = Date.now() - fs.statSync(lock).mtimeMs; } catch { continue; }
+      if (age > LOCK_STALE_MS || Date.now() - t0 > LOCK_STALE_MS) { try { fs.unlinkSync(lock); } catch { /* raced */ } continue; }
+      await sleep(5 + Math.floor(Math.random() * 15));
+    }
   }
-  save(ctx, rec);
-  try { ctx.state.append({ type: 'task_stalled', task_id: rec.task_id, reason, detail: rec.stalled.detail, cancel_requested: rec.stalled.cancel_requested, cancelled: rec.stalled.cancelled }); } catch { /* journal best effort */ }
-  try { await ctx.emit('task-watchdog.stalled', { task_id: rec.task_id, reason, detail: rec.stalled.detail, cancelled: rec.stalled.cancelled }); } catch { /* handlers never block us */ }
+  try { return await fn(); } finally { try { fs.unlinkSync(lock); } catch { /* gone */ } }
+}
+// Locked read-modify-write. mut(rec|null) returns a record to save, or falsy to skip.
+// Callers never await anything slow (cancel, emit) inside mut.
+function update(ctx, id, mut) {
+  return withLock(ctx, id, () => { const rec = mut(load(ctx, id)); if (rec) save(ctx, rec); return rec || null; });
+}
+
+// ---- trigger ----
+// Phase 1 (locked): re-read the record, check the condition still holds, persist the flag
+// and, if cancel_enabled, a cancel request. Phase 2 (unlocked): try the cancel and merge the
+// outcome into a fresh read. A request that cannot be served here (guard/harness processes
+// have a rejecting ctx.tasks) stays persisted and the server-side sweep services it.
+async function trigger(ctx, id, reason, detail, now, still) {
+  let flagged = null;
+  await update(ctx, id, rec => {
+    if (!rec || (still && !still(rec))) return null;
+    if (rec.stalled && rec.stalled.reason === reason) return null; // already flagged for this reason
+    const prev = rec.stalled && rec.stalled.cancelled;
+    rec.stalled = { reason, detail: clip(detail, 200), ts: now, cancel_requested: false, cancelled: false, cancel_error: null, dismissed: false };
+    rec.history = (rec.history || []).concat({ reason, ts: now }).slice(-20);
+    if (ctx.settings.cancel_enabled) { rec.stalled.cancel_requested = true; if (prev) rec.stalled.cancelled = true; }
+    flagged = rec.stalled; return rec;
+  });
+  if (!flagged) return false;
+  if (flagged.cancel_requested && !flagged.cancelled) await serviceCancel(ctx, id, flagged.ts);
+  const cur = load(ctx, id), st = (cur && cur.stalled) || flagged;
+  try { ctx.state.append({ type: 'task_stalled', task_id: id, reason, detail: flagged.detail, cancel_requested: st.cancel_requested, cancelled: st.cancelled }); } catch { /* journal best effort */ }
+  try { await ctx.emit('task-watchdog.stalled', { task_id: id, reason, detail: flagged.detail, cancelled: st.cancelled }); } catch { /* handlers never block us */ }
   return true;
 }
 
-// Time-based check of every active task (job tick and the list routes).
+// Try ctx.tasks.cancel for a persisted request; record the outcome on a fresh read, and only
+// if the same flag (ts) is still there (progress or a restart may have cleared it meanwhile).
+async function serviceCancel(ctx, id, ts) {
+  let err = null;
+  try { await ctx.tasks.cancel(id); } catch (e) { err = clip((e && e.message) || 'cancel failed', 200); }
+  await update(ctx, id, rec => {
+    if (!rec || !rec.stalled || rec.stalled.ts !== ts) return null;
+    if (err) rec.stalled.cancel_error = err; else { rec.stalled.cancelled = true; rec.stalled.cancel_error = null; }
+    return rec;
+  });
+  return !err;
+}
+
+const TERMINAL = new Set(['done', 'failed', 'stopped']);
+// Server-side only (ctx.tasks works there): a force-stopped task never emits task.end, so mark
+// any tracked-active task whose task state is terminal as inactive, then prune.
+async function reconcile(ctx) {
+  for (const r of all(ctx)) {
+    if (!r.active) continue;
+    let t = null; try { t = await ctx.tasks.get(r.task_id); } catch { return; } // no task service in this process
+    if (!t || !TERMINAL.has(t.state)) continue;
+    await update(ctx, r.task_id, rec => {
+      if (!rec || !rec.active) return null;
+      const now = Date.now(); return Object.assign(rec, { active: false, ended_ts: now, last_seen_ts: now });
+    });
+  }
+  prune(ctx);
+}
+
+// Server-side check (job tick and the list routes): reconcile with task states, service cancel
+// requests left by other processes (any reason), then the time-based no_progress check.
 async function sweep(ctx, now = Date.now()) {
+  await reconcile(ctx);
+  for (const r of all(ctx)) {
+    const s = r.stalled;
+    if (r.active && s && s.cancel_requested && !s.cancelled) await serviceCancel(ctx, r.task_id, s.ts);
+  }
   const limit = ctx.settings.stall_minutes * 60000;
   let n = 0;
   for (const rec of all(ctx)) {
     if (!rec.active || (rec.stalled && rec.stalled.reason === 'no_progress')) continue;
     if (now - rec.last_progress_ts >= limit) {
-      if (await trigger(ctx, rec, 'no_progress', `no progress for ${ctx.settings.stall_minutes} min`, now)) n++;
+      if (await trigger(ctx, rec.task_id, 'no_progress', `no progress for ${ctx.settings.stall_minutes} min`, now,
+        r => r.active && now - r.last_progress_ts >= limit)) n++;
     }
   }
   return n;
@@ -89,35 +159,44 @@ async function sweep(ctx, now = Date.now()) {
 const okId = id => typeof id === 'string' && ID_RE.test(id);
 async function onStart(p, ctx) {
   if (!okId(p && p.task_id)) return;
-  const now = Date.now();
-  let rec = load(ctx, p.task_id);
-  if (!rec || !p.resumed) rec = fresh(p.task_id, now);
-  else rec.no_progress_continuations = rec.progress_since_start ? 0 : (rec.no_progress_continuations || 0) + 1;
-  Object.assign(rec, { active: true, ended_ts: null, last_seen_ts: now, last_progress_ts: now, progress_since_start: false, err_sig: null, err_count: 0, stalled: null });
-  save(ctx, rec); prune(ctx);
+  const now = Date.now(), id = p.task_id;
+  const rec = await update(ctx, id, old => {
+    let rec = old;
+    if (!rec || !p.resumed) rec = fresh(id, now);
+    else rec.no_progress_continuations = rec.progress_since_start ? 0 : (rec.no_progress_continuations || 0) + 1;
+    return Object.assign(rec, { active: true, ended_ts: null, last_seen_ts: now, last_progress_ts: now, progress_since_start: false, err_sig: null, err_count: 0, stalled: null });
+  });
+  prune(ctx);
   if (rec.no_progress_continuations >= ctx.settings.continuation_limit) {
-    await trigger(ctx, rec, 'continuations', `${rec.no_progress_continuations} continuations without progress`, now);
+    await trigger(ctx, id, 'continuations', `${rec.no_progress_continuations} continuations without progress`, now,
+      r => r.no_progress_continuations >= ctx.settings.continuation_limit);
   }
 }
 async function onTool(p, ctx) {
   if (!p || !okId(p.task_id)) return;
-  const now = Date.now();
-  const rec = load(ctx, p.task_id) || Object.assign(fresh(p.task_id, now), { active: true });
-  rec.tool_events = (rec.tool_events || 0) + 1; rec.last_seen_ts = now;
-  if (p.ok !== false) {
-    Object.assign(rec, { last_progress_ts: now, progress_since_start: true, no_progress_continuations: 0, err_sig: null, err_count: 0, stalled: null });
-    save(ctx, rec); return;
+  const now = Date.now(), id = p.task_id;
+  const sig = p.ok !== false ? null : signature(p);
+  const rec = await update(ctx, id, old => {
+    const rec = old || Object.assign(fresh(id, now), { active: true });
+    rec.tool_events = (rec.tool_events || 0) + 1; rec.last_seen_ts = now;
+    if (!sig) return Object.assign(rec, { last_progress_ts: now, progress_since_start: true, no_progress_continuations: 0, err_sig: null, err_count: 0, stalled: null });
+    rec.err_count = sig === rec.err_sig ? (rec.err_count || 0) + 1 : 1; rec.err_sig = sig;
+    return rec;
+  });
+  if (sig && rec.err_count >= ctx.settings.repeat_error_limit) {
+    await trigger(ctx, id, 'repeat_error', `same ${clip(p.tool, 40)} error ${rec.err_count} times`, now,
+      r => r.err_sig === sig && r.err_count >= ctx.settings.repeat_error_limit);
   }
-  const sig = signature(p);
-  rec.err_count = sig === rec.err_sig ? (rec.err_count || 0) + 1 : 1; rec.err_sig = sig;
-  save(ctx, rec);
-  if (rec.err_count >= ctx.settings.repeat_error_limit) await trigger(ctx, rec, 'repeat_error', `same ${clip(p.tool, 40)} error ${rec.err_count} times`, now);
 }
-function onEnd(p, ctx) {
+async function onEnd(p, ctx) {
   if (!okId(p && p.task_id)) return;
-  const rec = load(ctx, p.task_id); if (!rec) return;
-  Object.assign(rec, { active: false, ended_ts: Date.now(), last_seen_ts: Date.now() });
-  save(ctx, rec);
+  await update(ctx, p.task_id, rec => rec && Object.assign(rec, { active: false, ended_ts: Date.now(), last_seen_ts: Date.now() }));
+}
+// -> {rec, found}: rec is the updated record (null if missing or not flagged)
+async function dismiss(ctx, id) {
+  let found = false;
+  const rec = await update(ctx, id, r => { found = !!r; if (!r || !r.stalled) return null; r.stalled.dismissed = true; return r; });
+  return { rec, found };
 }
 
 // ---- views ----
@@ -129,7 +208,7 @@ const bad = (status, error) => ({ status, json: { error } });
 const byRecent = (a, b) => (b.last_seen_ts || 0) - (a.last_seen_ts || 0);
 
 module.exports = {
-  contract: 1,
+  contract: 2,
   name: 'task-watchdog',
   description: 'Flags stalled or looping tasks (no progress, repeated tool error, endless continuations); optionally cancels them.',
   runsOn: 'main',
@@ -160,12 +239,11 @@ module.exports = {
         const r = load(ctx, id); return r ? { status: 200, json: view(r) } : bad(404, 'not watched');
       } },
     { method: 'POST', path: '/tasks/:id/dismiss', access: 'owner', description: 'acknowledge a flag (hides it from the stalled list)',
-      handler(ctx) {
+      async handler(ctx) {
         const id = ctx.params && ctx.params.id;
         if (!okId(id)) return bad(400, 'bad task id');
-        const r = load(ctx, id); if (!r) return bad(404, 'not watched');
-        if (!r.stalled) return bad(409, 'not flagged');
-        r.stalled.dismissed = true; save(ctx, r);
+        const { rec: r, found } = await dismiss(ctx, id);
+        if (!r) return found ? bad(409, 'not flagged') : bad(404, 'not watched');
         ctx.state.append({ type: 'task_stall_dismissed', task_id: r.task_id });
         return { status: 200, json: view(r) };
       } },
@@ -184,9 +262,9 @@ module.exports = {
       }
       if (sub === 'dismiss') {
         if (process.env.HARNESS_TASK_ID) { console.error('watchdog dismiss is for the owner, not inside a task'); return { handled: true, code: 2 }; }
-        const id = args[1]; const r = okId(id) ? load(ctx, id) : null;
-        if (!r || !r.stalled) { console.error('no such flagged task'); return { handled: true, code: 1 }; }
-        r.stalled.dismissed = true; save(ctx, r); return { handled: true, code: 0 };
+        const id = args[1]; const r = okId(id) ? (await dismiss(ctx, id)).rec : null;
+        if (!r) { console.error('no such flagged task'); return { handled: true, code: 1 }; }
+        return { handled: true, code: 0 };
       }
       console.error('usage: watchdog [stalled|list|dismiss <task_id>]');
       return { handled: true, code: 1 };

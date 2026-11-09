@@ -1,0 +1,11 @@
+{
+  "suites": [
+    {
+      "label": "chat-ui",
+      "file": "test/chat-ui.js",
+      "needs": [
+        "chat-ui"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "suites": [
+    {
+      "label": "task-watchdog",
+      "file": "test/task-watchdog.js",
+      "needs": []
+    }
+  ]
+}

@@ -218,8 +218,8 @@ function mockServer() {
   const parseAnswer = require('../../../lib/modules').registry({ modules: { 'approval-cards': true } }).api('approval-cards').parseAnswer;
   const ctxOf = (b, extra = {}) => ({ body: b, settings: { api_base: base, wake: [], bots: [], followup_s: 8, status_s: 4, timeout_s: 180, token: 'missing' }, secret: () => null, api: dep => (dep === 'approval-cards' ? { parseAnswer } : {}), ...extra });
   const routeOf = p => mod.routes.find(r => r.path === p);
-  check('manifest: contract 1, dependsOn approval-cards, owner-only routes, secret token',
-    mod.contract === 1 && mod.dependsOn.includes('approval-cards') && mod.routes.every(r => !r.access) && mod.settings.token.type === 'secret');
+  check('manifest: contract 2, dependsOn approval-cards, owner-only routes, secret token',
+    mod.contract === 2 && mod.dependsOn.includes('approval-cards') && mod.routes.every(r => !r.access) && mod.settings.token.type === 'secret');
   m.script = [say1('t-b1', ['Routed.'])];
   const c1 = ctxOf({ text: 'hey assistant route test', spokenAt: Date.now() });
   const resp = await routeOf('/utterance').handler(c1);

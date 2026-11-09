@@ -1,0 +1,9 @@
+{
+  "suites": [
+    {
+      "label": "search",
+      "file": "test/search.js",
+      "needs": []
+    }
+  ]
+}

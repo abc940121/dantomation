@@ -29,7 +29,7 @@ function sessionSpend(transcript) {
 }
 
 module.exports = {
-  contract: 1,
+  contract: 2,
   name: 'spend-count',
   description: 'Counts the session spend from the transcript and blocks once it is over spend_limit_usd_per_session.',
   beforeTool({ input }) {

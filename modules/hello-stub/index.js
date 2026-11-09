@@ -7,7 +7,7 @@ const { isShell } = require('../../lib/shell');
 let ticks = 0, tasks = 0;
 
 module.exports = {
-  contract: 1,
+  contract: 2,
   name: 'hello-stub',
   description: 'Template module: one of every contract part.',
   runsOn: 'main',

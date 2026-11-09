@@ -9,7 +9,7 @@ const deny = { status: 403, json: { error: 'forbidden' } };
 const body = ctx => (ctx.body && typeof ctx.body === 'object' ? ctx.body : {});
 
 module.exports = {
-  contract: 1,
+  contract: 2,
   name: 'device-pairing',
   description: 'One-time pairing codes and per-device tokens for phones, with a deny-by-default route allowlist.',
   runsOn: 'main',

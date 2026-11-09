@@ -11,7 +11,7 @@ const isObj = v => v && typeof v === 'object' && !Array.isArray(v);
 const str = v => (typeof v === 'string' ? v : '');
 const settingKey = k => 'kind_' + k;
 
-// The setting is the default; an owner override (PUT /kinds) wins.
+// The setting is the default; an owner override (PATCH /kinds) wins.
 function enabled(ctx, store, kind) {
   const o = store.prefs();
   return kind in o ? o[kind] : ctx.settings[settingKey(kind)] !== false;
@@ -36,12 +36,12 @@ const intParam = (v, def, min, max) => {
 };
 
 const settings = { max_entries: { type: 'integer', default: 500, min: 10, max: 5000, description: 'most entries kept; read ones are pruned first, oldest first' } };
-for (const k of KINDS) settings[settingKey(k)] = { type: 'boolean', default: true, description: `record "${k}" notifications (the owner can override at runtime with PUT /kinds)` };
+for (const k of KINDS) settings[settingKey(k)] = { type: 'boolean', default: true, description: `record "${k}" notifications (the owner can override at runtime with PATCH /kinds)` };
 
 const kindsOf = (ctx, s) => { const kinds = {}; for (const k of KINDS) kinds[k] = enabled(ctx, s, k); return kinds; };
 
 module.exports = {
-  contract: 1,
+  contract: 2,
   name: 'notifications',
   description: 'In-app notification log for the owner: read/unread, bounded, per-kind switch.',
   runsOn: 'main',
@@ -84,7 +84,7 @@ module.exports = {
       } },
     { method: 'GET', path: '/kinds', description: 'per-kind on/off (effective values)', access: 'owner',
       handler: ctx => ({ status: 200, json: { kinds: kindsOf(ctx, storeOf(ctx)) } }) },
-    { method: 'PUT', path: '/kinds', description: 'body {kind: true|false|null}; null clears the override', access: 'owner',
+    { method: 'PATCH', path: '/kinds', description: 'body {kind: true|false|null}; null clears the override', access: 'owner',
       handler: ctx => {
         const b = ctx.body;
         if (!isObj(b) || !Object.keys(b).length) return bad('body must be an object of kind: boolean');

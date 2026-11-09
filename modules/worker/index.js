@@ -5,7 +5,7 @@
 // Its bearer token lives in an owner-only file (setup.js token), not in config.
 // worker.js reads the "worker" config section itself; this schema validates it at load.
 module.exports = {
-  contract: 1,
+  contract: 2,
   name: 'worker',
   description: 'Pull-queue worker process: runs jobs the server queues, inside one work folder.',
   runsOn: 'worker',

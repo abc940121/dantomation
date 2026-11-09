@@ -1,0 +1,9 @@
+{
+  "suites": [
+    {
+      "label": "chat-endpoint",
+      "file": "test/chat-endpoint.js",
+      "needs": []
+    }
+  ]
+}

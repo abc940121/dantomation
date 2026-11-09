@@ -72,7 +72,7 @@ const T0 = Date.parse('2030-01-01T00:00:00Z');
 
     // ---- ask / list / get
     let r = await call('POST', '/questions', { body: ASK });
-    check('ask: 201 with id and pending', r.status === 201 && /^q-[0-9a-f]{6}$/.test(r.json.question.question_id) && r.json.question.state === 'pending', JSON.stringify(r));
+    check('ask: 201 with id and pending', r.status === 201 && /^q-[0-9a-f]{24}$/.test(r.json.question.question_id) && r.json.question.state === 'pending', JSON.stringify(r));
     const id1 = r.json.question.question_id;
     check('ask: event question.asked emitted', events().join() === 'question.asked');
     r = await call('POST', '/questions', { body: { text: 'q', options: ['only'] } });
@@ -101,7 +101,7 @@ const T0 = Date.parse('2030-01-01T00:00:00Z');
     const id2 = r.json.question.question_id;
     r = await call('POST', `/questions/${id2}/answer`, { actor: DEVICE, body: { text: 'Purple, please', where: 'cli' } });
     check('device answer: free text, source from actor (body.where ignored)', r.status === 200 && r.json.question.answer.free_text === 'Purple, please' && r.json.question.answer.who === 'device' && r.json.question.answer.device_id === 'phone-1' && r.json.question.answer.where === 'phone', JSON.stringify(r.json));
-    check('answer reaches the asking task as a history note', J.readAll().records.some(x => x.type === 'history_note' && x.task_id === 'task-7' && /question q-/.test(x.note) && x.note.includes('Purple, please')));
+    check('answer reaches the asking task as a history note', J.readAll().records.some(x => x.type === 'history_note' && x.task_id === 'task-7' && /question q-/.test(x.note) && !x.note.includes('Purple') && !x.note.includes(ASK.text) && x.note.includes(id2)));
     check('no note when asked without a task', !J.readAll().records.some(x => x.type === 'history_note' && x.note && x.note.includes(id1)));
 
     // ---- access
@@ -144,6 +144,34 @@ const T0 = Date.parse('2030-01-01T00:00:00Z');
     check('sweeping again does not emit again', events().filter(e => e === 'question.expired').length === 1);
     delete process.env.HARNESS_NOW;
 
+    // ---- texts stay out of the journal (they live in the module's vault); get still returns them
+    const SECRET_Q = 'sentinel-question-zq81', SECRET_O = ['sentinel-optA-zq81', 'sentinel-optB-zq81'], SECRET_A = 'sentinel-answer-zq81 hunter2';
+    const qs = (await call('POST', '/questions', { body: { text: SECRET_Q, options: SECRET_O, allow_free: true, task_id: 'task-sec' } })).json.question;
+    r = await call('POST', `/questions/${qs.question_id}/answer`, { body: { choice: 2, text: SECRET_A } });
+    const dump = fs.readFileSync(J.JOURNAL, 'utf8').split(String.fromCharCode(10)).filter(l => !l.includes('"type":"spy"')).join(String.fromCharCode(10)); // the spy module copies event payloads on purpose
+    check('journal holds no question text, option or free-text answer', r.status === 200 && !/sentinel-/.test(dump) && !/hunter2/.test(dump), (dump.match(/.{0,80}(sentinel-|hunter2).{0,40}/) || [''])[0]);
+    check('answer still readable from the module (text, option, free text)', (await call('GET', '/questions/' + qs.question_id)).json.question.answer.free_text === SECRET_A
+      && (await call('GET', '/questions/' + qs.question_id)).json.question.text === SECRET_Q && r.json.question.answer.option === SECRET_O[1]);
+    check('journal records for it carry metadata only', J.readAll().records.filter(x => x.question_id === qs.question_id && x.type === 'question_answer').every(x => x.free_len === SECRET_A.length && x.choice === 2 && x.free_text === undefined && x.option === undefined));
+
+    // ---- ids: 96 bits, never reused
+    const RB = crypto.randomBytes, firstId = qs.question_id;
+    check('ids are q- plus 24 hex', /^q-[0-9a-f]{24}$/.test(firstId));
+    let fed = 0;
+    crypto.randomBytes = (n, ...a) => (n === 12 && fed++ === 0 ? Buffer.from(firstId.slice(2), 'hex') : RB(n, ...a));
+    const q2 = (await call('POST', '/questions', { body: ASK })).json.question;
+    crypto.randomBytes = RB;
+    check('a colliding id is not reused; the old question is untouched', q2.question_id !== firstId && fed >= 2 && (await call('GET', '/questions/' + firstId)).json.question.text === SECRET_Q);
+
+    // ---- concurrent answer + cancel (same process): exactly one wins, one record, one event, one note
+    const qc = (await call('POST', '/questions', { body: { ...ASK, task_id: 'task-race' } })).json.question.question_id;
+    const before = events().length;
+    const rs = await Promise.all([call('POST', `/questions/${qc}/answer`, { body: { choice: 1 } }), call('POST', `/questions/${qc}/cancel`, { body: {} }), call('POST', `/questions/${qc}/answer`, { body: { choice: 2 } })]);
+    const decided = J.readAll().records.filter(x => x.question_id === qc && /^question_(answer|cancel)$/.test(x.type));
+    check('race: one 200, others 409', rs.filter(x => x.status === 200).length === 1 && rs.filter(x => x.status === 409).length === 2, rs.map(x => x.status).join());
+    check('race: one decision record, one event, one note', decided.length === 1 && events().length === before + 1 && J.readAll().records.filter(x => x.type === 'history_note' && x.task_id === 'task-race').length === 1);
+    await call('POST', `/questions/${q2.question_id}/cancel`, { body: {} });
+
     // ---- cap on pending
     const capStart = (await call('GET', '/questions')).json.questions.length;
     let last;
@@ -165,7 +193,7 @@ const T0 = Date.parse('2030-01-01T00:00:00Z');
     check('non-shell tools are not touched', (await M.beforeTool(reg.mods, { tool: 'Read', ti: { file_path: 'question answer' }, cwd: tmp })) === null);
     delete process.env.HARNESS_TASK_ID;
     check('outside a task the hook allows', (await g('dantomation question answer q-aaaaaa 1')) === null);
-    check('status lines list pending questions', (await call('GET', '/questions')).json.questions.length === 5 && reg.mods.find(m => m.name === 'question-cards').statusLines(J).length >= 2);
+    check('status lines list pending questions', (await call('GET', '/questions')).json.questions.length === 5 && reg.mods.find(m => m.name === 'question-cards').statusLines(J, { state: { dir: path.join(STATE, 'm', 'question-cards') } }).length >= 2);
   } catch (e) { check('no exception', false, e.stack); }
   finally { try { fs.rmSync(spyDir, { recursive: true, force: true }); } catch { /* best effort */ } }
 
@@ -178,7 +206,7 @@ const T0 = Date.parse('2030-01-01T00:00:00Z');
     const run = (args, extra = {}) => spawnSync(process.execPath, [path.join(ROOT, 'bin', 'harness.js'), 'question', ...args], { env: { ...env, ...extra }, encoding: 'utf8', timeout: 30000 });
     let p = run(['ask', 'Ship it today?', 'Yes', 'Not yet', 'Ask me later', '--free'], { HARNESS_TASK_ID: 'task-cli' });
     let id = null; try { id = JSON.parse(p.stdout.trim().split('\n').pop()).question_id; } catch { /* checked below */ }
-    check('cmd ask (in a task) prints the id', p.status === 0 && /^q-[0-9a-f]{6}$/.test(id), p.stdout + p.stderr);
+    check('cmd ask (in a task) prints the id', p.status === 0 && /^q-[0-9a-f]{24}$/.test(id), p.stdout + p.stderr);
     p = run(['ask', 'Only one', 'a']);
     check('cmd ask with 1 option exits 2', p.status === 2 && /options/.test(p.stderr));
     p = run(['get', id], { HARNESS_TASK_ID: 'task-cli' });
@@ -204,6 +232,13 @@ const T0 = Date.parse('2030-01-01T00:00:00Z');
     check('cmd answer with a bad choice exits 3', p.status === 3);
     p = run(['answer', id9, 'Y']);
     check('cmd answer by option text, case-insensitive', p.status === 0);
+    // two processes race to answer the same question
+    p = run(['ask', 'Race', 'x', 'y']);
+    const idr = JSON.parse(p.stdout.trim().split(String.fromCharCode(10)).pop()).question_id;
+    const spawnAns = (c) => new Promise(res => { const cp = require('child_process').spawn(process.execPath, [path.join(ROOT, 'bin', 'harness.js'), 'question', 'answer', idr, c], { env }); cp.on('close', code => res(code)); });
+    const codes = await Promise.all([spawnAns('1'), spawnAns('2'), spawnAns('1')]);
+    const ans = fs.readFileSync(path.join(st2, 'journal.jsonl'), 'utf8').split(String.fromCharCode(10)).filter(l => l.includes('"question_answer"') && l.includes(idr));
+    check('cmd race: exactly one process answers, the rest exit 3', codes.filter(c => c === 0).length === 1 && codes.filter(c => c === 3).length === 2 && ans.length === 1, codes.join());
     p = run(['bogus']);
     check('cmd unknown verb prints usage, exit 2', p.status === 2 && /usage/.test(p.stderr));
     check('state dir is only the temp one', fs.existsSync(path.join(st2, 'journal.jsonl')));

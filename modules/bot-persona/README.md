@@ -15,7 +15,7 @@ Routes (all owner access), served at `/m/bot-persona`:
 
 - `GET /bots` lists bots that have notes, the known bot ids and the limits.
 - `GET /bots/:bot` returns `{persona, memory, bytes, limits}`.
-- `PUT /bots/:bot` with `{persona?, memory?}`; an empty string clears that part.
+- `PATCH /bots/:bot` with `{persona?, memory?}`; an empty string clears that part. (PATCH, not PUT: the core server only reads request bodies for POST and PATCH.)
   All fields are validated before anything is written.
 - `DELETE /bots/:bot` clears both; `?part=persona|memory` clears one.
 

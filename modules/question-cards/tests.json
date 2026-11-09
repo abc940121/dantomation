@@ -1,0 +1,9 @@
+{
+  "suites": [
+    {
+      "label": "question-cards",
+      "file": "test/question-cards.js",
+      "needs": []
+    }
+  ]
+}

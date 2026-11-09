@@ -1,0 +1,18 @@
+{
+  "suites": [
+    {
+      "label": "voice-lock",
+      "file": "test/voice-lock.js",
+      "needs": [
+        "voice"
+      ]
+    },
+    {
+      "label": "voice-vad",
+      "file": "test/vad.js",
+      "needs": [
+        "voice"
+      ]
+    }
+  ]
+}

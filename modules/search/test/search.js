@@ -112,6 +112,14 @@ const owner = { kind: 'owner', id: 'test' };
     const ix = createIndex({ maxDocs: 100, maxDocChars: 50 });
     for (let i = 0; i < 150; i++) ix.ingest({ type: 'reply', id: 'r' + i, task_id: 'x', text: `item${i} ` + 'z'.repeat(100) });
     check('max_docs bounds memory, oldest dropped', ix.size() <= 100 && ix.query({ q: 'item149', limit: 5, offset: 0 }).total === 1 && ix.query({ q: 'item0', limit: 5, offset: 0 }).total === 0, ix.size());
+    const wx = createIndex({ maxDocs: 100, maxDocChars: 50 });
+    wx.ingest({ type: 'job_queued', id: 'q1', job_id: 'j1', task_id: 'w1', bot: 'gamma', kind: 'task', payload: { prompt: 'worker prompt kiwi ' + 'p'.repeat(100) } });
+    wx.ingest({ type: 'job_result', id: 'q2', job_id: 'j1', task_id: 'w1', ok: true, result: { reply: 'worker reply mango ' + 'k'.repeat(100) } });
+    wx.ingest({ type: 'job_queued', id: 'q3', job_id: 'j2', task_id: 'w2', bot: 'gamma', kind: 'other', payload: { prompt: 'nontask lychee' } });
+    wx.ingest({ type: 'job_result', id: 'q4', job_id: 'j3', task_id: 'w3', ok: false, result: { reply: 'failed durian' } });
+    const qk = x => wx.query({ q: x, limit: 5, offset: 0 });
+    check('worker job prompt and reply indexed with bot', qk('kiwi').total === 1 && qk('kiwi').hits[0].bot === 'gamma' && qk('mango').total === 1 && qk('mango').hits[0].bot === 'gamma' && qk('mango').hits[0].task_id === 'w1', [qk('kiwi'), qk('mango')]);
+    check('worker records are size-bounded, non-task and failed ignored', qk('mango').hits[0].snippet.length <= 60 && qk('lychee').total === 0 && qk('durian').total === 0);
     check('max_doc_chars clips indexed text', ix.query({ q: 'item149', limit: 5, offset: 0 }).hits[0].snippet.length <= 60);
   } catch (e) { check('no exception', false, e.stack); }
   finally { fs.rmSync(tmp, { recursive: true, force: true }); }

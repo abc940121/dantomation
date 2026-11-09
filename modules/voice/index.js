@@ -10,7 +10,7 @@ const path = require('path');
 const J = require('../../lib/journal');
 
 module.exports = {
-  contract: 1,
+  contract: 2,
   name: 'voice',
   description: 'Voice bridge guard half: a voice session gets no tools while a harness task is running.',
   beforeTool() {

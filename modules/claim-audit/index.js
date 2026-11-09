@@ -32,7 +32,7 @@ function statusLines(Jn) {
 }
 
 module.exports = {
-  contract: 1,
+  contract: 2,
   name: 'claim-audit',
   description: 'When a task ends, checks every "done" / "tested" claim of the final message against the journal; warns, never blocks.',
   on: { 'task.end': onTaskEnd },

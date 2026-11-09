@@ -10,7 +10,7 @@ const wrap = fn => async ctx => {
 };
 
 module.exports = {
-  contract: 1,
+  contract: 2,
   name: 'routines',
   description: 'Scheduled prompts: cron subset or interval, per-day cap, missed runs fire once.',
   runsOn: 'main',

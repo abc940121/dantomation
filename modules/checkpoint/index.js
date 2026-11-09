@@ -65,7 +65,7 @@ function statusLines(Jn) {
 // Snapshots live in state/ckpt (a git dir per task), not state/m/checkpoint/: a
 // documented exception (docs/MODULES.md); restore needs them at a fixed place.
 module.exports = {
-  contract: 1,
+  contract: 2,
   name: 'checkpoint',
   runsOn: ['main', 'worker'],
   description: 'Snapshots the task folder before every mutating tool call; owner commands restore and undo.',

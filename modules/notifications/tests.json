@@ -1,0 +1,9 @@
+{
+  "suites": [
+    {
+      "label": "notifications",
+      "file": "test/notifications.js",
+      "needs": []
+    }
+  ]
+}

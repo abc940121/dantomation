@@ -37,12 +37,12 @@ const fail = (r) => ({ status: r.status || 400, json: { error: r.error, ...(r.qu
 async function listPending(ctx) {
   const io = ioOf(ctx);
   await S.sweep(io);
-  return { status: 200, json: { questions: S.pending(io.J.readAll().records).map(S.view) } };
+  return { status: 200, json: { questions: S.pendingIO(io).map(S.view) } };
 }
 async function listRecent(ctx) {
   const io = ioOf(ctx);
   await S.sweep(io);
-  return { status: 200, json: { questions: [...S.fold(io.J.readAll().records).values()].filter(q => q.state !== 'pending').slice(-20).map(S.view) } };
+  return { status: 200, json: { questions: [...S.foldIO(io).values()].filter(q => q.state !== 'pending').slice(-20).map(S.view) } };
 }
 async function getOne(ctx) {
   const io = ioOf(ctx);
@@ -101,7 +101,7 @@ async function command(args, ctx) {
     if (inTask()) { console.error('questions are answered by the person at the keyboard, not by agents (HARNESS_TASK_ID is set). Stopping.'); process.exit(6); }
     if (verb === 'list') {
       await S.sweep(io);
-      for (const q of S.pending(io.J.readAll().records)) console.log(`${q.question_id}: ${clip(q.text, 120)} [${q.options.map((o, i) => `${i + 1}) ${o}`).join(' ')}]${q.allow_free ? ' (free text ok)' : ''}`);
+      for (const q of S.pendingIO(io)) console.log(`${q.question_id}: ${clip(q.text, 120)} [${q.options.map((o, i) => `${i + 1}) ${o}`).join(' ')}]${q.allow_free ? ' (free text ok)' : ''}`);
       return { ok: true };
     }
     if (verb === 'cancel') {
@@ -119,14 +119,14 @@ async function command(args, ctx) {
   return bad(USAGE);
 }
 
-function statusLines(Jn) {
+function statusLines(Jn, ctx) {
   const lines = [];
-  for (const q of S.pending(Jn.readAll().records)) lines.push(`question ${q.question_id} is waiting: ${clip(q.text, 100)}`, `  answer with: dantomation question answer ${q.question_id} <1-${q.options.length}>`);
+  for (const q of S.pending(Jn.readAll().records, S.vaultLoad({ state: ctx.state }))) lines.push(`question ${q.question_id} is waiting: ${clip(q.text, 100)}`, `  answer with: dantomation question answer ${q.question_id} <1-${q.options.length}>`);
   return lines;
 }
 
 module.exports = {
-  contract: 1,
+  contract: 2,
   name: 'question-cards',
   description: 'Bots ask the owner a multiple-choice question and wait for the answer.',
   runsOn: 'main',

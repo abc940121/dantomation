@@ -1,0 +1,11 @@
+{
+  "suites": [
+    {
+      "label": "voice-chat",
+      "file": "test/voice-chat.js",
+      "needs": [
+        "voice-chat"
+      ]
+    }
+  ]
+}

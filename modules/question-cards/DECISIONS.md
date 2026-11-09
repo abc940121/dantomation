@@ -28,3 +28,5 @@
    blocks nothing dangerous, and the owner may be away.
 9. Clock seam `HARNESS_NOW` (same as approval-cards) for tests.
 10. Ids are `q-` plus 6 hex chars; every id and task id is pattern-checked.
+11. Texts (question, options, free-text answers) are kept in `state/m/question-cards/vault.json`, not in the journal, which holds ids, lengths and the chosen option number. History notes name the question id and option number only; the task reads the answer with `question get`. Old journal records that still hold text keep folding.
+12. Ask, answer, cancel and expiry run under one inter-process lock file (`state/m/question-cards/lock`) so the server and the CLI cannot both decide a question; the loser gets 409. Ids are `q-` plus 24 hex (96 bits), checked for reuse under the lock; 6-hex ids from older versions are still accepted.

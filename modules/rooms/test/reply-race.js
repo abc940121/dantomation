@@ -38,6 +38,12 @@ async function run(label, settings, journalAfterDone) {
   p = await run('grace', { reply_grace_s: 0.3 }, () => {});
   check('no reply and no exit: the grace expires, nothing posted, skip journaled', !p.some(r => r.type === 'room_msg' && r.kind === 'bot') && p.some(r => r.type === 'room_turn_skipped') && Date.now() - s0 < 3000, p);
 
+  // resumed task: an engine_exit from the earlier run must not end the wait; the new run's reply is still read
+  const rs0 = Date.now();
+  p = await run('resumed', {}, id => { J.append({ type: 'engine_start', task_id: id }); J.append({ type: 'engine_exit', task_id: id }); J.append({ type: 'engine_start', task_id: id, resumed: true });
+    setTimeout(() => { J.append({ type: 'reply', task_id: id, text: 'resumed hello' }); J.append({ type: 'engine_exit', task_id: id }); }, 300); });
+  check('engine_exit from an earlier run does not skip the grace for a resumed task', p.some(r => r.type === 'room_msg' && r.kind === 'bot' && r.text === 'resumed hello') && Date.now() - rs0 >= 250, p);
+
   console.log(`\n${pass} passed, ${fail} failed`);
   fs.rmSync(process.env.HARNESS_STATE_DIR, { recursive: true, force: true });
   process.exit(fail ? 1 : 0);

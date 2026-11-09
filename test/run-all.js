@@ -2,28 +2,36 @@
 'use strict';
 // Run every suite under one module configuration and print one line per suite.
 //   node test/run-all.js core            all modules off (+ an end-to-end fake-engine task)
-//   node test/run-all.js <module>        only that module on (guard-base, guard-private-rules,
-//                                        checkpoint, voice, spend-count, approval-cards, claim-audit, hello-stub, chat-ui, worker, voice-chat, device-pairing, rooms, chat-endpoint)
+//   node test/run-all.js <module>        only that module on
+//   node test/run-all.js module <name>   only that module's suites (the module, plus the modules its suites need, on)
 //   node test/run-all.js all             all modules on
 //   node test/run-all.js default         no HARNESS_CONFIG: the owner's real config, if any
 //   node test/run-all.js every           core, each module alone, all
-// A temp config is written under os.tmpdir() and passed as HARNESS_CONFIG. A suite
-// that needs a module which is off prints SKIP. Exit 0 when no suite FAILs, except
-// that public-boundary's "history of HEAD" check is expected to fail on master
-// (see README, Tests): that one is reported as KNOWN, other failures there as FAIL.
+//   add --parallel [--jobs N] to run the suites of a mode at the same time (output stays in suite order)
+//   add --base <ref> to enable the trunk-diff suite against that base ref (else it SKIPs)
+// Modules are discovered: every modules/<name>/ with an index.js. Its suites come from
+// modules/<name>/tests.json {"suites": [{label, file, needs: [modules]}]} (file is relative
+// to the module folder), so adding a module never edits this file (docs/module-contract.md).
+// Core suites (test/*.js) are listed below. A temp config is written under os.tmpdir() and
+// passed as HARNESS_CONFIG. A suite that needs a module which is off prints SKIP. Exit 0
+// when no suite FAILs, except that public-boundary's "history of HEAD" check is expected to
+// fail on master (see README, Tests): that one is reported as KNOWN, other failures as FAIL.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawnSync } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
-const MODULES = ['voice', 'voice-chat', 'spend-count', 'guard-base', 'guard-private-rules', 'checkpoint', 'approval-cards', 'claim-audit', 'hello-stub', 'chat-ui', 'worker', 'device-pairing', 'rooms', 'chat-endpoint'];
-// [label, file, modules it needs on (empty: runs in any mode)]
-const SUITES = [
-  ['modules', 'test/modules.js', []],
-  ['module-contract', 'test/module-contract.js', []],
-  ['module-events', 'test/module-events.js', []],
-  ['module-seams', 'test/module-seams.js', []],
+const MODULES = fs.readdirSync(path.join(ROOT, 'modules'), { withFileTypes: true })
+  .filter(d => d.isDirectory() && fs.existsSync(path.join(ROOT, 'modules', d.name, 'index.js'))).map(d => d.name).sort();
+// [label, file, modules it needs on (empty: runs in any mode), exclusive?] -- core suites only.
+// exclusive: creates temp module folders under modules/ or scans the whole tree, so with --parallel
+// it runs alone after the parallel phase (the shared repo tree is the one shared resource).
+const CORE_SUITES = [
+  ['modules', 'test/modules.js', [], true],
+  ['module-contract', 'test/module-contract.js', [], true],
+  ['module-events', 'test/module-events.js', [], true],
+  ['module-seams', 'test/module-seams.js', [], true],
   ['entry', 'test/entry.js', ['guard-base', 'checkpoint']],
   ['journal-prompt', 'test/journal-prompt.js', []],
   ['lock-race', 'test/lock-race.js', []],
@@ -34,25 +42,19 @@ const SUITES = [
   ['server', 'test/server.js', []],
   ['server-jobs', 'test/server-jobs.js', []],
   ['integration', 'test/integration.js', ['chat-ui', 'approval-cards']],
-  ['guard-base', 'modules/guard-base/test/guard-base.js', ['guard-base']],
-  ['private-rules', 'modules/guard-private-rules/test/private-rules.js', ['guard-private-rules']],
-  ['checkpoint', 'modules/checkpoint/test/checkpoint.js', ['checkpoint']],
-  ['voice-lock', 'modules/voice/test/voice-lock.js', ['voice']],
-  ['voice-chat', 'modules/voice-chat/test/voice-chat.js', ['voice-chat']],
-  ['voice-vad', 'modules/voice/test/vad.js', ['voice']],
-  ['spend', 'modules/spend-count/test/spend.js', ['spend-count']],
-  ['approval-cards', 'modules/approval-cards/test/approval-cards.js', ['approval-cards']],
-  ['approval-cards-contract', 'modules/approval-cards/test/contract.js', []],
-  ['claim-audit', 'modules/claim-audit/test/claim-audit.js', ['claim-audit']],
-  ['hello-stub', 'modules/hello-stub/test/hello-stub.js', []],
-  ['chat-ui', 'modules/chat-ui/test/chat-ui.js', ['chat-ui']],
-  ['worker', 'modules/worker/test/worker.js', ['worker']],
-  ['device-pairing', 'modules/device-pairing/test/device-pairing.js', ['device-pairing']],
-  ['rooms', 'modules/rooms/test/rooms.js', []],
-  ['chat-endpoint', 'modules/chat-endpoint/test/chat-endpoint.js', []],
-  ['public-boundary', 'test/public-boundary.js', ['guard-base']],
+  ['trunk-diff', 'test/trunk-diff.js', []],
+  ['trunk-diff-test', 'test/trunk-diff.test.js', []],
 ];
+const LAST_SUITES = [['public-boundary', 'test/public-boundary.js', ['guard-base'], true]];
 
+// suites of a module, from modules/<name>/tests.json
+function moduleSuites(name) {
+  const f = path.join(ROOT, 'modules', name, 'tests.json');
+  if (!fs.existsSync(f)) return [];
+  const j = JSON.parse(fs.readFileSync(f, 'utf8'));
+  return (j.suites || []).map(s => [s.label, path.posix.join('modules', name, s.file), s.needs || [], !!s.exclusive]);
+}
+const SUITES = [...CORE_SUITES, ...MODULES.flatMap(moduleSuites), ...LAST_SUITES];
 function tempConfig(on) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'harness-runall-'));
   const modules = Object.fromEntries(MODULES.map(m => [m, on.includes(m)]));
@@ -75,50 +77,88 @@ function e2e(cfgFile) {
   return { ok, info: `exit ${r.status}, journal ${types.join('>')}, out.txt ${out}` };
 }
 
-function runMode(mode) {
-  let cfg = null, enabled;
+
+const sleepless = (cmdArgs, opts) => new Promise(resolve => {
+  const p = spawn(process.execPath, cmdArgs, { ...opts, stdio: ['ignore', 'pipe', 'pipe'] });
+  let out = '';
+  const t = setTimeout(() => p.kill(), 300000);
+  p.stdout.on('data', d => { out += d; }); p.stderr.on('data', d => { out += d; });
+  p.on('close', code => { clearTimeout(t); resolve({ status: code, out }); });
+});
+
+async function runSuite([label, file, needs], enabled, env) {
+  if (enabled && needs.some(n => !enabled.includes(n))) return { line: `SKIP  ${label} (needs ${needs.join(', ')})`, fail: false };
+  const t0 = Date.now();
+  const r = await sleepless([path.join(ROOT, file)], { env: { ...env, HARNESS_FAKE_DELAY_MS: env.HARNESS_FAKE_DELAY_MS } });
+  const out = r.out;
+  const lines = out.trim().split('\n');
+  let status = r.status === 0 ? 'PASS' : 'FAIL';
+  if (r.status === 0 && /^SKIP:/m.test(out)) status = 'SKIP';
+  let note = (lines.filter(l => /^(result|owner checks|PASS|FAIL)/.test(l)).pop() || lines[lines.length - 1] || '').slice(0, 110);
+  if (label === 'public-boundary' && status === 'FAIL') {
+    const bad = lines.filter(l => /^FAIL /.test(l));
+    if (bad.length === 1 && /history of HEAD/.test(bad[0])) { status = 'KNOWN'; note = 'only the history-of-HEAD check fails (by design on master); tree check passes'; }
+    else note = bad.join(' | ').slice(0, 150);
+  }
+  let line = `${status.padEnd(5)} ${label} (${((Date.now() - t0) / 1000).toFixed(1)}s) ${note}`;
+  if (status === 'FAIL' && process.env.RUNALL_VERBOSE) line += '\n' + out;
+  return { line, fail: status === 'FAIL', out };
+}
+
+async function runMode(mode, opts) {
+  let cfg = null, enabled, suites = SUITES;
   if (mode === 'default') enabled = null;
-  else {
+  else if (mode.startsWith('module:')) {
+    const name = mode.slice(7);
+    suites = moduleSuites(name);
+    enabled = [...new Set([name, ...suites.flatMap(s => s[2])])];
+    cfg = tempConfig(enabled);
+  } else {
     enabled = mode === 'all' ? MODULES : mode === 'core' ? [] : [mode];
     cfg = tempConfig(enabled);
   }
-  console.log(`\n== mode ${mode}: ${cfg ? 'HARNESS_CONFIG=' + cfg.file + ' modules ' + JSON.stringify(cfg.modules) : 'no HARNESS_CONFIG (owner config if present)'}`);
+  console.log(`\n== mode ${mode}${opts.parallel ? ' (parallel)' : ''}: ${cfg ? 'HARNESS_CONFIG=' + cfg.file + ' modules ' + JSON.stringify(cfg.modules) : 'no HARNESS_CONFIG (owner config if present)'}`);
   const env = { ...process.env };
   if (cfg) env.HARNESS_CONFIG = cfg.file; else delete env.HARNESS_CONFIG;
   delete env.HARNESS_OWNER;
+  if (opts.base) env.TRUNK_BASE = opts.base; else delete env.TRUNK_BASE;
   let fails = 0;
   if (mode === 'core') {
     const e = e2e(cfg.file);
     console.log(`${e.ok ? 'PASS' : 'FAIL'}  end-to-end fake-engine task: ${e.info}`);
     if (!e.ok) fails++;
   }
-  for (const [label, file, needs] of SUITES) {
-    if (enabled && needs.some(n => !enabled.includes(n))) { console.log(`SKIP  ${label} (needs ${needs.join(', ')})`); continue; }
-    const t0 = Date.now();
-    const r = spawnSync(process.execPath, [path.join(ROOT, file)], { env: { ...env, HARNESS_FAKE_DELAY_MS: env.HARNESS_FAKE_DELAY_MS }, encoding: 'utf8', timeout: 300000, maxBuffer: 1 << 26 });
-    const out = (r.stdout || '') + (r.stderr || '');
-    const lines = out.trim().split('\n');
-    let status = r.status === 0 ? 'PASS' : 'FAIL';
-    if (r.status === 0 && /^SKIP:/m.test(out)) status = 'SKIP';
-    let note = (lines.filter(l => /^(result|owner checks|PASS|FAIL)/.test(l)).pop() || lines[lines.length - 1] || '').slice(0, 110);
-    if (label === 'public-boundary' && status === 'FAIL') {
-      const bad = lines.filter(l => /^FAIL /.test(l));
-      if (bad.length === 1 && /history of HEAD/.test(bad[0])) { status = 'KNOWN'; note = 'only the history-of-HEAD check fails (by design on master); tree check passes'; }
-      else note = bad.join(' | ').slice(0, 150);
-    }
-    if (status === 'FAIL') fails++;
-    console.log(`${status.padEnd(5)} ${label} (${((Date.now() - t0) / 1000).toFixed(1)}s) ${note}`);
-    if (status === 'FAIL' && process.env.RUNALL_VERBOSE) console.log(out);
+  const results = [];
+  if (opts.parallel) {
+    // a pool of `jobs` workers over the non-exclusive suites, then the exclusive ones one by one
+    const todo = suites.map((s, i) => i).filter(i => !suites[i][3]);
+    await Promise.all(Array.from({ length: opts.jobs }, async () => { while (todo.length) { const i = todo.shift(); results[i] = await runSuite(suites[i], enabled, env); } }));
+    for (let i = 0; i < suites.length; i++) if (suites[i][3]) results[i] = await runSuite(suites[i], enabled, env);
+  }
+  for (let i = 0; i < suites.length; i++) {
+    const r = opts.parallel ? results[i] : await runSuite(suites[i], enabled, env);
+    console.log(r.line);
+    if (r.fail) fails++;
   }
   if (cfg) fs.rmSync(cfg.dir, { recursive: true, force: true });
   return fails;
 }
 
-const arg = process.argv[2] || 'all';
-const valid = ['core', 'all', 'default', 'every', ...MODULES];
-if (!valid.includes(arg)) { console.error(`usage: node test/run-all.js ${valid.join('|')}`); process.exit(2); }
-const modes = arg === 'every' ? ['core', ...MODULES, 'all'] : [arg];
-let total = 0;
-for (const m of modes) total += runMode(m);
-console.log(`\n${total ? 'FAILED' : 'ok'}: ${total} failing suite(s)`);
-process.exit(total ? 1 : 0);
+(async () => {
+  let args = process.argv.slice(2);
+  const opts = { parallel: false, base: null, jobs: Math.max(2, Math.min(4, os.cpus().length >> 1)) };
+  const ji = args.indexOf('--jobs');
+  if (ji >= 0) { opts.jobs = Math.max(1, parseInt(args[ji + 1], 10) || 1); args.splice(ji, 2); }
+  const bi = args.indexOf('--base');
+  if (bi >= 0) { opts.base = args[bi + 1]; args.splice(bi, 2); }
+  if (args.includes('--parallel')) { opts.parallel = true; args = args.filter(a => a !== '--parallel'); }
+  if (args[0] === 'module' && args[1]) args = ['module:' + args[1]];
+  const arg = args[0] || 'all';
+  const valid = ['core', 'all', 'default', 'every', ...MODULES, ...MODULES.map(m => 'module:' + m)];
+  if (!valid.includes(arg)) { console.error(`usage: node test/run-all.js [--parallel] [--base <ref>] core|all|default|every|<module>|module <name>  (modules: ${MODULES.join(', ')})`); process.exit(2); }
+  const modes = arg === 'every' ? ['core', ...MODULES, 'all'] : [arg];
+  let total = 0;
+  for (const m of modes) total += await runMode(m, opts);
+  console.log(`\n${total ? 'FAILED' : 'ok'}: ${total} failing suite(s)`);
+  process.exit(total ? 1 : 0);
+})();

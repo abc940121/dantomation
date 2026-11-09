@@ -241,7 +241,7 @@ const idLines = p => p.split('\n').filter(l => l.startsWith('- [id='));
   check('secrets in the human line are redacted in transcript and prompt', !JSON.stringify(sec.store.all()).includes(KEY) && !sec.calls[0].prompt.includes(KEY));
 
   // ---- module manifest and routes (fake ctx)
-  check('manifest: contract 1, name rooms, main', mod.contract === 1 && mod.name === 'rooms' && mod.runsOn === 'main');
+  check('manifest: contract 2, name rooms, main', mod.contract === 2 && mod.name === 'rooms' && mod.runsOn === 'main');
   let rn = 0;
   const ctx = (extra = {}) => ({ settings: { rooms: ROOM(), human_label: 'human', reply_timeout_s: 5, poll_ms: 10 }, state: { append: r => ({ id: 'r' + (++rn), ...r }) }, tasks: {}, params: {}, query: {}, body: {}, ...extra });
   const h = (m, p) => mod.routes.find(r => r.method === m && r.path === p).handler;

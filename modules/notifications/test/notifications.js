@@ -58,17 +58,33 @@ const OWNER = { kind: 'owner', id: 'test' };
     check('anonymous is forbidden', (await call('POST', '/m/notifications/read-all', { actor: { kind: 'anonymous' } })).status === 403);
 
     // per-kind switch
-    r = await call('PUT', '/m/notifications/kinds', { body: { task_finished: false } });
+    r = await call('PATCH', '/m/notifications/kinds', { body: { task_finished: false } });
     check('kind switched off', r.status === 200 && r.json.kinds.task_finished === false && r.json.kinds.task_failed === true);
     await emit('task.end', { task_id: 't4', code: 0 });
     check('disabled kind not recorded', (await call('GET', '/m/notifications/unread-count')).json.unread === 0);
-    await call('PUT', '/m/notifications/kinds', { body: { task_finished: null } });
+    await call('PATCH', '/m/notifications/kinds', { body: { task_finished: null } });
     await emit('task.end', { task_id: 't5', code: 0 });
     check('override cleared, recorded again', (await call('GET', '/m/notifications/unread-count')).json.unread === 1);
-    check('bad kind 400', (await call('PUT', '/m/notifications/kinds', { body: { nope: true } })).status === 400);
-    check('bad value 400', (await call('PUT', '/m/notifications/kinds', { body: { task_failed: 'yes' } })).status === 400);
-    check('non-object body 400', (await call('PUT', '/m/notifications/kinds', { body: [1] })).status === 400);
-    check('proto key refused', (await call('PUT', '/m/notifications/kinds', { body: JSON.parse('{"__proto__":true}') })).status === 400);
+    check('bad kind 400', (await call('PATCH', '/m/notifications/kinds', { body: { nope: true } })).status === 400);
+    check('bad value 400', (await call('PATCH', '/m/notifications/kinds', { body: { task_failed: 'yes' } })).status === 400);
+    check('non-object body 400', (await call('PATCH', '/m/notifications/kinds', { body: [1] })).status === 400);
+    check('proto key refused', (await call('PATCH', '/m/notifications/kinds', { body: JSON.parse('{"__proto__":true}') })).status === 400);
+
+    check('PUT /kinds is not routed', reg.findRoute('PUT', '/m/notifications/kinds') === null);
+
+    // concurrent writers: separate processes, same state dir, no lost updates
+    {
+      const { spawnSync, spawn } = require('child_process');
+      const dir = path.join(tmp, 'conc');
+      const script = `const s=require(${JSON.stringify(path.resolve(__dirname, '..', 'store'))}).open(${JSON.stringify(dir)});for(let i=0;i<40;i++)s.add('task_failed',{text:'x'},1000);`;
+      const procs = [0, 1, 2, 3].map(() => new Promise(res => spawn(process.execPath, ['-e', script], { stdio: 'ignore' }).on('exit', c => res(c))));
+      const codes = await Promise.all(procs);
+      const st = require('../store').open(dir);
+      const l = st.list({ limit: 200 });
+      const ids = new Set(l.items.map(x => x.id));
+      check('concurrent processes: no lost updates', codes.every(c => c === 0) && l.total === 160 && ids.size === 160, `${l.total}`);
+      check('no stray tmp or lock files', fs.readdirSync(dir).every(f => !f.endsWith('.tmp') && f !== 'store.lock'));
+    }
 
     // setting default off
     const reg2 = M.registry({ modules: { notifications: true }, notifications: { kind_task_failed: false } });

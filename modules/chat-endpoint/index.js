@@ -4,7 +4,7 @@
 const { makeDeliver } = require('./endpoint');
 
 module.exports = {
-  contract: 1,
+  contract: 2,
   name: 'chat-endpoint',
   description: 'Rooms engine for a bot behind an OpenAI-style chat URL: fail closed, secret/PII screen, no text kept by default.',
   runsOn: 'main',

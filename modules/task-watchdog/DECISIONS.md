@@ -22,3 +22,8 @@
 - `tool.done` has no error text yet, so "same error" means same tool call failing, not identical message.
 - Events reach only handlers in the emitting process; `task-watchdog.stalled` from the guard process does not reach the server.
 - `ctx.tasks.cancel` is a stub until S1.
+
+10. **Cancel is a persisted request; state is locked.** A flag with `cancel_enabled` stores `cancel_requested`. Guard and harness
+    processes cannot cancel (stub), so the server-side sweep services unresolved requests of any reason. Every read-modify-write
+    of a task file takes a per-task lock file and re-reads before commit; the sweep also marks tasks with a terminal task state
+    (done/failed/stopped) inactive, since a force-stop emits no task.end.

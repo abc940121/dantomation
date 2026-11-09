@@ -45,8 +45,9 @@ script.
 - Callbacks must not exit the process (commands excepted), must not keep timers
   outside `jobs`, and write only through `ctx.state` (see State), the log dir or
   the task folder.
-- In-repo modules are all contract 1. A manifest without `contract` is a legacy
-  contract-0 module, for modules kept outside this repo: it loads, unchecked,
+- In-repo modules all set `contract: 2` (accepted range 1 to the trunk version). A manifest without `contract` is refused
+  ("module <name> has no contract field; add \"contract\": 2"). `contract: 0` marks a legacy
+  module, for modules kept outside this repo: it loads, unchecked,
   with a printed warning (`module <name> uses legacy contract 0`). Only `name`,
   `priority`, `beforeTool`, `afterTool`, `onTaskStart`, `onTaskEnd`,
   `statusLines` and `commands` are read; its ctx is the old one (no `state`,
@@ -59,9 +60,14 @@ order is used for `beforeTool`, events, status lines and command claims.
 
 ## Fields
 
-### `contract`: integer, required
-The contract version the module was written for. A value above the core's version is a load error ("needs module contract 2").
-`contract: 1`
+### `contract`: integer, set it explicitly
+The contract version the module was written for (see the Version line in
+[module-contract.md](module-contract.md)). The loader accepts 1 up to the version
+its trunk supports; a higher value is a load error ("needs module contract 4; this
+core supports up to 3"). A future trunk uses it to tell which contract a module was
+written against. Every in-repo module sets it; the current modules use `2`. A manifest
+without the field is refused; `contract: 0` is legacy (below).
+`contract: 2`
 
 ### `name`: string, required
 Must equal the folder name (`[a-z0-9][a-z0-9-]*`). `task`, `tool`, `module` and `core` are reserved (core's event prefixes).

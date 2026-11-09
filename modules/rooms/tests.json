@@ -1,0 +1,14 @@
+{
+  "suites": [
+    {
+      "label": "rooms",
+      "file": "test/rooms.js",
+      "needs": []
+    },
+    {
+      "label": "reply-race",
+      "file": "test/reply-race.js",
+      "needs": []
+    }
+  ]
+}

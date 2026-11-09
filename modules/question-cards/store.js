@@ -1,20 +1,30 @@
 'use strict';
-// Question store. The journal is the single source of truth (append-only, fsynced);
+// Question store. The journal is the single source of truth for state (append-only, fsynced);
 // a question's state is a fold over its records, so a crash leaves it fully there or not at all.
-//   question         {question_id, task_id, text, options[], allow_free, created_at, expires_at}
-//   question_answer  {question_id, choice (1-based|null), option (text|null), free_text (text|null), who, where}
+// Texts (question, options, free-text answers) can hold secrets, so they never enter the journal:
+// they live in this module's protected vault file (state/m/question-cards/vault.json, owner-only)
+// and the journal carries metadata only (ids, lengths, the chosen option number).
+//   question         {question_id, task_id, text_len, option_lens[], allow_free, created_at, expires_at}
+//   question_answer  {question_id, choice (1-based|null), free_len (n|null), who, where}
 //   question_cancel  {question_id, who}
 //   question_expire  {question_id}
 // Events (after the journal write): question.asked, question.answered, question.cancelled, question.expired.
+// Answer, cancel, ask and expiry run under an inter-process lock (state/m/question-cards/lock), so the
+// HTTP server and the CLI never both decide the same question.
+// Records written by older versions (text in the journal, 6-hex ids) still fold.
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
+const JL = require('../../lib/journal');
 
 const LIMITS = { text: 500, option: 100, free: 500, min_options: 2, max_options: 6 };
-const ID_RE = /^q-[0-9a-f]{6}$/;
+const ID_RE = /^q-(?:[0-9a-f]{24}|[0-9a-f]{6})$/; // new ids carry 96 random bits; 6-hex ones are legacy
 const TASK_RE = /^[A-Za-z0-9._:-]{1,64}$/;
 const DEVICE_RE = /^[A-Za-z0-9._:-]{1,64}$/;
 const WHERE = ['chat', 'phone', 'voice', 'cli'];
 const DEFAULT_TIMEOUT_MIN = 60;
 const DEFAULT_MAX_PENDING = 50;
+const LOCK_WAIT_MS = 5000;
 
 // Clock seam for tests: HARNESS_NOW is an epoch-ms number or an ISO date.
 const now = () => {
@@ -89,27 +99,66 @@ function source(o) {
   return { who, where };
 }
 
-// records -> Map question_id -> question with .state: pending | answered | cancelled | expired
-function fold(records) {
+// ---- vault: the texts, kept out of the journal. Written atomically, only under the lock.
+const vaultFile = io => path.join(io.state.dir, 'vault.json');
+function vaultLoad(io) {
+  try { const v = JSON.parse(fs.readFileSync(vaultFile(io), 'utf8')); if (v && typeof v === 'object' && !Array.isArray(v)) return v; } catch { /* none yet */ }
+  return {};
+}
+function vaultSave(io, v) {
+  const f = vaultFile(io), tmp = `${f}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(v), { mode: 0o600 });
+  fs.renameSync(tmp, f);
+}
+
+// ---- inter-process lock (the HTTP server and the CLI are separate processes). fn runs while it is held.
+// Returns fn's result, or {error, status: 409} when the lock could not be had in time.
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+async function withLock(io, fn) {
+  const file = path.join(io.state.dir, 'lock');
+  const end = Date.now() + LOCK_WAIT_MS;
+  let got;
+  for (;;) {
+    got = JL.lock(file, { pids: [process.pid], module: 'question-cards' });
+    if (got.held || Date.now() >= end) break;
+    await sleep(10 + Math.floor(Math.random() * 20));
+  }
+  if (!got.held) return { error: 'busy: another question operation is in progress; try again', status: 409 };
+  try { return await fn(); } finally { JL.unlock(file, got.nonce); }
+}
+
+// records (+ vault) -> Map question_id -> question with .state: pending | answered | cancelled | expired
+function fold(records, vault) {
+  vault = vault || {};
   const qs = new Map();
   for (const r of records) {
     if (r.module !== 'question-cards') continue;
-    if (r.type === 'question') qs.set(r.question_id, { question_id: r.question_id, task_id: r.task_id || null, text: r.text, options: r.options, allow_free: !!r.allow_free,
-      created_at: r.created_at, expires_at: r.expires_at, state: 'pending', answer: null });
-    else if (qs.has(r.question_id)) {
+    if (r.type === 'question') {
+      const v = vault[r.question_id] || {};
+      qs.set(r.question_id, { question_id: r.question_id, task_id: r.task_id || null, text: v.text !== undefined ? v.text : (r.text || ''), options: v.options || r.options || [],
+        allow_free: !!r.allow_free, created_at: r.created_at, expires_at: r.expires_at, state: 'pending', answer: null });
+    } else if (qs.has(r.question_id)) {
       const q = qs.get(r.question_id);
       if (q.state !== 'pending') continue; // first decision wins
-      if (r.type === 'question_answer') q.state = 'answered', q.answer = { choice: r.choice, option: r.option, free_text: r.free_text, who: r.who, where: r.where || null, ...(r.device_id ? { device_id: r.device_id } : {}), at: r.ts || null };
-      else if (r.type === 'question_cancel') q.state = 'cancelled';
+      if (r.type === 'question_answer') {
+        const v = vault[r.question_id] || {};
+        const choice = r.choice === undefined ? null : r.choice;
+        q.state = 'answered';
+        q.answer = { choice, option: choice ? (q.options[choice - 1] || null) : null, free_text: v.free_text !== undefined ? v.free_text : (r.free_text || null), who: r.who, where: r.where || null,
+          ...(r.device_id ? { device_id: r.device_id } : {}), at: r.ts || null };
+      } else if (r.type === 'question_cancel') q.state = 'cancelled';
       else if (r.type === 'question_expire') q.state = 'expired';
     }
   }
   return qs;
 }
 const isExpired = q => q.state === 'pending' && now() >= Date.parse(q.expires_at);
-const pending = records => [...fold(records).values()].filter(q => q.state === 'pending' && !isExpired(q));
+const pending = (records, vault) => [...fold(records, vault).values()].filter(q => q.state === 'pending' && !isExpired(q));
 const view = q => ({ question_id: q.question_id, task_id: q.task_id, text: q.text, options: q.options, allow_free: q.allow_free, state: isExpired(q) ? 'expired' : q.state,
   created_at: q.created_at, expires_at: q.expires_at, answer: q.answer });
+// io-level helpers: journal + vault together
+const foldIO = io => fold(io.J.readAll().records, vaultLoad(io));
+const pendingIO = io => pending(io.J.readAll().records, vaultLoad(io));
 
 function timeoutMs(settings) {
   const m = Number(settings && settings.timeout_minutes);
@@ -117,59 +166,86 @@ function timeoutMs(settings) {
 }
 
 // io = { J, state, emit }
+// Notes reach the journal and the task's history: ids and the option number only, never texts.
 const note = (io, task_id, text) => task_id && io.state.append({ type: 'history_note', task_id, note: text });
+const flush = async (io, ev) => { for (const [name, p] of ev) await io.emit(name, p); };
+const newId = taken => { for (;;) { const id = 'q-' + crypto.randomBytes(12).toString('hex'); if (!taken(id)) return id; } };
+
+// Caller holds the lock. Returns the events to emit once it is released.
+function sweepLocked(io) {
+  const ev = [];
+  for (const q of foldIO(io).values()) {
+    if (!isExpired(q)) continue;
+    io.state.append({ type: 'question_expire', question_id: q.question_id, task_id: q.task_id });
+    ev.push(['question.expired', { question_id: q.question_id, task_id: q.task_id }]);
+    note(io, q.task_id, `question ${q.question_id} expired with no answer. Continue without it or choose a default and say so.`);
+  }
+  return ev;
+}
+
+// fn(ev) runs under the lock after expired questions are closed; returns {res}. Events flush after release.
+async function locked(io, fn) {
+  const r = await withLock(io, () => { const ev = sweepLocked(io); return { ev, ...fn(ev) }; });
+  if (!r.ev) return r; // lock timeout: {error, status}
+  await flush(io, r.ev);
+  return r.res;
+}
 
 async function ask(io, v, settings) {
   const cap = Number(settings && settings.max_pending) || DEFAULT_MAX_PENDING;
-  await sweep(io);
-  if (pending(io.J.readAll().records).length >= cap) return { error: `too many pending questions (limit ${cap}); wait for answers or cancel some`, status: 429 };
-  const question_id = 'q-' + crypto.randomBytes(3).toString('hex');
-  const t = now();
-  const rec = io.state.append({ type: 'question', question_id, task_id: v.task_id, text: v.text, options: v.options, allow_free: v.allow_free,
-    created_at: new Date(t).toISOString(), expires_at: new Date(t + timeoutMs(settings)).toISOString() });
-  await io.emit('question.asked', { question_id, task_id: v.task_id, text: v.text, options: v.options, allow_free: v.allow_free, expires_at: rec.expires_at });
-  return { question: view({ ...rec, state: 'pending', answer: null }) };
+  return locked(io, ev => {
+    if (pendingIO(io).length >= cap) return { res: { error: `too many pending questions (limit ${cap}); wait for answers or cancel some`, status: 429 } };
+    const vault = vaultLoad(io), known = new Set(io.J.readAll().records.filter(x => x.type === 'question').map(x => x.question_id));
+    const question_id = newId(id => known.has(id) || vault[id]);
+    const t = now();
+    vault[question_id] = { text: v.text, options: v.options };
+    vaultSave(io, vault); // texts first: a journaled question always has its text
+    const rec = io.state.append({ type: 'question', question_id, task_id: v.task_id, text_len: v.text.length, option_lens: v.options.map(o => o.length), allow_free: v.allow_free,
+      created_at: new Date(t).toISOString(), expires_at: new Date(t + timeoutMs(settings)).toISOString() });
+    ev.push(['question.asked', { question_id, task_id: v.task_id, text: v.text, options: v.options, allow_free: v.allow_free, expires_at: rec.expires_at }]);
+    return { res: { question: view({ question_id, task_id: v.task_id, text: v.text, options: v.options, allow_free: v.allow_free, created_at: rec.created_at, expires_at: rec.expires_at, state: 'pending', answer: null }) } };
+  });
 }
 
-function find(io, id) { return fold(io.J.readAll().records).get(String(id).toLowerCase()) || null; }
+function find(io, id) { return foldIO(io).get(String(id).toLowerCase()) || null; }
 const lookup = (io, id) => ID_RE.test(String(id).toLowerCase()) ? find(io, id) : null;
 
-// Returns {question} or {error, status}. Expired questions are closed first.
+// Returns {question} or {error, status}. Lookup, commit and note run under the lock, so exactly one
+// answer / cancel / expiry wins; the loser gets 409.
 async function answer(io, id, input, src) {
-  await sweep(io);
-  const q = lookup(io, id);
-  if (!q) return { error: 'no such question', status: 404 };
-  if (q.state !== 'pending') return { error: `question is ${q.state}`, status: 409, question: view(q) };
-  const v = validateAnswer(q, input);
-  if (!v.ok) return { error: v.error, status: 400 };
-  io.state.append({ type: 'question_answer', question_id: q.question_id, task_id: q.task_id, ...v.value, ...src });
-  await io.emit('question.answered', { question_id: q.question_id, task_id: q.task_id, choice: v.value.choice, option: v.value.option, free_text: v.value.free_text, who: src.who, where: src.where });
-  const said = [v.value.option && `"${v.value.option}"`, v.value.free_text && `free text "${v.value.free_text}"`].filter(Boolean).join(' and ');
-  note(io, q.task_id, `question ${q.question_id} ("${q.text}") was answered by the owner: ${said}. Continue with that answer.`);
-  return { question: view(find(io, q.question_id)) };
+  return locked(io, ev => {
+    const q = lookup(io, id);
+    if (!q) return { res: { error: 'no such question', status: 404 } };
+    if (q.state !== 'pending') return { res: { error: `question is ${q.state}`, status: 409, question: view(q) } };
+    const v = validateAnswer(q, input);
+    if (!v.ok) return { res: { error: v.error, status: 400 } };
+    if (v.value.free_text !== null) { const vault = vaultLoad(io); vault[q.question_id] = { ...vault[q.question_id], free_text: v.value.free_text }; vaultSave(io, vault); }
+    io.state.append({ type: 'question_answer', question_id: q.question_id, task_id: q.task_id, choice: v.value.choice, free_len: v.value.free_text === null ? null : v.value.free_text.length, ...src });
+    ev.push(['question.answered', { question_id: q.question_id, task_id: q.task_id, choice: v.value.choice, option: v.value.option, free_text: v.value.free_text, who: src.who, where: src.where }]);
+    const said = [v.value.choice !== null && `option ${v.value.choice}`, v.value.free_text !== null && `free text (${v.value.free_text.length} characters)`].filter(Boolean).join(' and ');
+    note(io, q.task_id, `question ${q.question_id} was answered by the owner: ${said}. Read the answer with: dantomation question get ${q.question_id}. Continue with that answer.`);
+    return { res: { question: view(find(io, q.question_id)) } };
+  });
 }
 
 async function cancel(io, id, who) {
-  await sweep(io);
-  const q = lookup(io, id);
-  if (!q) return { error: 'no such question', status: 404 };
-  if (q.state !== 'pending') return { error: `question is ${q.state}`, status: 409, question: view(q) };
-  io.state.append({ type: 'question_cancel', question_id: q.question_id, task_id: q.task_id, who });
-  await io.emit('question.cancelled', { question_id: q.question_id, task_id: q.task_id, who });
-  note(io, q.task_id, `question ${q.question_id} ("${q.text}") was withdrawn; no answer will come. Continue without it or choose a default and say so.`);
-  return { question: view(find(io, q.question_id)) };
+  return locked(io, ev => {
+    const q = lookup(io, id);
+    if (!q) return { res: { error: 'no such question', status: 404 } };
+    if (q.state !== 'pending') return { res: { error: `question is ${q.state}`, status: 409, question: view(q) } };
+    io.state.append({ type: 'question_cancel', question_id: q.question_id, task_id: q.task_id, who });
+    ev.push(['question.cancelled', { question_id: q.question_id, task_id: q.task_id, who }]);
+    note(io, q.task_id, `question ${q.question_id} was withdrawn; no answer will come. Continue without it or choose a default and say so.`);
+    return { res: { question: view(find(io, q.question_id)) } };
+  });
 }
 
 async function sweep(io) {
-  const out = [];
-  for (const q of fold(io.J.readAll().records).values()) {
-    if (!isExpired(q)) continue;
-    io.state.append({ type: 'question_expire', question_id: q.question_id, task_id: q.task_id });
-    await io.emit('question.expired', { question_id: q.question_id, task_id: q.task_id });
-    note(io, q.task_id, `question ${q.question_id} ("${q.text}") expired with no answer. Continue without it or choose a default and say so.`);
-    out.push(q.question_id);
-  }
-  return out;
+  if (![...foldIO(io).values()].some(isExpired)) return []; // common case: nothing to close, no lock
+  const r = await withLock(io, () => ({ ev: sweepLocked(io) }));
+  if (!r.ev) return [];
+  await flush(io, r.ev);
+  return r.ev.map(e => e[1].question_id);
 }
 
-module.exports = { LIMITS, ID_RE, validateAsk, validateAnswer, source, fold, pending, isExpired, view, ask, answer, cancel, sweep, find, lookup, now, DEFAULT_TIMEOUT_MIN };
+module.exports = { LIMITS, ID_RE, validateAsk, validateAnswer, source, fold, pending, foldIO, pendingIO, vaultLoad, isExpired, view, ask, answer, cancel, sweep, find, lookup, now, DEFAULT_TIMEOUT_MIN };

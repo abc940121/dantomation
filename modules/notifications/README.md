@@ -27,14 +27,14 @@ journal gets only `notification_created {n_id, kind}`.
 - `POST /:id/read` -> the entry, or 404
 - `POST /read-all` -> `{marked}`
 - `GET /kinds` -> `{kinds: {kind: bool}}` (effective values)
-- `PUT /kinds` body `{kind: true|false|null}` (`null` clears the override)
+- `PATCH /kinds` body `{kind: true|false|null}` (`null` clears the override)
 
 Entry: `{id, kind, text, ref, task_id, ts, read}`. Invalid input answers 400.
 
 ## Settings (config section `notifications`)
 
 - `max_entries` integer 10..5000, default 500. Over the cap, read entries are pruned first, oldest first, then unread ones.
-- `kind_card_pending`, `kind_question_asked`, `kind_task_failed`, `kind_task_finished`, `kind_room_mention`: boolean, default true. A runtime override set with `PUT /kinds` wins over the setting.
+- `kind_card_pending`, `kind_question_asked`, `kind_task_failed`, `kind_task_finished`, `kind_room_mention`: boolean, default true. A runtime override set with `PATCH /kinds` wins over the setting.
 
 State: `state/m/notifications/notifications.json` and `prefs.json`.
 Status line: `notifications: N unread`.

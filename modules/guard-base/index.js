@@ -8,7 +8,7 @@ function beforeTool({ tool, ti, cwd }) {
 }
 
 module.exports = {
-  contract: 1,
+  contract: 2,
   name: 'guard-base',
   runsOn: ['main', 'worker'],
   description: 'Blocks generic dangerous operations (destructive shell commands, secret writes, protected files).',

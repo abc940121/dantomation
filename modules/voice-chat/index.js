@@ -1,7 +1,7 @@
 'use strict';
 // voice-chat: hands-free text layer for the voice client. Wake phrase, echo guard,
 // card yes/no by voice, chat via the server's /api. Audio stays on the client machine.
-// Routes (module contract 1): POST /m/voice-chat/{utterance,poll,playback}, owner only.
+// Routes (module contract 2): POST /m/voice-chat/{utterance,poll,playback}, owner only.
 // The contract has no streaming responses yet, so utterance and poll answer once, with
 // {lines: [{say}..., {done: true, ...}]} (see DECISIONS.md, "S1-4 merge").
 const { vcFor, utteranceHandler, collect } = require('./routes');
@@ -11,7 +11,7 @@ const { SpeechPipeline, registerEngine, createEngine, engineNames } = require('.
 const body = ctx => (ctx.body && typeof ctx.body === 'object' ? ctx.body : {});
 
 module.exports = {
-  contract: 1,
+  contract: 2,
   name: 'voice-chat',
   description: 'Hands-free text layer for the voice client: wake phrase, echo guard, cards by voice.',
   runsOn: 'main',

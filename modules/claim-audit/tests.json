@@ -1,0 +1,11 @@
+{
+  "suites": [
+    {
+      "label": "claim-audit",
+      "file": "test/claim-audit.js",
+      "needs": [
+        "claim-audit"
+      ]
+    }
+  ]
+}

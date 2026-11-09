@@ -239,7 +239,7 @@ function assetTests() {
   check('css: dark mode, safe-area insets, tablet+ columns', /prefers-color-scheme:\s*dark/.test(css) && /env\(safe-area-inset-bottom\)/.test(css) && /env\(safe-area-inset-top\)/.test(css) && /min-width:\s*820px/.test(css));
   check('css: tap targets at least 44px', /button[^}]*min-height:\s*44px/.test(css));
   check('no names or user paths in module files', !fs.readdirSync(path.join(__dirname, '..'), { recursive: true }).filter(f => /\.(js|html|css|md)$/.test(f)).some(f => /\bDan\b|C:\\Users|\/Users\//.test(fs.readFileSync(path.join(__dirname, '..', f), 'utf8'))));
-  check('manifest: contract 1, one panel, entry exists under ui/, served at /m/chat-ui/ui/', mod.name === 'chat-ui' && mod.contract === 1 && mod.panels.length === 1 && /^ui\//.test(mod.panels[0].entry) && fs.existsSync(path.join(__dirname, '..', mod.panels[0].entry)) && MOUNT === '/m/chat-ui/ui/');
+  check('manifest: contract 2, one panel, entry exists under ui/, served at /m/chat-ui/ui/', mod.name === 'chat-ui' && mod.contract === 2 && mod.panels.length === 1 && /^ui\//.test(mod.panels[0].entry) && fs.existsSync(path.join(__dirname, '..', mod.panels[0].entry)) && MOUNT === '/m/chat-ui/ui/');
   hashTests();
   roomTests();
 }

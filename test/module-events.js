@@ -214,12 +214,15 @@ const mods = (cfg, names) => { const r = M.load(cfg); return [r, r.mods.map(m =>
     check('an empty value removes the secret', M.registry({ modules: { [sec]: true } }).settingsFor(sec).token === 'missing');
 
     // ---- legacy contract 0
-    const v0 = mod(N('v0'), `{ name: '${N('v0')}', beforeTool() { return null; }, onTaskStart() {} }`);
+    const v0 = mod(N('v0'), `{ name: '${N('v0')}', contract: 0, beforeTool() { return null; }, onTaskStart() {} }`);
     const gv = spawnSync(process.execPath, [path.join(ROOT, 'guards', 'guard.js')], { input: JSON.stringify({ session_id: 's', tool_name: 'Bash', tool_input: { command: 'echo hi' }, cwd: tmp }), env: env(cfgFile('v0', { modules: { [v0]: true } })), encoding: 'utf8' });
     check('a contract-0 module still loads, with a printed warning', gv.status === 0 && gv.stderr.includes(`module ${v0} uses legacy contract 0`), gv.stderr.trim());
+    const nc = mod(N('nc'), `{ name: '${N('nc')}', beforeTool() { return null; } }`);
+    const gn = spawnSync(process.execPath, [path.join(ROOT, 'guards', 'guard.js')], { input: JSON.stringify({ session_id: 's', tool_name: 'Bash', tool_input: { command: 'echo hi' }, cwd: tmp }), env: env(cfgFile('nc', { modules: { [nc]: true } })), encoding: 'utf8' });
+    check('a manifest without a contract field is refused', gn.stderr.includes(`module ${nc} has no contract field; add "contract": 2`), gn.stderr.trim());
     const inRepo = fs.readdirSync(M.DIR).filter(n => !n.startsWith('zz-') && fs.existsSync(path.join(M.DIR, n, 'index.js')));
-    const legacy = inRepo.filter(n => require(path.join(M.DIR, n, 'index.js')).contract !== 1);
-    check('every in-repo module is contract 1', legacy.length === 0, legacy.join(', '));
+    const legacy = inRepo.filter(n => require(path.join(M.DIR, n, 'index.js')).contract !== 2);
+    check('every in-repo module sets contract 2', legacy.length === 0, legacy.join(', '));
   } catch (e) { check('no exception', false, e.stack); }
   finally {
     for (const d of DIRS) fs.rmSync(d, { recursive: true, force: true });

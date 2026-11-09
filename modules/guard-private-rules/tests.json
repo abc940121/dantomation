@@ -1,0 +1,11 @@
+{
+  "suites": [
+    {
+      "label": "private-rules",
+      "file": "test/private-rules.js",
+      "needs": [
+        "guard-private-rules"
+      ]
+    }
+  ]
+}

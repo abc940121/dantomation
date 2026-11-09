@@ -1,0 +1,9 @@
+{
+  "suites": [
+    {
+      "label": "routines",
+      "file": "test/routines.js",
+      "needs": []
+    }
+  ]
+}

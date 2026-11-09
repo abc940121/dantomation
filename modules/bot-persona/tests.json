@@ -1,0 +1,9 @@
+{
+  "suites": [
+    {
+      "label": "bot-persona",
+      "file": "test/bot-persona.js",
+      "needs": []
+    }
+  ]
+}

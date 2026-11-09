@@ -219,7 +219,7 @@ async function decidedCards(ctx) {
 }
 
 module.exports = {
-  contract: 1,
+  contract: 2,
   name: 'approval-cards',
   description: 'Risky actions stop and ask the owner yes/no instead of running.',
   runsOn: 'main',

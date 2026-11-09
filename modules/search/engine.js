@@ -54,6 +54,7 @@ function createIndex({ maxDocs = 50000, maxDocChars = 4000 } = {}) {
   let post = new Map();          // term -> ascending array of seq
   let seq = 0;
   const taskBot = new Map();     // task_id -> bot
+  const taskJobs = new Map();    // job_id -> bot, for worker jobs of kind task
 
   function put(d) {
     docs.push(d);
@@ -80,6 +81,12 @@ function createIndex({ maxDocs = 50000, maxDocChars = 4000 } = {}) {
     } else if (r.type === 'queue_add' && typeof r.prompt === 'string') {
       if (r.task_id && bot) taskBot.set(r.task_id, bot);
       add({ ...base, kind: 'message', bot, room: null, text: r.prompt });
+    } else if (r.type === 'job_queued' && r.kind === 'task' && r.payload && typeof r.payload.prompt === 'string') {
+      if (r.task_id && bot) taskBot.set(r.task_id, bot);
+      if (r.job_id) taskJobs.set(r.job_id, bot);
+      add({ ...base, kind: 'message', bot, room: null, text: r.payload.prompt });
+    } else if (r.type === 'job_result' && r.ok === true && taskJobs.has(r.job_id) && r.result && typeof r.result === 'object' && typeof r.result.reply === 'string') {
+      add({ ...base, kind: 'message', bot: taskJobs.get(r.job_id) || taskBot.get(r.task_id) || null, room: null, text: r.result.reply });
     } else if (r.type === 'reply' && typeof r.text === 'string') {
       add({ ...base, kind: 'message', bot: taskBot.get(r.task_id) || null, room: null, text: r.text });
     } else if (r.type === 'room_msg' && typeof r.text === 'string' && r.room) {
@@ -122,7 +129,7 @@ function createIndex({ maxDocs = 50000, maxDocChars = 4000 } = {}) {
     return { total: matched.length, hits };
   }
 
-  return { ingest, query, size: () => docs.length, reset() { docs = []; post = new Map(); taskBot.clear(); } };
+  return { ingest, query, size: () => docs.length, reset() { docs = []; post = new Map(); taskBot.clear(); taskJobs.clear(); } };
 }
 
 // Reads only bytes appended since the last call. A shrunk file restarts from

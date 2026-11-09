@@ -78,6 +78,8 @@ const BAD = [
   ['unknown field', n => `module.exports = { contract: 1, name: '${n}', colour: 'red' };`, undefined, /unknown field "colour"/],
   ['missing name', () => 'module.exports = { contract: 1, beforeTool() { return null; } };', undefined, /missing "name"/],
   ['duplicate route', n => `const h = () => ({ status: 200, json: {} }); module.exports = { contract: 1, name: '${n}', routes: [{ method: 'GET', path: '/a/:x', handler: h }, { method: 'GET', path: '/a/:y', handler: h }] };`, undefined, /duplicate route GET \/a\/:y/],
+  ['contract above what the trunk supports', n => `module.exports = { contract: ${M.CONTRACT + 1}, name: '${n}' };`, undefined, new RegExp(`needs module contract ${M.CONTRACT + 1}; this core supports up to ${M.CONTRACT}`)],
+  ['contract not an integer', n => `module.exports = { contract: '2', name: '${n}' };`, undefined, /contract must be an integer, got/],
   ['newer contract', n => `module.exports = { contract: 99, name: '${n}' };`, undefined, /needs module contract 99/],
   ['default does not match its type', n => `module.exports = { contract: 1, name: '${n}', settings: { x: { type: 'number', default: 'ten', description: 'x' } } };`, undefined, /settings\.x\.default must be a number, got string/],
   ['panel entry missing', n => `module.exports = { contract: 1, name: '${n}', panels: [{ id: 'p', title: 'P', mount: 'chat', entry: 'ui/none.js' }] };`, undefined, /panels\[0\]\.entry ui\/none\.js does not exist/],
@@ -141,6 +143,11 @@ const BAD = [
         && r.mods.map(m => m.name).join() === 'hello-stub' && r.listRoutes().length === 1 && r.listRoutes()[0].module === 'hello-stub';
       check(`bad manifest (${label}): one clear error, hello-stub still loads`, ok, threw ? threw.stack : r.errors.join(' | '));
     }
+    // contract field: 1 and 2 and the trunk's own number load; every in-repo manifest sets it explicitly
+    const okc = [1, 2, M.CONTRACT].map((v, i) => { const n = `zz-ok-${i}-${tag}`; writeModule(n, `module.exports = { contract: ${v}, name: '${n}' };`, false); return n; });
+    const rc = M.registry({ modules: Object.fromEntries(okc.map(n => [n, true])) });
+    check('contract field: 1, 2 and the trunk number all load', rc.errors.length === 0 && rc.modules().map(m => m.contract).join() === `1,2,${M.CONTRACT}`, rc.errors.join(' | '));
+    check('contract field: every in-repo manifest sets contract explicitly, within the trunk number', fs.readdirSync(M.DIR).filter(d => fs.existsSync(path.join(M.DIR, d, 'index.js')) && !d.startsWith('zz-')).every(d => { const m = require(path.join(M.DIR, d, 'index.js')); return Number.isInteger(m.contract) && m.contract >= 1 && m.contract <= M.CONTRACT; }));
     const gb = guard(cfgFile('bad', { modules: { 'hello-stub': true, [`zz-bad-0-${tag}`]: true } }), 'echo fine');
     check('bad manifest: the real guard fails closed with the message, no stack trace', gb.code === 2 && gb.kind === 'module' && gb.err.includes(`zz-bad-0-${tag}`) && !/\n\s+at /.test(gb.err), gb.err);
   } catch (e) { check('no exception', false, e.stack); }
