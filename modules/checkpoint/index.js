@@ -1,6 +1,8 @@
 'use strict';
 // checkpoint: snapshot the task folder before every mutating tool call, and the
 // owner-only `harness.js restore <task> <n>` command (checkpoint.js has the how), and fork-from-step (fork.js).
+const fs = require('fs');
+const path = require('path');
 const { mutating } = require('../../lib/shell');
 const ck = require('./checkpoint');
 const fk = require('./fork');
@@ -64,6 +66,25 @@ function undoStack(records, task) {
 }
 const latestTask = records => { const s = records.filter(r => r.type === 'task_start'); return s.length ? s[s.length - 1] : null; };
 
+// How many undos would change the folder: the newest points equal to the folder now are
+// skipped, and a point equal to the one above it changes nothing (undoCmd skips both).
+// cur null (folder unknown) counts the newest point.
+function distinctPoints(task, stack, cur) {
+  const trees = ck.treesOf(task, stack);
+  let count = 0, above = cur;
+  for (let i = trees.length - 1; i >= 0; i--) { if (trees[i] !== above) count++; above = trees[i]; }
+  return count;
+}
+
+// Files undo would overwrite that changed after the task's engine last exited: most likely
+// edited by hand. They are not lost (restore saves a safety point first), but the person is told.
+function handEdits(task, records, targetTree, cur, dir) {
+  let end = NaN;
+  for (const r of records) if (r.task_id === task && r.type === 'engine_exit') end = Date.parse(r.ts);
+  if (!Number.isFinite(end) || !dir) return [];
+  return ck.changedPaths(targetTree, cur).filter(p => { try { return fs.statSync(path.join(dir, p)).mtimeMs > end + 1000; } catch { return false; } });
+}
+
 function undoInfo(J) {
   const t = latestTask(J.readAll().records);
   return t ? { task: t.task_id, count: undoStack(J.readAll().records, t.task_id).length } : { task: null, count: 0 };
@@ -84,24 +105,38 @@ function undoCmd(args, { J, EXEC_LOCK }) {
   try {
     // Skip points whose snapshot equals the folder now (e.g. taken before a tool that changed
     // nothing): restoring one would change nothing, and the person would see "removed 0 file(s)".
+    let cur = null;
     try {
-      const cur = ck.currentTree(t.task_id, ck.taskDir(t.task_id));
+      cur = ck.currentTree(t.task_id, ck.taskDir(t.task_id));
       while (stack.length && ck.treeOf(t.task_id, stack[stack.length - 1]) === cur) stack.pop();
     } catch { /* cannot compare: undo the top point as before */ }
     if (!stack.length) { console.log(`nothing left to undo for task ${t.task_id}: ${t.workdir} already matches every undo point`); return; }
     const n = stack[stack.length - 1];
+    let hand = [];
+    try { if (cur) hand = handEdits(t.task_id, records, ck.treeOf(t.task_id, n), cur, ck.taskDir(t.task_id)); } catch { /* the warning is best effort */ }
+    if (hand.length) console.log(`warning: ${hand.length} file(s) changed after the task ended, likely by hand: ${hand.slice(0, 5).join(', ')}${hand.length > 5 ? ` and ${hand.length - 5} more` : ''}. Undo resets them too; your version is kept in a safety point (see "Undo this with" below).`);
     // restore() takes a fresh checkpoint of the current state before it changes
     // anything (r.undo), so the undo itself can be undone.
     const r = ck.restore(t.task_id, n, { user: true });
     J.append({ type: 'undo', task_id: t.task_id, n, ref: r.ref, undo_ref: r.undo.ref });
-    console.log(`undone: ${t.workdir} is back to the state before agent change ${n} of task ${t.task_id}; removed ${r.removed.length} file(s) added since. ${stack.length - 1} more undo point(s).`);
+    let left = stack.length - 1;
+    try { left = distinctPoints(t.task_id, stack.slice(0, -1), ck.treeOf(t.task_id, n)); } catch { /* raw count */ }
+    console.log(`undone: ${t.workdir} is back to the state before agent change ${n} of task ${t.task_id}; removed ${r.removed.length} file(s) added since. ${left} more undo point(s).`);
     console.log(`Undo this with: HARNESS_OWNER=1 node bin/harness.js restore ${t.task_id} ${r.undo.n}   (PowerShell: $env:HARNESS_OWNER='1'; node bin/harness.js restore ${t.task_id} ${r.undo.n})`);
   } catch (e) { console.error(`undo failed: ${e.message.split(String.fromCharCode(10))[0]}`); process.exitCode = 1; } finally { J.unlock(EXEC_LOCK, l.nonce); }
 }
 
 // taskmote status line.
+// The count matches what undo will do: points that would change nothing are not counted.
 function statusLines(Jn) {
   const u = undoInfo(Jn);
+  if (u.task && u.count) {
+    try {
+      let cur = null;
+      try { cur = ck.currentTree(u.task, ck.taskDir(u.task), { wait: false }); } catch { /* checkpoint in progress: count without the folder */ }
+      u.count = distinctPoints(u.task, undoStack(Jn.readAll().records, u.task), cur);
+    } catch { /* raw count */ }
+  }
   return [`undo points: ${u.count}${u.task ? ` (task ${u.task})` : ''}`];
 }
 
@@ -114,7 +149,7 @@ module.exports = {
   description: 'Snapshots the task folder before every mutating tool call; owner commands restore, undo and fork from step N.',
   priority: 90, // last: snapshot only calls that nothing else blocked or held for approval
   statusLines,
-  api: { undoInfo, undoStack, checkpoint: ck.checkpoint, steps: fk.steps, diff: fk.diff, fork: fk.fork, forks: fk.forks },
+  api: { undoInfo, undoStack, distinctPoints, checkpoint: ck.checkpoint, steps: fk.steps, diff: fk.diff, fork: fk.fork, forks: fk.forks },
   settings: {
     fork_dir: { type: 'string', default: '', description: 'absolute folder for forks; empty = under the harness state dir' },
     max_forks: { type: 'integer', default: 20, min: 1, max: 1000, description: 'fork records kept; the oldest are dropped' },

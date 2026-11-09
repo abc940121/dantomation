@@ -49,10 +49,10 @@ function refsOf(task) {
   return out.split('\n').filter(Boolean).map(r => Number(r.slice(prefix.length))).filter(Number.isInteger).sort((a, b) => a - b);
 }
 
-function withTaskLock(task, fn) {
+function withTaskLock(task, fn, waitMs = 20000) {
   fs.mkdirSync(CK, { recursive: true });
   const file = path.join(CK, safe(task) + '.lock');
-  const until = Date.now() + 20000;
+  const until = Date.now() + waitMs;
   let l;
   while (!(l = J.lock(file, { pids: [process.pid], task_id: task })).held) {
     if (Date.now() > until) throw new Error('checkpoint lock busy');
@@ -119,12 +119,23 @@ function checkpoint(task, dir, tool) {
 }
 
 // The folder's tree now, without making a checkpoint (undo uses it to skip points equal to it).
-function currentTree(task, dir) {
+// opts.wait false: give up at once (throws) when a checkpoint is being taken, for status.
+function currentTree(task, dir, opts = {}) {
   ensureRepo();
-  return withTaskLock(task, () => stage(task, dir).tree);
+  return withTaskLock(task, () => stage(task, dir).tree, opts.wait === false ? 0 : 20000);
 }
 function treeOf(task, n) {
   return git(CK, path.join(CK, 'none.index'), ['rev-parse', '--verify', '-q', `refs/harness/ckpt/${safe(task)}/${n}^{tree}`]).trim();
+}
+// Trees of many points with one git call per 200 (status counts them all).
+function treesOf(task, ns) {
+  const out = [];
+  for (let i = 0; i < ns.length; i += 200) out.push(...git(CK, path.join(CK, 'none.index'), ['rev-parse', ...ns.slice(i, i + 200).map(n => `refs/harness/ckpt/${safe(task)}/${n}^{tree}`)]).split('\n').filter(Boolean));
+  return out;
+}
+// Paths that differ between two trees.
+function changedPaths(a, b) {
+  return git(CK, path.join(CK, 'none.index'), ['diff-tree', '-r', '-z', '--name-only', a, b]).split('\0').filter(Boolean);
 }
 
 function taskDir(task, ref) {
@@ -162,4 +173,4 @@ function restore(task, n, opts = {}) {
   } finally { fs.rmSync(tmp, { force: true }); }
 }
 
-module.exports = { checkpoint, restore, currentTree, treeOf, MAX_BYTES, REPO, git, ensureRepo, taskDir, safeId: safe };
+module.exports = { checkpoint, restore, currentTree, treeOf, treesOf, changedPaths, MAX_BYTES, REPO, git, ensureRepo, taskDir, safeId: safe };

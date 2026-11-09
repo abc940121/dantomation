@@ -6,7 +6,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const { isShell } = require('../../lib/shell');
 
 // git [-C dir | -c k=v | --flag]* commit|push
@@ -65,6 +65,17 @@ const fmt = (list, n = 5) => list.slice(0, n).map(f => `${f.rule} ${f.file}:${f.
 
 const argsFor = op => (op === 'commit' ? ['git', '--staged'] : ['git', '--log-opts=HEAD --not --remotes']);
 
+// A repo with no remote-tracking branches (pushed by URL, or never fetched): "--not --remotes" would
+// scan the whole history and time out, which blocks every push. Scan the last N commits there instead.
+function git(dir, args) {
+  try { const r = spawnSync('git', args, { cwd: dir, encoding: 'utf8', windowsHide: true, timeout: 1000 }); return r.status === 0 ? r.stdout.trim() : null; } catch { return null; }
+}
+function pushArgs(dir, n) {
+  if (git(dir, ['for-each-ref', '--count=1', 'refs/remotes']) !== '') return { args: argsFor('push') }; // has remotes, or not a repo
+  const total = Number(git(dir, ['rev-list', '--count', 'HEAD'])) || 0;
+  return { args: ['git', `--log-opts=--max-count=${n} HEAD`], capped: total > n ? total : 0 };
+}
+
 // Every unscanned commit/push says so: a one-time line scrolls away, and a push is public.
 function warnMissing(op) {
   process.stderr.write(`gitleaks module: this git ${op} was NOT scanned: the gitleaks program is not installed (on_missing=allow). Install it, or set gitleaks.on_missing to block.\n`);
@@ -75,7 +86,9 @@ async function beforeTool({ tool, ti, cwd, settings, state, signal }) {
   const c = classify(ti && ti.command);
   if (!c || (c.op === 'commit' && !settings.scan_commit) || (c.op === 'push' && !settings.scan_push)) return null;
   const dir = c.dir ? path.resolve(cwd || process.cwd(), c.dir) : (cwd || process.cwd());
-  const r = await runGitleaks(argsFor(c.op), { cwd: dir, bin: settings.binary, timeoutMs: settings.scan_timeout_ms, signal });
+  const p = c.op === 'push' ? pushArgs(dir, settings.no_remote_commits) : { args: argsFor(c.op) };
+  if (p.capped) process.stderr.write(`gitleaks module: no remote-tracking branches here, so this git push scans only the last ${settings.no_remote_commits} of ${p.capped} commits (setting no_remote_commits). Run "gitleaks git" in the repo for a full history check.\n`);
+  const r = await runGitleaks(p.args, { cwd: dir, bin: settings.binary, timeoutMs: settings.scan_timeout_ms, signal });
   if (r.status === 'clean') return null;
   if (r.status === 'findings') return ['secret_scan', `gitleaks found ${r.findings.length} possible secret(s) before git ${c.op}: ${fmt(r.findings)}. Remove them, then retry.`];
   if (r.status === 'missing' && settings.on_missing === 'allow') { warnMissing(c.op); return null; }
@@ -110,6 +123,7 @@ module.exports = {
     scan_commit: { type: 'boolean', default: true, description: 'scan staged changes before git commit' },
     scan_push: { type: 'boolean', default: true, description: 'scan commits not on any remote before git push' },
     scan_timeout_ms: { type: 'integer', default: 4000, min: 500, max: 600000, description: 'scan time limit in the guard (a timeout blocks)' },
+    no_remote_commits: { type: 'integer', default: 200, min: 1, max: 100000, description: 'with no remote-tracking branches, scan this many recent commits before git push (instead of the whole history)' },
     on_missing: { type: 'string', enum: ['allow', 'block'], default: 'allow', description: 'gitleaks not installed: allow commit/push with a warning on each one, or block them' },
   },
   api: { classify },

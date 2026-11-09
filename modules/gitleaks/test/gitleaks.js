@@ -67,6 +67,25 @@ const run = (reg, cmd, extra = {}) => M.beforeTool(reg.mods, { tool: 'Bash', ti:
     r = await run(reg, 'git add . && git commit -m x');
     check('chained commit is blocked', r && r[0] === 'secret_scan');
 
+    // a repo with no remote-tracking branches: bounded scan, not the whole history
+    const repo = path.join(tmp, 'repo');
+    fs.mkdirSync(repo);
+    const g = (...a) => spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', '-c', 'commit.gpgsign=false', ...a], { cwd: repo, encoding: 'utf8' });
+    g('init', '-q');
+    for (let i = 0; i < 3; i++) g('commit', '-q', '--allow-empty', '-m', 'c' + i);
+    const capped = M.registry({ modules: { gitleaks: true }, gitleaks: { no_remote_commits: 2 } });
+    fs.writeFileSync(LOG, '');
+    const nerr = []; const w0 = process.stderr.write; process.stderr.write = s => { nerr.push(String(s)); return true; };
+    try { r = await run(capped, 'git push https://example.invalid/x HEAD:main', { cwd: repo }); } finally { process.stderr.write = w0; }
+    const pl = fs.readFileSync(LOG, 'utf8');
+    check('no remotes: push scans the last N commits only', /--log-opts=--max-count=2 HEAD/.test(pl) && !/--not --remotes/.test(pl), pl);
+    check('no remotes: findings still block', r && r[0] === 'secret_scan');
+    check('no remotes: says the scan was capped', nerr.some(s => /scans only the last 2 of 3 commits/.test(s)), JSON.stringify(nerr));
+    g('update-ref', 'refs/remotes/origin/main', 'HEAD~1');
+    fs.writeFileSync(LOG, '');
+    await run(capped, 'git push', { cwd: repo });
+    check('with a remote-tracking branch: unpushed commits as before', /--log-opts=HEAD --not --remotes/.test(fs.readFileSync(LOG, 'utf8')));
+
     // clean / unrelated
     process.env.GL_STUB_MODE = 'clean';
     check('clean commit passes', (await run(reg, 'git commit -m x')) === null);

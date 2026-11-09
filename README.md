@@ -81,7 +81,7 @@ node bin/taskmote.js undo
 - `do "<request>"` starts a task in the bot's folder, `work/bot-main` (kept between tasks; with `engine.profile: "locked"` each task gets a fresh `work/<task id>`). `--workdir <dir>` uses your own.
 - `do` with no request resumes a task that was interrupted.
 - `status` shows the open task, the last finished one, the folder each works in, undo points and the modules that are on.
-- `undo` steps the task folder back one change; run it again to go back further.
+- `undo` steps the task folder back one change; run it again to go back further. If you edited a file by hand after the task ended, undo names it first; the printed restore line brings your version back.
 
 On Windows, `bin\taskmote.cmd` does the same; put `bin` on your PATH to type `taskmote do "..."`.
 

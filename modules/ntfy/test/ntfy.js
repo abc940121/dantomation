@@ -10,6 +10,7 @@ const STATE = path.join(tmp, 'state');
 process.env.HARNESS_STATE_DIR = STATE; // before the journal is required
 const ROOT = path.resolve(__dirname, '..', '..', '..');
 const M = require(path.join(ROOT, 'lib', 'modules'));
+const J = require(path.join(ROOT, 'lib', 'journal'));
 
 const results = [];
 const check = (label, ok, info) => { results.push(!!ok); console.log(`${ok ? 'PASS' : 'FAIL'} ${label}${!ok && info ? ': ' + info : ''}`); };
@@ -31,6 +32,7 @@ const TOPIC = 'zq-secret-topic-91x';
   const base = `http://127.0.0.1:${srv.address().port}`;
   const settle = () => new Promise(r => setTimeout(r, 50));
   const mk = cfg => M.registry({ modules: { ntfy: true }, ntfy: cfg });
+  const status = async r => (await M.statusLines(r.mods, J)).join('\n');
 
   try {
     const off = M.registry({ modules: { ntfy: false } });
@@ -41,6 +43,8 @@ const TOPIC = 'zq-secret-topic-91x';
     check('topic masked as missing', reg.settingsFor('ntfy').topic === 'missing');
     await M.emit(reg.mods, 'task.end', { task_id: 't1', code: 0, workdir: '/w' });
     check('no topic: no request sent', hits.length === 0);
+    check('no topic: status says silent', /ntfy: no topic \(silent\)/.test(await status(reg)));
+    check('no topic: nothing journaled (silent on purpose)', !J.readAll().records.some(r => r.type === 'ntfy_sent'));
 
     reg.updateSettings('ntfy', { topic: TOPIC }, { save: async () => {} });
     reg = mk({ server: base, app_url: 'http://127.0.0.1:7420/', include_title: true });
@@ -86,13 +90,28 @@ const TOPIC = 'zq-secret-topic-91x';
     reg = mk({ server: 'http://127.0.0.1:1' });
     const errs2 = await M.emit(reg.mods, 'task.end', { task_id: 't7', code: 0, workdir: '/w' });
     check('refused connection: no error escapes', !errs2 || !errs2.length);
+    const st1 = await status(reg);
+    check('status names a failed last ping and why, not the topic', /last ping FAILED .*could not reach the server/.test(st1) && !st1.includes(TOPIC), st1);
     mode = 'ok';
+    reg = mk({ server: base });
+    await M.emit(reg.mods, 'task.end', { task_id: 't8', code: 0, workdir: '/w' });
+    const st2 = await status(reg);
+    check('status shows a good last ping', /ntfy: topic set; last ping sent .*\(task_finished\)/.test(st2), st2);
 
     reg = mk({ server: base, max_per_minute: 1 });
     const before = hits.length;
     for (let i = 0; i < 3; i++) await M.emit(reg.mods, 'card.created', { card_id: 'c' + i, task_id: 'r' + i, summary: 's' });
     await settle();
     check('rate cap drops extra pings', hits.length - before <= 1, String(hits.length - before));
+    const st3 = await status(reg);
+    check('rate-capped drop is journaled and shown', /last ping FAILED .*max_per_minute/.test(st3), st3);
+
+    reg = mk({ server: 'ftp://x.example' });
+    const n2 = hits.length;
+    await M.emit(reg.mods, 'task.end', { task_id: 't10', code: 0, workdir: '/w' });
+    const st4 = await status(reg);
+    check('bad server: nothing sent, status says the server setting is wrong', hits.length === n2 && /ntfy: the "server" setting is not a plain http\(s\) URL/.test(st4), st4);
+    check('bad server drop is journaled with why', J.readAll().records.some(r => r.type === 'ntfy_sent' && r.why === 'bad_server' && r.task_id === 't10'));
 
     check('topic in config is a load error', mk({ topic: 'abcd1234' }).errors.length >= 1);
     const api = mk({}).api('ntfy');

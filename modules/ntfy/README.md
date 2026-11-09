@@ -24,13 +24,13 @@ The message holds only the kind, the task id and, if `include_title` is on, the 
 ## Settings (config section `ntfy`)
 
 - `server` string, default `https://ntfy.sh` (http or https, no credentials in the URL)
-- `topic` secret, write-only, never logged; the journal gets `ntfy_sent {kind, task_id, ok, status}` only
+- `topic` secret, write-only, never logged; the journal gets `ntfy_sent {kind, task_id, ok, status, why?}` only; with a topic set, dropped pings (bad topic, bad server, rate cap, timeout, network) are journaled too
 - `app_url` string, default empty
 - `include_title` boolean, default false
 - `kind_task_finished`, `kind_task_blocked`, `kind_approval_waiting` booleans, default true
 - `max_per_minute` integer 1..600, default 20; extra pings are dropped
 - `timeout_ms` integer 500..4500, default 4000
 
-A failed send never stops a task. Events reach this module only inside the process that emits them (no cross-process transport yet), so a card created in another process does not ping.
+A failed send never stops a task. `taskmote status` shows one ntfy line: no topic (silent), the last ping sent, or the last failure and which setting to fix. Events reach this module only inside the process that emits them (no cross-process transport yet), so a card created in another process does not ping.
 
 Test: `node test/run-all.js module ntfy`

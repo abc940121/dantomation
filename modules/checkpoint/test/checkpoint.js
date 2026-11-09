@@ -144,11 +144,44 @@ const env3 = { ...env, HARNESS_STATE_DIR: st3 };
 fs.writeFileSync(path.join(st3, 'journal.jsonl'), JSON.stringify({ id: 'x', ts: new Date().toISOString(), type: 'task_start', task_id: 'tNOOP', request: 'r', workdir: w3 }) + '\n');
 const hook3 = () => spawnSync(process.execPath, [GUARD], { env: { ...env3, HARNESS_TASK_ID: 'tNOOP', HARNESS_TASK_DIR: w3 }, input: JSON.stringify({ session_id: 's', tool_name: 'Write', tool_input: { file_path: path.join(w3, 'hello.txt'), content: 'hi' }, cwd: w3 }), encoding: 'utf8' });
 hook3(); fs.writeFileSync(path.join(w3, 'hello.txt'), 'hi\n'); hook3(); hook3();
-const u5 = spawnSync(process.execPath, [HARNESS, 'undo'], { env: env3, encoding: 'utf8' });
+const s5 = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'taskmote.js'), 'status'], { env: env3, encoding: 'utf8' });
+const s5line = (String(s5.stdout).match(/undo points: .*/) || [''])[0];
+console.log(`5: status before undo: ${s5line}`);
+res['5 status counts only points an undo would stop at (1, not 3)'] = /undo points: 1 \(task tNOOP\)/.test(s5line);
+const u5 =spawnSync(process.execPath, [HARNESS, 'undo'], { env: env3, encoding: 'utf8' });
 console.log(`5: undo after a no-op point: exit ${u5.status}; ${String(u5.stdout).split('\n')[0]}`);
 res['5 one undo removes the file even when the newest points match the folder'] = u5.status === 0 && !fs.existsSync(path.join(w3, 'hello.txt')) && /removed 1 file/.test(u5.stdout);
 const u5b = spawnSync(process.execPath, [HARNESS, 'undo'], { env: env3, encoding: 'utf8' });
 res['5 next undo says nothing is left'] = u5b.status === 0 && /nothing left to undo/.test(u5b.stdout);
+res['5 undo says 0 more points, matching status'] = /0 more undo point/.test(u5.stdout);
+
+// ---- 6. a file edited by hand after the task ended: undo warns and names it; the restore line brings it back
+const st4 = path.join(base, 'state4'), w4 = path.join(base, 'w4');
+fs.mkdirSync(w4, { recursive: true }); fs.mkdirSync(st4, { recursive: true });
+const env4 = { ...env, HARNESS_STATE_DIR: st4 };
+const j4 = r => fs.appendFileSync(path.join(st4, 'journal.jsonl'), JSON.stringify({ id: 'x' + Math.random(), ...r }) + '\n');
+j4({ ts: new Date().toISOString(), type: 'task_start', task_id: 'tHAND', request: 'r', workdir: w4 });
+const hook4 = f => spawnSync(process.execPath, [GUARD], { env: { ...env4, HARNESS_TASK_ID: 'tHAND', HARNESS_TASK_DIR: w4 }, input: JSON.stringify({ session_id: 's', tool_name: 'Write', tool_input: { file_path: path.join(w4, f), content: 'x' }, cwd: w4 }), encoding: 'utf8' });
+hook4('a.txt'); fs.writeFileSync(path.join(w4, 'a.txt'), 'agent a\n');
+hook4('b.txt'); fs.writeFileSync(path.join(w4, 'b.txt'), 'agent b\n');
+const old = new Date(Date.now() - 60000);
+for (const f of ['a.txt', 'b.txt']) fs.utimesSync(path.join(w4, f), old, old);
+j4({ ts: new Date(Date.now() - 10000).toISOString(), type: 'engine_exit', task_id: 'tHAND', code: 0 });
+fs.writeFileSync(path.join(w4, 'a.txt'), 'edited by hand\n');
+const u6 = spawnSync(process.execPath, [HARNESS, 'undo'], { env: env4, encoding: 'utf8' });
+const warn6 = (String(u6.stdout).match(/warning: .*/) || [''])[0];
+console.log(`6: undo after a hand edit: exit ${u6.status}; ${warn6}`);
+res['6 undo warns about the hand-edited file only'] = u6.status === 0 && /warning: 1 file\(s\) changed after the task ended, likely by hand: a\.txt\./.test(warn6) && !/b\.txt/.test(warn6);
+res['6 undo still undoes (agent file b.txt removed)'] = !fs.existsSync(path.join(w4, 'b.txt')) && fs.readFileSync(path.join(w4, 'a.txt'), 'utf8') === 'agent a\n';
+const back6 = (u6.stdout.match(/restore tHAND (\d+)/) || [])[1];
+const r6 = harness(['restore', 'tHAND', back6], { HARNESS_STATE_DIR: st4, HARNESS_OWNER: '1' });
+res['6 the printed restore line brings the hand edit back'] = r6.status === 0 && fs.readFileSync(path.join(w4, 'a.txt'), 'utf8') === 'edited by hand\n';
+const u6b = (() => { const s = path.join(base, 'state5'), d = path.join(base, 'w5'); fs.mkdirSync(d, { recursive: true }); fs.mkdirSync(s, { recursive: true });
+  fs.writeFileSync(path.join(s, 'journal.jsonl'), JSON.stringify({ id: 'y', ts: new Date().toISOString(), type: 'task_start', task_id: 'tNOEXIT', request: 'r', workdir: d }) + '\n');
+  spawnSync(process.execPath, [GUARD], { env: { ...env, HARNESS_STATE_DIR: s, HARNESS_TASK_ID: 'tNOEXIT', HARNESS_TASK_DIR: d }, input: JSON.stringify({ session_id: 's', tool_name: 'Write', tool_input: { file_path: path.join(d, 'c.txt'), content: 'x' }, cwd: d }), encoding: 'utf8' });
+  fs.writeFileSync(path.join(d, 'c.txt'), 'c\n');
+  return spawnSync(process.execPath, [HARNESS, 'undo'], { env: { ...env, HARNESS_STATE_DIR: s }, encoding: 'utf8' }); })();
+res['6 no engine_exit record: no warning, undo as before'] = u6b.status === 0 && !/warning:/.test(u6b.stdout) && /removed 1 file/.test(u6b.stdout);
 
 let ok = true;
 for (const [k, v] of Object.entries(res)) { ok = ok && v; console.log(`${v ? 'PASS' : 'FAIL'} ${k}`); }

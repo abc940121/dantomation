@@ -35,15 +35,17 @@ async function ping(ctx, kind, taskId, extra) {
   if (s['kind_' + KINDS[kind]] === false) return { sent: false, reason: 'kind_off' };
   const topic = ctx.secret('topic');
   if (!topic) return { sent: false, reason: 'no_topic' };
-  if (!topicOk(topic)) return { sent: false, reason: 'bad_topic' };
+  const id = safeId(taskId);
+  // A topic is set, so the owner expects pings: every drop from here on is journaled for status.
+  const drop = reason => { record(ctx, kind, id, false, 0, reason); return { sent: false, reason }; };
+  if (!topicOk(topic)) return drop('bad_topic');
   const base = serverUrl(s.server);
-  if (!base) return { sent: false, reason: 'bad_server' };
+  if (!base) return drop('bad_server');
   const now = Date.now();
   while (sent.length && now - sent[0] > WINDOW_MS) sent.shift();
-  if (sent.length >= s.max_per_minute) return { sent: false, reason: 'rate_limited' };
+  if (sent.length >= s.max_per_minute) return drop('rate_limited');
   sent.push(now);
 
-  const id = safeId(taskId);
   const title = s.include_title && id ? cleanTitle(titles.get(id)) : '';
   const headers = { 'Content-Type': 'text/plain; charset=utf-8', Title: `Taskmote: ${HEAD[kind]}`, Tags: TAGS[kind], Priority: PRIORITY[kind] };
   const link = serverUrl(s.app_url);
@@ -59,8 +61,38 @@ async function ping(ctx, kind, taskId, extra) {
     try { await res.arrayBuffer(); } catch { /* body unused */ }
   } catch (e) { why = e && e.name === 'AbortError' ? 'timeout' : 'network'; } // never e.message: it may carry the URL
   finally { clearTimeout(timer); if (ctx.signal) ctx.signal.removeEventListener('abort', onAbort); }
-  try { ctx.state.append({ type: 'ntfy_sent', kind: KINDS[kind], task_id: id, ok, status, ...(why ? { why } : {}) }); } catch { /* journal trouble never blocks */ }
+  record(ctx, kind, id, ok, status, why);
   return ok ? { sent: true } : { sent: false, reason: why || 'http_' + status };
+}
+
+function record(ctx, kind, id, ok, status, why) {
+  try { ctx.state.append({ type: 'ntfy_sent', kind: KINDS[kind], task_id: id, ok, status, ...(why ? { why } : {}) }); } catch { /* journal trouble never blocks */ }
+}
+
+// One line per drop reason, naming the setting to fix. Never the topic or the URL.
+const WHY = {
+  bad_topic: 'the topic is not 4-64 letters, digits, _ or -; set it again with: node bin/harness.js secret ntfy topic',
+  bad_server: 'the "server" setting is not a plain http(s) URL',
+  rate_limited: 'over "max_per_minute"; extra pings were dropped',
+  timeout: 'the server did not answer within "timeout_ms"',
+  network: 'could not reach the server (check "server" and the network)',
+};
+function lastSend(J) {
+  const recs = (J && J.readAll ? J.readAll().records : []);
+  for (let i = recs.length - 1; i >= 0; i--) if (recs[i].type === 'ntfy_sent' && recs[i].module === 'ntfy') return recs[i];
+  return null;
+}
+function statusLine(J, ctx) {
+  const topic = ctx.secret('topic');
+  if (!topic) return 'ntfy: no topic (silent)';
+  if (!topicOk(topic)) return `ntfy: topic set but unusable: ${WHY.bad_topic}`;
+  if (!serverUrl(ctx.settings.server)) return `ntfy: ${WHY.bad_server}`;
+  const r = lastSend(J);
+  if (!r) return 'ntfy: topic set; no ping sent yet';
+  const when = String(r.ts || '').slice(0, 16).replace('T', ' ');
+  if (r.ok) return `ntfy: topic set; last ping sent ${when} (${r.kind})`;
+  const why = WHY[r.why] || (r.status ? `the server answered HTTP ${r.status}` : 'unknown error');
+  return `ntfy: topic set; last ping FAILED ${when} (${r.kind}): ${why}`;
 }
 
 const safely = fn => async (p, ctx) => { try { await fn(p || {}, ctx); } catch { /* a ping never stops core */ } };
@@ -98,6 +130,6 @@ module.exports = {
     // The card summary can hold a command line, so only the card's task id is sent.
     'card.created': safely(({ task_id }, ctx) => ping(ctx, 'approval', task_id)),
   },
-  statusLines: (J, ctx) => { try { return [`ntfy: ${ctx.secret('topic') ? 'topic set' : 'no topic (silent)'}`]; } catch { return []; } },
+  statusLines: (J, ctx) => { try { return [statusLine(J, ctx)]; } catch { return ['ntfy: status unreadable']; } },
   api: { serverUrl, topicOk },
 };

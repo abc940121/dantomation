@@ -17,7 +17,7 @@ Off by default. Install gitleaks yourself and put it on `PATH` (or set `gitleaks
 
 ## Settings (`gitleaks` section)
 
-`binary` (default `gitleaks`), `scan_commit` and `scan_push` (true), `scan_timeout_ms` (4000; the guard hook is cut off at 5000), `on_missing` (`allow` default, or `block`).
+`binary` (default `gitleaks`), `scan_commit` and `scan_push` (true), `scan_timeout_ms` (4000; the guard hook is cut off at 5000), `no_remote_commits` (200: in a repo with no remote-tracking branches, e.g. one pushed by URL, a push scans this many recent commits instead of the whole history, and says so when there are more), `on_missing` (`allow` default, or `block`).
 
 ## When gitleaks is missing or fails
 
