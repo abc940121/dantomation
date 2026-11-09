@@ -270,6 +270,10 @@ the command never edits a config. Turn it on with `"<name>": true`; run its test
 
 `modules/ntfy/` shows an outbound-only module: it listens to `task.end`, `task-watchdog.stalled` and `card.created`, keeps its topic as a `secret` setting read with `ctx.secret`, and sends one HTTP POST with `ctx.signal` and its own timeout. It names no other module, so it needs no `dependsOn`.
 
+## Example: a guard module that wraps an outside program
+
+`modules/gitleaks/` is a `beforeTool` module that runs the `gitleaks` program before `git commit` / `git push` and blocks with rule id, file and line (never the secret). It shows the pattern for wrapping a separate tool: resolve it on `PATH`, run it with a timeout and `ctx.signal`, fail open with a warning on every commit/push when it is missing (`on_missing: block` makes it strict), but block when it runs and fails, and keep the module command (`scan`) reachable through `bin/harness.js`.
+
 ## Planned additive extensions
 
 Later versions are expected to add, as optional fields that leave contract 1

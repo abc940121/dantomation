@@ -136,6 +136,7 @@ Every module is off by default, except the two safety modules `guard-base` and `
 | `scaffold` | the `new-module` verb: skill folder to module folder | writes a new folder under `modules/` | on | |
 | `presets` | the `preset` verb: shows what a profile from `presets/` turns on | reads `presets/` and your config; writes nothing | on | |
 | `guard-private-rules` | your own red lines from a rules file | reads your rules file | off | ✓ |
+| `gitleaks` | runs the `gitleaks` program before git commit/push; blocks on findings | runs an external program you installed; reads the repo | off | |
 | `approval-cards` | risky actions ask yes/no | nothing; it only pauses | off | ✓ |
 | `question-cards` | an agent asks you a multiple-choice question | its own state | off | ✓ |
 | `tripwires` | flags (or, in block mode, withholds) replies that contradict the exit code | engine output files of that turn | off | ✓ |

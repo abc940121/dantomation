@@ -1,0 +1,9 @@
+{
+  "suites": [
+    {
+      "label": "gitleaks",
+      "file": "test/gitleaks.js",
+      "needs": []
+    }
+  ]
+}
