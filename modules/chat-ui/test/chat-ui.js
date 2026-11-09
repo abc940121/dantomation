@@ -65,7 +65,8 @@ const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
   ev('claims', { seq: 16, task: 't1', checked: 3, unverified: 1 });
   ev('task_end', { seq: 17, task: 't1', state: 'done' });
   ev('bot_status', { seq: 18, bot: 'a', status: 'busy' });
-  check('undo available after the task ends', D.canUndo(t) && t.undo[0].n === 1);
+  check('undo available after the task ends', D.canUndo(t, s) && t.undo[0].n === 1);
+  check('undo hidden on an older task once a newer one exists', (() => { const s2 = D.create(); D.reduce(s2, 'task_start', { seq: 1, task: 'o1', bot: 'a' }); D.reduce(s2, 'undo_point', { seq: 2, task: 'o1', n: 1, label: 'x' }); D.reduce(s2, 'task_end', { seq: 3, task: 'o1', state: 'done' }); const ok1 = D.canUndo(s2.tasks.o1, s2); D.reduce(s2, 'task_start', { seq: 4, task: 'o2', bot: 'a' }); return ok1 && !D.canUndo(s2.tasks.o1, s2); })());
   check('claims stored and totalled', eq(t.claims, { checked: 3, unverified: 1 }) && D.unverifiedTotal(s) === 1);
   check('bot_status updates the dot', s.bots.a.status === 'busy');
   ev('task_start', { seq: 19, task: 't2', bot: 'b', prompt: 'yo' });
@@ -158,7 +159,7 @@ async function mockTests() {
     r = await call(port, 'POST', `/api/tasks/${id}/undo`);
     check('undo returns restoredTo and redoHint', r.status === 200 && r.body.restoredTo && r.body.redoHint);
     r = await call(port, 'POST', `/api/tasks/${id}/undo`);
-    check('undo with nothing left is 409', r.status === 409);
+    check('undo with nothing left is a plain answer, not an error', r.status === 200 && r.body.nothingLeft === true && r.body.restoredTo === null);
     r = await call(port, 'GET', '/api/tasks/nope');
     check('unknown task is 404', r.status === 404);
 

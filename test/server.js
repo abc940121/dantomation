@@ -154,8 +154,13 @@ async function main() {
   note('sse: tool_call/tool_result/task_end present', ['tool_call', 'tool_result', 'task_end', 'undo_point'].every(t => all.some(e => e.type === t)));
 
   // undo (checkpoint on): latest task only
+  const upBefore = (await req(port2, 'GET', `/api/tasks/${taskId}`)).body.undoPoints;
   const und = await req(port2, 'POST', `/api/tasks/${taskId}/undo`, {});
+  const upAfter = (await req(port2, 'GET', `/api/tasks/${taskId}`)).body.undoPoints;
+  note('undoPoints counts what undo will do, and drops after an undo', Number.isInteger(upBefore) && upBefore >= 1 && upAfter < upBefore, `${upBefore} -> ${upAfter}`);
   note('undo via server restores one change', und.status === 200 && Number.isInteger(und.body.restoredTo), und.raw);
+  let last = null; for (let i = 0; i < 6 && !(last && last.body && last.body.nothingLeft); i++) last = await req(port2, 'POST', `/api/tasks/${taskId}/undo`, {});
+  note('undo past the last point is a plain "nothing left" answer, not an error', last && last.status === 200 && last.body.nothingLeft === true && last.body.restoredTo === null, last && last.raw);
 
   // ---- 3: cards over HTTP
   const J = require('../lib/journal'); // STATE comes from HARNESS_STATE_DIR below

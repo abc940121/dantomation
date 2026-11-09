@@ -85,6 +85,14 @@ function handEdits(task, records, targetTree, cur, dir) {
   return ck.changedPaths(targetTree, cur).filter(p => { try { return fs.statSync(path.join(dir, p)).mtimeMs > end + 1000; } catch { return false; } });
 }
 
+// Undo points of the task that undo would act on, for lists polled often: no folder staging
+// (cur null), so a newest point equal to the folder still counts. Falls back to the raw count.
+function undoCount(records, task) {
+  const stack = undoStack(records, task);
+  if (!stack.length) return 0;
+  try { return distinctPoints(task, stack, null); } catch { return stack.length; }
+}
+
 function undoInfo(J) {
   const t = latestTask(J.readAll().records);
   return t ? { task: t.task_id, count: undoStack(J.readAll().records, t.task_id).length } : { task: null, count: 0 };
@@ -149,7 +157,7 @@ module.exports = {
   description: 'Snapshots the task folder before every mutating tool call; owner commands restore, undo and fork from step N.',
   priority: 90, // last: snapshot only calls that nothing else blocked or held for approval
   statusLines,
-  api: { undoInfo, undoStack, distinctPoints, checkpoint: ck.checkpoint, steps: fk.steps, diff: fk.diff, fork: fk.fork, forks: fk.forks },
+  api: { undoInfo, undoStack, undoCount, distinctPoints, checkpoint: ck.checkpoint, steps: fk.steps, diff: fk.diff, fork: fk.fork, forks: fk.forks },
   settings: {
     fork_dir: { type: 'string', default: '', description: 'absolute folder for forks; empty = under the harness state dir' },
     max_forks: { type: 'integer', default: 20, min: 1, max: 1000, description: 'fork records kept; the oldest are dropped' },

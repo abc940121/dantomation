@@ -140,7 +140,7 @@ function createMock(opts = {}) {
       if (req.method === 'POST' && m[2] === '/undo') {
         if (t.state === 'running' || t.state === 'waiting_card') return send(res, 409, { error: 'task is running' });
         const pt = t.undoPoints.pop();
-        if (!pt) return send(res, 409, { error: 'nothing to undo' });
+        if (!pt) return send(res, 200, { restoredTo: null, nothingLeft: true, message: 'nothing left to undo' });
         return send(res, 200, { restoredTo: pt.label, redoHint: `HARNESS_OWNER=1 node bin/harness.js restore ${t.id} ${pt.n}` });
       }
     }

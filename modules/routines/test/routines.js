@@ -100,7 +100,10 @@ const owner = { kind: 'owner', id: 'test' };
 
     // daily cap (3)
     const used = (await call('GET', '/m/routines/routines')).json.usage;
-    check('usage counted', used.runs_today >= 2 && used.cap === 3, JSON.stringify(used));
+    // the ticks above run up to 2.5h ahead: near UTC midnight the later ones land on the next day, which starts a fresh count
+    const oneDay = new Date(now).toISOString().slice(0, 10) === new Date(now + 9e6).toISOString().slice(0, 10);
+    check('usage counted', used.runs_today >= (oneDay ? 2 : 1) && used.cap === 3, JSON.stringify(used));
+    check('a clock stepping back does not reset the count', (await call('GET', '/m/routines/routines')).json.usage.runs_today === used.runs_today);
     edit(s => { s.runs_today = 2; });
     r = await call('POST', '/m/routines/routines/morning/run');
     const r2 = await call('POST', '/m/routines/routines/morning/run');

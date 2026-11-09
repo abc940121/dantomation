@@ -109,7 +109,8 @@
     return Object.values(s.tasks).filter(t => !botId || t.bot === botId).sort((a, b) => a.order - b.order);
   }
   const unverifiedTotal = s => Object.values(s.tasks).reduce((n, t) => n + (t.claims ? t.claims.unverified : 0), 0);
-  const canUndo = t => !!t && t.undo.length > 0 && t.state !== 'running' && t.state !== 'waiting_card';
+  const newest = (s, t) => !Object.values(s.tasks).some(x => x.order > t.order);
+  const canUndo = (t, s) => !!t && t.undo.length > 0 && t.state !== 'running' && t.state !== 'waiting_card' && (!s || newest(s, t));
 
   // Seconds left until expiresAt (ISO string or epoch ms); null when unknown.
   function remainingSec(expiresAt, nowMs) {

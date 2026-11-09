@@ -270,7 +270,7 @@
   }
 
   function undoRow(t) {
-    if (!D.canUndo(t)) return null;
+    if (!D.canUndo(t, S)) return null;
     if (ui.confirmUndo !== t.id) return h('div', { class: 'undo-row' }, h('button', { type: 'button', onclick: () => { ui.confirmUndo = t.id; render(); } }, 'Undo'));
     const last = t.undo[t.undo.length - 1];
     return h('div', { class: 'undo-row' },
@@ -284,7 +284,10 @@
     let text;
     try {
       const r = await post('/api/tasks/' + encodeURIComponent(t.id) + '/undo');
-      if (r.ok && r.body) {
+      if (r.ok && r.body && r.body.nothingLeft) {
+        t.undo = [];
+        text = 'Nothing left to undo: the folder already matches every undo point.';
+      } else if (r.ok && r.body) {
         t.undo.pop();
         text = 'Undone. Restored to ' + (r.body.restoredTo == null ? 'the previous point' : String(r.body.restoredTo)) + '.' + (r.body.redoHint ? '\nTo redo: ' + r.body.redoHint : '');
       } else text = 'Undo failed' + (r.body && r.body.error ? ': ' + r.body.error : ' (' + r.status + ')');

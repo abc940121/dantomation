@@ -28,8 +28,8 @@ function validate(body, { partial, settings }) {
 const view = r => ({ id: r.id, bot: r.bot, prompt: r.prompt, schedule: r.schedule, paused: !!r.paused,
   created: r.created, last_run: r.last_run || null, last_task_id: r.last_task_id || null, last_error: r.last_error || null, runs: r.runs || 0 });
 
-// Reset the per-day counter when the UTC day changed.
-function rollDay(s, now) { const d = day(now); if (s.day !== d) { s.day = d; s.runs_today = 0; } }
+// Reset the per-day counter when a later UTC day starts. Only forward: a clock that steps back must not reset the cap.
+function rollDay(s, now) { const d = day(now); if (!s.day || d > s.day) { s.day = d; s.runs_today = 0; } }
 
 // Arm a routine from `now`: interval = next_at, cron = cursor (last instant already evaluated).
 function arm(r, now) {
