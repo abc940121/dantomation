@@ -32,6 +32,7 @@ const SUITES = [
   ['executor-race', 'test/executor-race.js', []],
   ['push-reconcile', 'test/push-reconcile.js', []],
   ['server', 'test/server.js', []],
+  ['server-jobs', 'test/server-jobs.js', []],
   ['integration', 'test/integration.js', ['chat-ui', 'approval-cards']],
   ['guard-base', 'modules/guard-base/test/guard-base.js', ['guard-base']],
   ['private-rules', 'modules/guard-private-rules/test/private-rules.js', ['guard-private-rules']],
