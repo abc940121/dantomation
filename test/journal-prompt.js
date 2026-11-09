@@ -42,7 +42,57 @@ const st = spawnSync(process.execPath, [path.join(__dirname, '..', 'bin', 'harne
 console.log(`unreadable journal -> harness status exit ${st.status}: ${st.stderr.trim()}`);
 checks['unreadable journal -> exit 5, not empty'] = st.status === 5 && !/no open task/.test(st.stdout);
 fs.rmSync(bad, { recursive: true, force: true });
+// unlock/unlinkRetry: transient unlink errors are retried; persistent ones are reported
+{
+  const lf = path.join(process.env.HARNESS_STATE_DIR, 'ul.lock');
+  const real = fs.unlinkSync;
+  const stub = (n, code) => { let c = 0; fs.unlinkSync = f => { if (String(f) === lf && ++c <= n) throw Object.assign(new Error(code), { code }); return real(f); }; return () => c; };
+  try {
+    let l = J.lock(lf, { pids: [process.pid] }); let calls = stub(3, 'EPERM');
+    checks['unlock retries transient EPERM then succeeds'] = J.unlock(lf, l.nonce) === true && calls() === 4 && !fs.existsSync(lf);
+    fs.unlinkSync = real;
+    l = J.lock(lf, { pids: [process.pid] }); calls = stub(1e9, 'ENOENT');
+    checks['unlink ENOENT counts as success'] = J.unlock(lf, l.nonce) === true && calls() === 1;
+    fs.unlinkSync = real; real(lf);
+    l = J.lock(lf, { pids: [process.pid] }); calls = stub(1e9, 'EBUSY');
+    checks['persistent EBUSY: unlock returns false, file remains'] = J.unlock(lf, l.nonce) === false && calls() === 5 && fs.existsSync(lf);
+    fs.unlinkSync = real;
+    checks['wrong nonce: unlock false, no unlink'] = J.unlock(lf, 'nope') === false && fs.existsSync(lf);
+    checks['unlock with right nonce works once stub is gone'] = J.unlock(lf, l.nonce) === true && !fs.existsSync(lf);
+    // lock replaced during a retry nap: the new owner's lock must survive
+    l = J.lock(lf, { pids: [process.pid] });
+    const old = l.nonce; let n = 0, other;
+    fs.unlinkSync = f => { if (String(f) === lf) { n++; if (n === 1) { real(lf); other = J.lock(lf, { pids: [process.pid] }); } throw Object.assign(new Error('EBUSY'), { code: 'EBUSY' }); } return real(f); };
+    const res = J.unlock(lf, old);
+    fs.unlinkSync = real;
+    checks['replaced lock during retry: unlock false, new lock survives, one unlink try'] = res === false && n === 1 && J.readLock(lf).nonce === other.nonce;
+    J.unlock(lf, other.nonce);
+    // total nap bound
+    l = J.lock(lf, { pids: [process.pid] }); calls = stub(1e9, 'EBUSY');
+    const t0 = Date.now(); J.unlock(lf, l.nonce); const dt = Date.now() - t0;
+    fs.unlinkSync = real;
+    checks['failed unlink naps <= ~50ms total (got ' + dt + 'ms)'] = dt >= 45 && dt < 120;
+    J.unlock(lf, l.nonce);
+  } finally { fs.unlinkSync = real; }
+}
+// question-cards: async release retry after a failed unlock
+const qcDone = (async () => {
+  const store = require('../modules/question-cards/store');
+  const real = fs.unlinkSync;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jp-qc-'));
+  const lockf = path.join(dir, 'lock');
+  let fails = 5;
+  fs.unlinkSync = f => { if (String(f) === lockf && fails > 0) { fails--; throw Object.assign(new Error('EBUSY'), { code: 'EBUSY' }); } return real(f); };
+  const r = await store.withLock({ state: { dir } }, async () => 'result');
+  fs.unlinkSync = real;
+  checks['question-cards: operation result kept, lock stranded right after'] = r === 'result' && fs.existsSync(lockf);
+  await new Promise(r2 => setTimeout(r2, 400));
+  checks['question-cards: async retry releases stranded lock'] = !fs.existsSync(lockf);
+  fs.rmSync(dir, { recursive: true, force: true });
+})();
+qcDone.then(() => {
 let ok = true;
 for (const [k, v] of Object.entries(checks)) { ok = ok && v; console.log(`${v ? 'PASS' : 'FAIL'} ${k}`); }
 fs.rmSync(process.env.HARNESS_STATE_DIR, { recursive: true, force: true });
 process.exit(ok ? 0 : 1);
+});

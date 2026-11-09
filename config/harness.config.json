@@ -9,6 +9,8 @@
     "app-ui": false
   },
   "modules_hook_timeout_ms": 5000,
+  "engines": {},
+  "engines_max_timeout_ms": 120000,
   "spend_limit_usd_per_session": 5,
   "prices_usd_per_mtok": {
     "opus": {

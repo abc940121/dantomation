@@ -9,6 +9,7 @@ let ticks = 0, tasks = 0;
 module.exports = {
   contract: 2,
   name: 'hello-stub',
+  hookTimeoutMs: 1000, // beforeTool is a cheap synchronous check
   description: 'Template module: one of every contract part.',
   runsOn: 'main',
   priority: 0,

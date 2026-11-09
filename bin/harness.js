@@ -57,16 +57,20 @@ function ensureWorkdir(dir) {
 // process (e.g. modules/voice/ with --input-format stream-json) reuses the same
 // settings, guard, tools and env instead of copying them.
 // prompt === null -> bare -p (print mode, no prompt; caller streams input instead).
-function engineSpec(prompt) {
-  const { env, stripped } = cleanEnv();
-  const args = [...(prompt === null ? ['-p'] : ['-p', prompt]),
-    '--setting-sources', CONFIG.engine.setting_sources,
+// Guard hooks, tool allowlist, protocol and strict MCP flags: what makes a claude-format engine run under the harness.
+function guardArgs() {
+  return ['--setting-sources', CONFIG.engine.setting_sources,
     '--settings', settingsFile(),
     '--append-system-prompt-file', protocolFile(),
     '--tools', CONFIG.engine.claude_tools,
     '--allowedTools', CONFIG.engine.claude_tools,
     '--strict-mcp-config', '--disable-slash-commands',
     '--output-format', 'stream-json', '--verbose'];
+}
+
+function engineSpec(prompt) {
+  const { env, stripped } = cleanEnv();
+  const args = [...(prompt === null ? ['-p'] : ['-p', prompt]), ...guardArgs()];
   // Test seam: HARNESS_ENGINE_SCRIPT runs a node script as a fake engine.
   const fake = process.env.HARNESS_ENGINE_SCRIPT;
   return { bin: fake ? process.execPath : (process.env.HARNESS_CLAUDE || 'claude'), args: fake ? [fake, ...args] : args, env, stripped };
@@ -92,24 +96,67 @@ function lastReply(file, from = 0) {
   return '';
 }
 
+function plainReply(file, from = 0) {
+  try { return fs.readFileSync(file).subarray(from).toString('utf8').trim(); } catch { return ''; }
+}
+
 async function runEngine(task, nonce) {
   J.append({ type: 'engine_start', task_id: task.task_id, stripped_env: cleanEnv().stripped, resumed: !!task.resumed });
   await M.emit(MODS, 'task.start', { task_id: task.task_id, request: task.request, workdir: task.workdir, resumed: !!task.resumed }, { task, config: CONFIG });
   const extra = await M.prepareTurn(MODS, { task_id: task.task_id, request: task.request, workdir: task.workdir, resumed: !!task.resumed });
   const notes = extra.context.map(c => `[${c.module}] ${c.text}`).join('\n');
+  const choice = await M.chooseEngine(MODS, { task_id: task.task_id, request: task.request, workdir: task.workdir, resumed: !!task.resumed }); // null when no module has an opinion
   const spec = engineSpec(J.buildPrompt(J.readAll().records, task) + (notes ? `\n\n## Context from modules\n${notes}` : ''));
   const logFile = path.join(J.STATE, `engine-${task.task_id}.jsonl`);
   let logFrom = 0; try { logFrom = fs.statSync(logFile).size; } catch { /* no log yet */ }
   const out = fs.openSync(logFile, 'a');
   // The guard snapshots this folder before every mutating tool call.
-  Object.assign(spec.env, { HARNESS_TASK_ID: task.task_id, HARNESS_TASK_DIR: task.workdir, HARNESS_STATE_DIR: J.STATE });
-  const child = spawn(spec.bin, spec.args, { cwd: task.workdir, env: spec.env, stdio: ['ignore', out, out], shell: false, windowsHide: true });
-  J.relock(EXEC_LOCK, { pids: [process.pid, child.pid], task_id: task.task_id }, nonce);
-  const code = await new Promise(res => child.on('exit', res));
-  J.unlock(EXEC_LOCK, nonce);
-  const reply = M.scrubAll(lastReply(logFile, logFrom)).trim().slice(0, 4000); // hide every loaded module's secrets and secret patterns in the full text, then clip
-  if (reply) J.append({ type: 'reply', task_id: task.task_id, text: reply });
-  J.append({ type: 'engine_exit', task_id: task.task_id, code });
+  // chooseEngine takes effect only through config "engines" (same table as ctx.engines.run): a listed name with a string bin
+  // replaces the default bin/args and gets the prompt on stdin (as engines.run does). The module's answer is only ever a key
+  // into that table: never a path, never a shell string.
+  let swapped = false, stdin = 'ignore', input = null, claudeFmt = false;
+  if (choice) {
+    const tbl = CONFIG.engines, ok = tbl && typeof tbl === 'object' && !Array.isArray(tbl) && Object.prototype.hasOwnProperty.call(tbl, choice.engine);
+    const ent = ok ? tbl[choice.engine] : null;
+    const ignore = reason => J.append({ type: 'engine_choice_ignored', task_id: task.task_id, engine: choice.engine, module: choice.module, reason });
+    if (!(ent && typeof ent.bin === 'string' && ent.bin)) ignore(ok && ent ? 'no_bin' : 'not_configured');
+    else if (ent.turn !== true) ignore('not_turn_engine'); // a turn engine is an explicit opt-in: it may run without the guard hooks
+    else {
+      const i = spec.args.indexOf('-p');
+      input = i >= 0 ? spec.args[i + 1] : '';
+      claudeFmt = ent.format === 'claude';
+      spec.bin = ent.bin; spec.args = [...(Array.isArray(ent.args) ? ent.args.map(String) : []), ...(claudeFmt ? ['-p', ...guardArgs()] : [])];
+      swapped = true; stdin = 'pipe';
+      J.append({ type: 'engine_used', task_id: task.task_id, engine: choice.engine, module: choice.module });
+    }
+  }
+  Object.assign(spec.env, swapped ? { HARNESS_ENGINE_CHOSEN: choice.engine } : {}, { HARNESS_TASK_ID: task.task_id, HARNESS_TASK_DIR: task.workdir, HARNESS_STATE_DIR: J.STATE });
+  // a plain-text turn engine's stdout (the reply) is kept apart from its stderr noise
+  const plainOut = swapped && !claudeFmt, plainFile = logFile + '.stdout', plainFd = plainOut ? fs.openSync(plainFile, 'w') : -1;
+  const child = spawn(spec.bin, spec.args, { cwd: task.workdir, env: spec.env, stdio: [stdin, plainOut ? plainFd : out, out], shell: false, windowsHide: true });
+  if (swapped) { child.stdin.on('error', () => { /* engine exited before reading */ }); child.stdin.end(input); }
+  J.relock(EXEC_LOCK, { pids: [process.pid, child.pid].filter(Boolean), task_id: task.task_id }, nonce);
+  // Exit and a spawn error (missing executable) both end the engine; the lock is held through reply hooks and the engine_exit record, then released exactly once.
+  let spawnError = null;
+  const code = await new Promise(res => {
+    let done = false;
+    const finish = c => { if (done) return; done = true; res(c); };
+    child.on('error', e => { spawnError = e; finish(-1); });
+    child.on('exit', finish);
+  });
+  try {
+    if (spawnError) J.append({ type: 'engine_error', task_id: task.task_id, error: String(spawnError.code || 'spawn_error') });
+    // Claude-format output is stream-json (last result record); any other swapped engine's reply is its trimmed plain stdout.
+    const raw = swapped && !claudeFmt ? plainReply(plainFile) : lastReply(logFile, logFrom);
+    let reply = M.scrubAll(raw).trim(); // hide every loaded module's secrets and secret patterns; hooks see the complete reply, clipping comes after
+    if (reply) {
+      const rh = await M.beforeReply(MODS, reply, { task_id: task.task_id });
+      if (rh.blocked) { J.append({ type: 'reply_blocked', task_id: task.task_id, module: rh.module, code: rh.code || 'blocked' }); reply = `(reply withheld by ${rh.module})`; } // never the reply or the hook's reason
+      else reply = M.scrubAll(rh.reply).trim().slice(0, 4000);
+    }
+    if (reply) J.append({ type: 'reply', task_id: task.task_id, text: reply });
+    J.append({ type: 'engine_exit', task_id: task.task_id, code });
+  } finally { if (!J.unlock(EXEC_LOCK, nonce)) J.unlockLater(EXEC_LOCK, nonce, undefined, 'harness exec lock'); } // long-lived worker: do not strand the lock
   await M.emit(MODS, 'task.end', { task_id: task.task_id, code, workdir: task.workdir }, { task, code, config: CONFIG });
   const open = J.openTask(J.readAll().records);
   const finished = !open || open.task_id !== task.task_id;
@@ -215,7 +262,8 @@ async function main() {
     const task_id = /^t[\w-]+$/.test(process.env.HARNESS_NEW_TASK_ID || '') ? process.env.HARNESS_NEW_TASK_ID : 't' + J.newId();
     const workdir = path.resolve(wi >= 0 ? rest[wi + 1] : path.join(process.env.HARNESS_WORK_DIR || path.join(J.ROOT, 'work'), task_id));
     ensureWorkdir(workdir);
-    const t = J.append({ type: 'task_start', task_id, request, workdir, ...(process.env.HARNESS_BOT ? { bot: process.env.HARNESS_BOT } : {}) });
+    let forked = null; try { const f = JSON.parse(process.env.HARNESS_FORKED_FROM || 'null'); if (f && /^t[\w-]+$/.test(String(f.task))) forked = { task: f.task, step: f.step }; } catch { /* ignore */ }
+    const t = J.append({ type: 'task_start', task_id, request, workdir, ...(process.env.HARNESS_BOT ? { bot: process.env.HARNESS_BOT } : {}), ...(forked ? { forked_from: forked } : {}) });
     return runEngine(t, nonce);
   }
   if (cmd === 'resume') {

@@ -1,0 +1,5 @@
+{
+  "suites": [
+    { "label": "speaker-pick", "file": "test/run.js", "needs": ["speaker-pick"] }
+  ]
+}

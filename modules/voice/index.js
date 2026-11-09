@@ -12,6 +12,7 @@ const J = require('../../lib/journal');
 module.exports = {
   contract: 2,
   name: 'voice',
+  hookTimeoutMs: 1000, // beforeTool is a cheap synchronous check
   description: 'Voice bridge guard half: a voice session gets no tools while a harness task is running.',
   beforeTool() {
     if (process.env.HARNESS_VOICE === '1' && fs.existsSync(path.join(J.STATE, 'voice-notools.flag')))

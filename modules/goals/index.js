@@ -171,6 +171,7 @@ function statusLines(J, ctx) {
 module.exports = {
   contract: 2,
   name: 'goals',
+  hookTimeoutMs: 1000, // beforeTool is a cheap synchronous check
   description: 'Owner goal card (verbatim goal, done, out of scope, confirmed once) and a lessons list from owner corrections.',
   runsOn: 'main',
   priority: 50,

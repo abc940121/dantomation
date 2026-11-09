@@ -124,7 +124,7 @@ async function withLock(io, fn) {
     await sleep(10 + Math.floor(Math.random() * 20));
   }
   if (!got.held) return { error: 'busy: another question operation is in progress; try again', status: 409 };
-  try { return await fn(); } finally { JL.unlock(file, got.nonce); }
+  try { return await fn(); } finally { if (!JL.unlock(file, got.nonce)) JL.unlockLater(file, got.nonce, undefined, 'question-cards'); }
 }
 
 // records (+ vault) -> Map question_id -> question with .state: pending | answered | cancelled | expired
@@ -248,4 +248,4 @@ async function sweep(io) {
   return r.ev.map(e => e[1].question_id);
 }
 
-module.exports = { LIMITS, ID_RE, validateAsk, validateAnswer, source, fold, pending, foldIO, pendingIO, vaultLoad, isExpired, view, ask, answer, cancel, sweep, find, lookup, now, DEFAULT_TIMEOUT_MIN };
+module.exports = { withLock, LIMITS, ID_RE, validateAsk, validateAnswer, source, fold, pending, foldIO, pendingIO, vaultLoad, isExpired, view, ask, answer, cancel, sweep, find, lookup, now, DEFAULT_TIMEOUT_MIN };

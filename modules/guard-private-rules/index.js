@@ -49,6 +49,7 @@ function privateRules(tool, ti, rules = RULES) {
 module.exports = {
   contract: 2,
   name: 'guard-private-rules',
+  hookTimeoutMs: 1000, // beforeTool is a cheap synchronous check
   runsOn: ['main', 'worker'],
   description: "Blocks the owner's own rules from the private rules file named in the run-time config.",
   beforeTool: ({ tool, ti }) => privateRules(tool, ti),

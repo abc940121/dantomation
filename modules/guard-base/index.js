@@ -10,6 +10,7 @@ function beforeTool({ tool, ti, cwd }) {
 module.exports = {
   contract: 2,
   name: 'guard-base',
+  hookTimeoutMs: 1000, // beforeTool is a cheap synchronous check
   runsOn: ['main', 'worker'],
   description: 'Blocks generic dangerous operations (destructive shell commands, secret writes, protected files).',
   beforeTool,
