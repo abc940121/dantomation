@@ -117,7 +117,7 @@ Extra event prefixes this module may emit besides its own name. A module emits t
 `emits: ['card']`
 
 ### `commands`: `{ <verb>: fn(args, ctx) }`
-Adds `harness.js <verb>` and `taskmote <verb>`, with ctx `{J, EXEC_LOCK, settings, state, api, emit, config}`. The first module in load order to claim a verb wins. A command may print and may exit with a code. It runs as the person at the keyboard, so a command for owners only must refuse when `HARNESS_TASK_ID` is set.
+Adds `harness.js <verb>` and `taskmote <verb>`, with ctx `{J, EXEC_LOCK, settings, state, api, emit, config}`. Trunk verbs (`do`, `status`, `undo`, `serve`, `token`) always win; a module cannot replace them. `taskmote` refuses (exit 2) a verb that more than one enabled module claims; `harness.js` uses the first in load order. If the module that offers a verb is off, `taskmote` names it and exits 2. A command runs in-process with the owner's rights (see Trust model): enabling a module that has commands means trusting it. A command may print and may exit with a code. It runs as the person at the keyboard, so a command for owners only must refuse when `HARNESS_TASK_ID` is set.
 `commands: { hello(args, ctx) { console.log(ctx.settings.greeting); } }`
 
 ### `routes`: `[{ method, path, handler, description?, access? }]`
@@ -242,6 +242,8 @@ It serves no HTTP. The server (S1) and UI (S2) are built on it.
 
 ## From a skill: taskmote new-module
 
+This verb belongs to the `scaffold` module (on by default). With it off, the verb prints "turn on the scaffold module".
+
 ```
 taskmote new-module <name> [--from-skill <dir>] [--force]
 ```
@@ -263,6 +265,10 @@ Without `--from-skill` you get the same shape with no `prepareTurn`. The module 
 **off by default**: modules run only when the config's `modules` says `true`, and
 the command never edits a config. Turn it on with `"<name>": true`; run its tests with
 `node test/run-all.js module <name>`. Check the skill's license before publishing.
+
+## Example: outbound pings (`ntfy`)
+
+`modules/ntfy/` shows an outbound-only module: it listens to `task.end`, `task-watchdog.stalled` and `card.created`, keeps its topic as a `secret` setting read with `ctx.secret`, and sends one HTTP POST with `ctx.signal` and its own timeout. It names no other module, so it needs no `dependsOn`.
 
 ## Planned additive extensions
 

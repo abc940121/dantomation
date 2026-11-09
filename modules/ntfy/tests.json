@@ -1,0 +1,9 @@
+{
+  "suites": [
+    {
+      "label": "ntfy",
+      "file": "test/ntfy.js",
+      "needs": []
+    }
+  ]
+}

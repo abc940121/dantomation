@@ -88,7 +88,7 @@ On Windows, `bin\taskmote.cmd` does the same; put `bin` on your PATH to type `ta
 3. Open <http://127.0.0.1:7420/m/app-ui/ui/> (keep the `/ui/` at the end). The page asks for a pairing code the first time, even on this computer: run `node bin/harness.js pair` and type the six digits it prints. **It worked if** you can send "hello" and see a reply.
 4. **Phone (optional).** A phone cannot reach `127.0.0.1`. Put this computer on a private network you control (for example Tailscale), set `server.host` to that address, and restart `serve`. Then run `node bin/harness.js pair`, and open the printed link on the phone or type the code there. `node bin/harness.js devices` lists phones and `node bin/harness.js revoke <id>` removes one. Never open the port to the internet.
 
-`node bin/taskmote.js preset v1` shows what the preset turns on. It never writes a file.
+`node bin/taskmote.js preset v1` shows what the preset turns on. It never writes a file. The verb is the `presets` module (on by default); with it off, the verb says to turn it on.
 
 ## How it fits together
 
@@ -121,12 +121,14 @@ On Windows, `bin\taskmote.cmd` does the same; put `bin` on your PATH to type `ta
 
 ## Modules
 
-Every module is off by default, except the two safety modules `guard-base` and `checkpoint`. `guard-base` is locked on: a config or preset that turns it off is refused, so `serve` will not start and every tool call is blocked until it is fixed. Turning `approval-cards` off is allowed, but `serve` warns that every red-line step will then be refused. "Can touch" is what the module itself reads or changes beyond the trunk.
+Every module is off by default, except the two safety modules `guard-base` and `checkpoint` and the CLI helper modules `scaffold` and `presets`. `guard-base` is locked on: a config or preset that turns it off is refused, so `serve` will not start and every tool call is blocked until it is fixed. Turning `approval-cards` off is allowed, but `serve` warns that every red-line step will then be refused. "Can touch" is what the module itself reads or changes beyond the trunk.
 
 | Module | What it does | Can touch | Default | In v1 |
 |---|---|---|---|---|
 | `guard-base` | blocks API keys, mass deletion, skipped git hooks, secret writes | nothing; it only blocks | on (locked) | ✓ |
 | `checkpoint` | snapshot before every change; `undo`/`restore` | the task folder (git snapshots) | on | ✓ |
+| `scaffold` | the `new-module` verb: skill folder to module folder | writes a new folder under `modules/` | on | |
+| `presets` | the `preset` verb: shows what a profile from `presets/` turns on | reads `presets/` and your config; writes nothing | on | |
 | `guard-private-rules` | your own red lines from a rules file | reads your rules file | off | ✓ |
 | `approval-cards` | risky actions ask yes/no | nothing; it only pauses | off | ✓ |
 | `question-cards` | an agent asks you a multiple-choice question | its own state | off | ✓ |
@@ -138,6 +140,8 @@ Every module is off by default, except the two safety modules `guard-base` and `
 | `voice`, `voice-chat` | voice bridge and hands-free layer | microphone and speaker through the voice client | off | ✓ |
 | `rooms`, `chat-endpoint` | multi-bot rooms; a bot behind an OpenAI-style URL | sends room text to the URL you configure | off | ✓ |
 | `worker` | runs queued jobs on a second machine | one work folder on that machine; outbound HTTP | off | ✓ |
+| `ntfy` | push pings (task finished, blocked, approval waiting) to your phone | outbound HTTP POST to the ntfy server you configure | off | |
+| `ccusage` | per-day / per-session Claude Code token and cost reports (runs the ccusage program via npx) | runs `npx`; reads Claude Code logs through it | off | |
 | `spend-count`, `claim-audit`, `engine-router`, `routines`, `search`, … | see each module's README | see its README | off | |
 
 Each module has its own `README.md` with its limits. To write one, copy [`modules/hello-stub`](modules/hello-stub/README.md).

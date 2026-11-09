@@ -1,0 +1,11 @@
+{
+  "suites": [
+    {
+      "label": "ccusage",
+      "file": "test/ccusage.js",
+      "needs": [
+        "ccusage"
+      ]
+    }
+  ]
+}

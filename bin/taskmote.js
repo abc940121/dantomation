@@ -6,11 +6,13 @@
 //   taskmote undo             roll the latest task's folder back by one agent change
 //   taskmote serve            run the local HTTP+SSE server (lib/server.js)
 //   taskmote token new        write a fresh owner-only API token
-//   taskmote preset <name>    show what a profile from presets/ turns on (writes nothing)
+// Any other verb is a module command (docs/MODULES.md, "commands"); a verb whose module is off
+// prints a one-line hint naming the module that offers it.
 // If a server is running for this state dir, do/status/undo talk to it; otherwise
 // (or with HARNESS_NO_SERVER=1) they behave exactly as before.
 // It reuses bin/harness.js (do) and the checkpoint module's `undo` command; the
 // low-level `harness.js` keeps working as before.
+const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const J = require('../lib/journal');
@@ -18,13 +20,8 @@ const C = require('../lib/config');
 const M = require('../lib/modules');
 
 const HARNESS = path.join(__dirname, 'harness.js');
-const USAGE = 'usage: taskmote do "<request>" | do | status | undo | serve | token new [--worker] | preset <name> | new-module <name> [--from-skill <dir>] [--force]';
+const USAGE = 'usage: taskmote do "<request>" | do | status | undo | serve | token new [--worker] | <module verb>';
 const fail = (msg, code = 1) => { console.error(msg); process.exit(code); };
-
-// preset runs before the config is read: it is how a missing or partial config gets its modules.
-if (process.argv[2] === 'preset') {
-  try { process.exit(require('../lib/preset').cli(process.argv.slice(3))); } catch (e) { fail('taskmote: ' + e.message, 2); }
-}
 
 let CONFIG;
 try { CONFIG = C.load(); } catch (e) { fail(`taskmote: ${e.message}; fix or remove it (HARNESS_CONFIG / ~/.harness/config.json)`, 2); }
@@ -147,13 +144,29 @@ async function undoDirect(args) {
   return await cmds.undo(args, { J, EXEC_LOCK: require('./harness').EXEC_LOCK });
 }
 
+// Any other verb: a command of an enabled module. If none claims it, look for a module folder
+// that offers it, so a verb whose module is off says what to turn on.
+async function moduleVerb(args) {
+  const mods = await loadModules();
+  const claimers = M.verbClaimers(mods, verb);
+  if (claimers.length > 1) fail(`taskmote: "${verb}" is offered by more than one enabled module (${claimers.join(', ')}); turn all but one off.`, 2);
+  const cmd = claimers.length ? M.commands(mods)[verb] : undefined;
+  if (cmd) { const r = await cmd(args, { J, get EXEC_LOCK() { return require('./harness').EXEC_LOCK; } }); return r && r.code ? process.exit(r.code) : undefined; }
+  const dir = path.join(__dirname, '..', 'modules');
+  let owner = null;
+  try { owner = fs.readdirSync(dir).find(n => { try { return Object.keys(require(path.join(dir, n, 'index.js')).commands || {}).includes(verb); } catch { return false; } }); } catch { /* no modules folder */ }
+  fail(owner ? `taskmote: "${verb}" needs the ${owner} module, which is off: turn on the ${owner} module (add "${owner}": true under "modules" in ${CONFIG.file}).` : USAGE, 2);
+}
+
 const [verb, ...rest] = process.argv.slice(2);
-const run = { 'new-module': async () => { try { process.exitCode = require('../lib/scaffold').cli(rest); } catch (e) { fail('taskmote: ' + e.message, 2); } }, do: doVerb, status: statusVerb, undo: undoVerb,
+// Trunk verbs are looked up first (own keys only), so a module can never shadow them.
+const TRUNK = { do: doVerb, status: statusVerb, undo: undoVerb,
   serve: async () => { const w = C.warn(); if (w) console.error(w); await require('../lib/server').serve(); },
   token: async () => {
     if (rest[0] !== 'new') fail(USAGE, 2);
     const worker = rest[1] === '--worker';
     console.log(`${worker ? 'worker ' : ''}token written to ${require('../lib/server').tokenNew(worker ? 'worker' : undefined)} (owner-only); send it as: Authorization: Bearer <token>${worker ? ' (it may only call /api/worker/ and module routes marked access: worker)' : ''}`);
-  } }[verb];
+  } };
+const run = Object.prototype.hasOwnProperty.call(TRUNK, verb) ? TRUNK[verb] : (verb && moduleVerb);
 if (!run) fail(USAGE, 2);
 else run(rest).catch(e => fail(`taskmote: ${e && e.stack || e}`, 1));

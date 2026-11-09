@@ -33,9 +33,24 @@ const lk = guard(cfgFile('base-off', { modules: { ...OFF, 'guard-base': false } 
 res['guard-base off: the config is refused and the guard blocks a harmless Read'] = lk.code === 2 && /locked on/.test(lk.err);
 
 // the lock cannot be edited away: the loaders and the guard-base folder are self_modify (a hard block)
-for (const rel of ['lib/config.js', 'lib/modules.js', 'lib/preset.js', 'modules/guard-base/index.js', 'modules/guard-base/redline.js', 'guards/guard.js']) {
+for (const rel of ['lib/config.js', 'lib/modules.js', 'lib/preset.js', 'presets/v1.json', 'modules/guard-base/index.js', 'modules/guard-base/redline.js', 'guards/guard.js']) {
   const g = guard(off, 'Edit', { file_path: path.join(ROOT, rel), old_string: 'a', new_string: 'b' });
   res[`editing ${rel} is blocked (self_modify)`] = g.code === 2 && g.kind === 'self_modify';
+}
+// module verbs: trunk verbs win, a duplicate claim is an error, an off module names itself
+{
+  const fake = (name, verbs) => ({ name, commands: Object.fromEntries(verbs.map(v => [v, () => 0])) });
+  const M = require('../lib/modules');
+  const cl = M.verbClaimers([fake('a', ['x', 'y']), fake('b', ['x']), { name: 'c' }], 'x');
+  res['verbClaimers lists every module that claims a verb, in load order'] = cl.join() === 'a,b';
+  res['verbClaimers ignores inherited names (constructor)'] = M.verbClaimers([fake('a', ['x'])], 'constructor').length === 0;
+  const tm = (cfg, ...a) => spawnSync(process.execPath, [path.join(ROOT, 'bin', 'taskmote.js'), ...a], { env: { ...process.env, HARNESS_CONFIG: cfg, HARNESS_NO_SERVER: '1' }, encoding: 'utf8' });
+  const proto = tm(off, 'constructor');
+  res['taskmote constructor: usage, exit 2 (no prototype lookup)'] = proto.status === 2 && /usage:/.test(proto.stderr);
+  const sc = tm(cfgFile('scaffold-off', { modules: { ...OFF, scaffold: false } }), 'new-module', 'zz');
+  res['taskmote new-module with scaffold off names the module, exit 2'] = sc.status === 2 && /needs the scaffold module/.test(sc.stderr);
+  const src = fs.readFileSync(path.join(ROOT, 'bin', 'taskmote.js'), 'utf8');
+  res['taskmote looks up trunk verbs before module verbs'] = src.includes('Object.prototype.hasOwnProperty.call(TRUNK, verb) ? TRUNK[verb] : (verb && moduleVerb)');
 }
 // every production entry point gets its module map from config.load(), never from a raw map
 for (const rel of ['bin/harness.js', 'bin/taskmote.js', 'bin/approve-mcp.js', 'guards/guard.js', 'lib/server.js']) {

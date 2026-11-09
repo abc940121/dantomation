@@ -132,7 +132,7 @@ ${fromSkill ? `    const skill = fs.readFileSync(path.join(MOD, 'skill.md'), 'ut
 
 // newModule(name, { fromSkill, force, modulesDir }) -> { dir, files: [relative paths] }. Throws Error with a clear message.
 function newModule(name, opts = {}) {
-  const modulesDir = path.resolve(opts.modulesDir || path.join(__dirname, '..', 'modules'));
+  const modulesDir = path.resolve(opts.modulesDir || path.join(__dirname, '..'));
   if (typeof name !== 'string' || !NAME_RE.test(name)) throw new Error(`bad module name ${JSON.stringify(name)}: use lowercase letters, digits and dashes, starting with a letter, 2 to 41 characters (${NAME_RE})`);
   let skill = null, extras = [], skillDir = null;
   if (opts.fromSkill) {

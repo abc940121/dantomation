@@ -69,6 +69,7 @@ Every field but `contract` and `name` is optional, and every callback may be asy
 | [`worker`](../modules/worker/README.md) | provisional: pull-based worker for a second machine (outbound HTTP only) | off |
 | [`guard-private-rules`](../modules/guard-private-rules/README.md) | owner's rules file, self-protection of the config | off |
 | [`spend-count`](../modules/spend-count/README.md) | block a session over the spend limit | off |
+| [`ccusage`](../modules/ccusage/README.md) | per-day / per-session Claude Code token and cost reports (`taskmote usage`) | off |
 | [`voice`](../modules/voice/README.md) | voice bridge, `voice_busy` block | off |
 | [`voice-chat`](../modules/voice-chat/README.md) | hands-free voice: text wake phrase, spoken approval cards, echo guard (needs the voice client) | off |
 | [`approval-cards`](../modules/approval-cards/README.md) | risky actions stop and ask you yes/no (`do yes` / `do no`) instead of running | off |

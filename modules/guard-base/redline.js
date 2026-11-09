@@ -17,7 +17,7 @@ const under = (p, dir) => { const a = low(norm(p)).replace(/\/+$/, ''), d = low(
 // Never written by a bot, anywhere: the --settings layer and Claude settings files (permissions live there).
 const SETTINGS_NAME = /(^|\/)(claude-settings\.json|\.claude\/settings(\.local)?\.json|managed-settings\.json)$/i;
 // Never written by a bot, inside the Taskmote tree: the guard, the guard modules, the card path, the approve tool.
-const GUARD_NAME = /^\/(guards\/.*|lib\/(config|modules|preset)\.js|modules\/(guard-[^/]+|approval-cards)\/.*|[^/]+\/approve[\w.-]*\.js|approve[\w.-]*\.js)$/i;
+const GUARD_NAME = /^\/(guards\/.*|lib\/(config|modules|preset)\.js|presets\/[^/]+\.json|modules\/(guard-[^/]+|approval-cards)\/.*|[^/]+\/approve[\w.-]*\.js|approve[\w.-]*\.js)$/i;
 // Taskmote's own config inside its tree: allowed with a card.
 const CONFIG_NAME = /^\/config\/[^/]+$/i;
 
@@ -46,7 +46,7 @@ function selfPathAt(abs) {
   if (SETTINGS_NAME.test(abs)) return ['self_modify', 'writing Claude settings (permissions) or the guard settings layer'];
   const root = [J.ROOT, realOf(J.ROOT)].find(r => under(abs, r));
   const inRoot = !!root, rel = inRoot ? abs.slice(norm(root).replace(/\/+$/, '').length) : null;
-  if (inRoot && GUARD_NAME.test(rel)) return ['self_modify', 'writing the guard, a guard module, the module loader or config loader, the approval path or the approve tool'];
+  if (inRoot && GUARD_NAME.test(rel)) return ['self_modify', 'writing the guard, a guard module, the module loader, config loader or a preset, the approval path or the approve tool'];
   if ((inRoot && CONFIG_NAME.test(rel)) || [J.STATE, C.file(), path.join(os.homedir(), '.harness')].some(d => under(abs, d) || under(abs, realOf(d))))
     return ['ask:self_config', 'changing Taskmote\'s own config'];
   return null;

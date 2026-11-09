@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 'use strict';
-// Tests lib/scaffold.js (taskmote new-module). Everything is generated into a temp
+// Tests modules/scaffold/scaffold.js (taskmote new-module). Everything is generated into a temp
 // modules dir; the real modules/ is never written. The temp tree gets a junction to the
 // real lib/ so the generated suite can require ../../lib/modules like a real module does.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
-const S = require('../lib/scaffold');
+const S = require('../modules/scaffold/scaffold');
 const M = require('../lib/modules');
 
 const ROOT = path.resolve(__dirname, '..');

@@ -23,6 +23,7 @@ for (const k of ['HARNESS_OWNER', 'HARNESS_TASK_ID', 'HARNESS_TASK_DIR', 'HARNES
 
 const M = require(path.join(ROOT, 'lib', 'modules'));
 const P = require(path.join(ROOT, 'lib', 'preset'));
+const PV = require(path.join(ROOT, 'modules', 'presets', 'presets'));
 const C = require(path.join(ROOT, 'lib', 'config'));
 const J = require(path.join(ROOT, 'lib', 'journal'));
 
@@ -84,7 +85,7 @@ const cfgOf = modules => ({ ...C.DEFAULTS, owner_name: 'Tester', modules });
   delete require.cache[require.resolve(path.join(ROOT, 'lib', 'config'))]; // the config is cached per process
   const out = [], log0 = console.log;
   console.log = (...x) => out.push(x.join(' '));
-  let vrc; try { vrc = P.cli(['v1']); P.cli(['v1', '--dry-run']); } finally { console.log = log0; }
+  let vrc; try { vrc = PV.cli(['v1']); PV.cli(['v1', '--dry-run']); } finally { console.log = log0; }
   check('the preset verb writes nothing (bytes, mtime, directory)', fs.readFileSync(vf).equals(before.b) && fs.statSync(vf).mtimeMs === before.m && fs.readdirSync(sd).join() === before.ls);
   check('the verb names the modules, the user override and the line to add', vrc === 0 && out.some(l => /on: trace/.test(l)) && out.some(l => /kept as you set it: tripwires = false/.test(l)) && out.some(l => /^ +"preset": "v1"$/m.test(l)), out.join(' | ').slice(0, 200));
   const cli1 = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'taskmote.js'), 'preset', 'v1'], { env: { ...process.env, HARNESS_CONFIG: path.join(sd, 'absent.json') }, encoding: 'utf8' });
