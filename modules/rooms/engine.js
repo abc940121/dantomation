@@ -66,11 +66,13 @@ function createEngine({ rooms, store, deliver, now = Date.now, humanLabel = 'hum
   const memoryFor = (r, { addressed = [], speaker = null, humanTurn = false }) =>
     r.members.filter(m => !m.noRoomMemory || addressed.includes(m.id) || (humanTurn && speaker === m.id)).map(m => m.id);
 
-  const refuse = (member, reason, extra) => ({ posted: false, reason, member: member.id, ...extra });
+  const refuseBase = (member, reason, extra) => ({ posted: false, reason, member: member.id, ...extra });
 
   async function runTurn(r, s, turn) {
     const member = r.members.find(m => m.id === turn.member);
     if (!member || turn.gen !== s.gen) return null;
+    // A turn that is not posted leaves a small record (no text) so drops are visible.
+    const refuse = (m, reason, extra) => { store.append({ type: 'room_turn_skipped', room: r.id, member: m.id, reason }); return refuseBase(m, reason, extra); };
     const msgs = transcript(r.id);
     const trigger = msgs.find(m => m.id === turn.trigger);
     const summaries = store.all().filter(x => x.type === 'room_summary' && x.room === r.id);

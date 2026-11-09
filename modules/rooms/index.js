@@ -47,11 +47,20 @@ function engineFor(ctx) {
     if (signal && signal.aborted) { await stopTask(t.id); return ''; }
     if (!view || !TERMINAL.has(view.state)) { await stopTask(t.id); return ''; }
     if (view.state !== 'done') return '';
-    const recs = J.readAll().records.filter(r => r.task_id === t.id);
-    const rep = recs.filter(r => r.type === 'reply' && typeof r.text === 'string').pop();
-    if (rep) return rep.text;
-    const job = recs.filter(r => r.type === 'job_done' && r.result && typeof r.result.reply === 'string').pop();
-    return job ? job.result.reply : '';
+    // The journal gets task_done before the engine writes the reply (about 3 s later, then engine_exit):
+    // keep reading until the reply shows up, the engine has exited, or a bounded grace runs out.
+    const graceS = Math.max(0, Math.min(120, Number.isFinite(s.reply_grace_s) ? s.reply_grace_s : 15));
+    const graceEnd = Math.min(deadline, Date.now() + graceS * 1000);
+    for (;;) {
+      const recs = J.readAll().records.filter(r => r.task_id === t.id);
+      const rep = recs.filter(r => r.type === 'reply' && typeof r.text === 'string').pop();
+      if (rep) return rep.text;
+      const job = recs.filter(r => r.type === 'job_done' && r.result && typeof r.result.reply === 'string').pop();
+      if (job) return job.result.reply;
+      if (recs.some(r => r.type === 'engine_exit') || Date.now() >= graceEnd) return '';
+      if (signal && signal.aborted) return '';
+      await sleep(s.poll_ms);
+    }
   };
   const engine = createEngine({ rooms: s.rooms, store, deliver, humanLabel: s.human_label });
   cached = { key, engine };
@@ -97,6 +106,7 @@ module.exports = {
     rooms: { type: 'object', default: {}, description: 'rooms by id: { lead?, window?, members: [{id, name?, bot?, engine?, endpoint?, voice?, neverLead?, noRoomMemory?, addressedOnly?, window?, contextLines?}] }' },
     human_label: { type: 'string', default: 'human', description: 'speaker label shown for the human' },
     reply_timeout_s: { type: 'number', default: 180, min: 1, description: 'give up on one member turn after this many seconds' },
+    reply_grace_s: { type: 'number', default: 15, min: 0, max: 120, description: 'after a bot task is done, wait up to this many seconds for its reply record' },
     poll_ms: { type: 'number', default: 500, min: 10, description: 'how often to check a member task' },
   },
   api: { createEngine, registerDeliverer },
