@@ -342,6 +342,57 @@ async function main() {
   note('net: a CLI-run turn left open is closed by the sweep', !!(await waitFor(() => journal().some(r => r.type === 'task_done' && r.task_id === cliT && r.auto === true && !r.failed), 15000)));
   killTree(srv.pid); await waitFor(() => !alive(srv.pid), 15000);
 
+  // a restart during a live card's wait: the engine that polled it is gone, so the startup sweep closes the card (no allow ever), and the task is not left open
+  const cli2 = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'harness.js'), 'start', 'orphan turn [no-done]'], { env: { ...env, HARNESS_NO_SERVER: '1' }, encoding: 'utf8', timeout: 60000 });
+  const orT = (journal().filter(r => r.type === 'engine_exit').pop() || {}).task_id;
+  const orId = 'card-0badc0';
+  J.append({ type: 'card', card_id: orId, task_id: orT, tool: 'Bash', input: { command: 'winget install x' }, sha256: cardsMod.hashOf('Bash', { command: 'winget install x' }), summary: 'install x', rule: 'redline:install', created_at: new Date().toISOString(), expires_at: null, live: true });
+  const deadPid = spawnSync(process.execPath, ['-e', '']).pid;
+  J.append({ type: 'card', card_id: 'card-0dead01', task_id: null, tool: 'Bash', input: { command: 'winget install y' }, sha256: cardsMod.hashOf('Bash', { command: 'winget install y' }), summary: 'install y', rule: 'redline:install', created_at: new Date().toISOString(), expires_at: null, live: true, waiter_pid: deadPid });
+  J.append({ type: 'card', card_id: 'card-0a11e0', task_id: null, tool: 'Bash', input: { command: 'winget install y' }, sha256: cardsMod.hashOf('Bash', { command: 'winget install y' }), summary: 'install y', rule: 'redline:install', created_at: new Date().toISOString(), expires_at: null, live: true, waiter_pid: process.pid });
+  // pid reuse: the recorded waiter pid is alive (another process now has it) but no heartbeat; an old card is closed.
+  // The same with a fresh heartbeat stays pending.
+  const reused = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 120000)'], { stdio: 'ignore' });
+  const oldAt = new Date(Date.now() - 10 * 60000).toISOString();
+  J.append({ type: 'card', card_id: 'card-0e05ed', task_id: null, tool: 'Bash', input: { command: 'winget install r' }, sha256: cardsMod.hashOf('Bash', { command: 'winget install r' }), summary: 'install r', rule: 'redline:install', created_at: oldAt, expires_at: null, live: true, waiter_pid: reused.pid });
+  J.waiterBeat(process.pid);
+  const beating = setInterval(() => J.waiterBeat(process.pid), 2000);
+  J.append({ type: 'card', card_id: 'card-0bea70', task_id: null, tool: 'Bash', input: { command: 'winget install b' }, sha256: cardsMod.hashOf('Bash', { command: 'winget install b' }), summary: 'install b', rule: 'redline:install', created_at: oldAt, expires_at: null, live: true, waiter_pid: process.pid });
+  // legacy: a live card with neither a waiter pid nor a task (raised before pids were recorded): closed once old,
+  // left alone while it is younger than a day.
+  const dayAgo = ms => new Date(Date.now() - 24 * 3600 * 1000 - ms).toISOString();
+  J.append({ type: 'card', card_id: 'card-01e9ac', task_id: null, tool: 'Bash', input: { command: 'winget install l' }, sha256: cardsMod.hashOf('Bash', { command: 'winget install l' }), summary: 'install l', rule: 'redline:install', created_at: dayAgo(60000), expires_at: null, live: true });
+  J.append({ type: 'card', card_id: 'card-01e9ad', task_id: null, tool: 'Bash', input: { command: 'winget install l' }, sha256: cardsMod.hashOf('Bash', { command: 'winget install l' }), summary: 'install l', rule: 'redline:install', created_at: dayAgo(-15000), expires_at: null, live: true });
+  i = await startServer();
+  const orClosed = await waitFor(() => journal().find(r => r.type === 'card_answer' && r.card_id === orId), 15000);
+  note('restart sweep: an orphaned live card is closed as a system no, reason "closed: server restarted, not used"', !!orClosed && orClosed.answer === 'no' && orClosed.who === 'system' && orClosed.reason === 'closed: server restarted, not used', cli2.stdout + cli2.stderr);
+  note('restart sweep: a needs_you line is written for the card', !!(await waitFor(() => journal().find(r => r.type === 'needs_you' && r.card_id === orId && r.task_id === orT), 5000)));
+  note('restart sweep: the card is closed before the task is closed (sweep runs before pump)', (() => { const j = journal(); const a = j.findIndex(r => r.type === 'card_answer' && r.card_id === orId), d = j.findIndex(r => r.type === 'task_done' && r.task_id === orT); return a >= 0 && (d < 0 || a < d); })());
+  const lateYes = await req(i.port, 'POST', `/api/cards/${orId}`, { answer: 'yes' });
+  note('restart sweep: a late yes finds no pending card and is never used', lateYes.status === 409 && !journal().some(r => r.type === 'card_used' && r.card_id === orId) && !journal().some(r => r.type === 'card_answer' && r.card_id === orId && r.answer === 'yes'), lateYes.raw);
+  note('restart sweep: the task is not stuck open (pump closed it)', !!(await waitFor(() => journal().some(r => r.type === 'task_done' && r.task_id === orT), 15000)));
+  note('restart sweep: a card with no task whose waiter process is gone is closed as a system no', !!(await waitFor(() => journal().find(r => r.type === 'card_answer' && r.card_id === 'card-0dead01' && r.answer === 'no' && r.who === 'system'), 15000)));
+  note('restart sweep: a card whose waiter process is alive is left pending', !journal().some(r => r.type === 'card_answer' && r.card_id === 'card-0a11e0'));
+  note('pid reuse: an old card whose pid is alive but has no heartbeat is closed as a system no', !!(await waitFor(() => journal().find(r => r.type === 'card_answer' && r.card_id === 'card-0e05ed' && r.answer === 'no' && r.who === 'system'), 15000)));
+  note('pid reuse: an old card whose waiter heartbeat is fresh stays pending', !journal().some(r => r.type === 'card_answer' && r.card_id === 'card-0bea70'));
+  note('legacy: an old live card with no pid and no task is closed as a system no with a needs_you line', !!(await waitFor(() => journal().find(r => r.type === 'card_answer' && r.card_id === 'card-01e9ac' && r.answer === 'no' && r.who === 'system'), 15000)) && journal().some(r => r.type === 'needs_you' && r.card_id === 'card-01e9ac' && r.kind === 'server_restart'));
+  note('legacy: a young live card with no pid and no task is left pending', !journal().some(r => r.type === 'card_answer' && r.card_id === 'card-01e9ad'));
+  reused.kill();
+  // a waiter alive at startup that exits while the server runs: the running sweep closes its card
+  const lateWaiter = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'ignore' });
+  J.append({ type: 'card', card_id: 'card-0de1a7', task_id: null, tool: 'Bash', input: { command: 'winget install z' }, sha256: cardsMod.hashOf('Bash', { command: 'winget install z' }), summary: 'install z', rule: 'redline:install', created_at: new Date().toISOString(), expires_at: null, live: true, waiter_pid: lateWaiter.pid });
+  await new Promise(r => setTimeout(r, 6000));
+  note('running sweep: a card whose waiter is still alive stays pending', !journal().some(r => r.type === 'card_answer' && r.card_id === 'card-0de1a7'));
+  lateWaiter.kill(); await waitFor(() => !alive(lateWaiter.pid), 15000);
+  const lwClosed = await waitFor(() => journal().find(r => r.type === 'card_answer' && r.card_id === 'card-0de1a7'), 20000);
+  note('running sweep: a card whose waiter exits after startup is closed as a system no and a needs_you line is written', !!lwClosed && lwClosed.answer === 'no' && lwClosed.who === 'system' && lwClosed.reason === 'closed: its waiting process exited, not used' && journal().some(r => r.type === 'needs_you' && r.card_id === 'card-0de1a7' && r.kind === 'waiter_gone'));
+  note('pid reuse: the fresh-heartbeat card is still pending after the running sweeps', !journal().some(r => r.type === 'card_answer' && r.card_id === 'card-0bea70'));
+  clearInterval(beating); J.waiterDone(process.pid);
+  J.append({ type: 'card_answer', module: 'approval-cards', card_id: 'card-0bea70', task_id: null, answer: 'no', who: 'system', where: null, reason: 'test cleanup' });
+  note('legacy: the young no-pid card is closed by the running sweep once it ages past a day', !!(await waitFor(() => journal().find(r => r.type === 'card_answer' && r.card_id === 'card-01e9ad' && r.answer === 'no' && r.who === 'system'), 40000)) && journal().some(r => r.type === 'needs_you' && r.card_id === 'card-01e9ad'));
+  J.append({ type: 'card_answer', module: 'approval-cards', card_id: 'card-0a11e0', task_id: null, answer: 'no', who: 'system', where: null, reason: 'test cleanup' });
+  killTree(srv.pid); await waitFor(() => !alive(srv.pid), 15000);
+
   // ---- 2b: a bot must not read the token (guard-base is on in this config)
   const tokenPath = path.join(state, 'server.token');
   const hook = (tool, ti) => spawnSync(process.execPath, [path.join(ROOT, 'guards', 'guard.js')], { input: JSON.stringify({ session_id: 'fake', tool_name: tool, tool_input: ti, cwd: work }), env, encoding: 'utf8' });

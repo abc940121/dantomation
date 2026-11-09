@@ -56,13 +56,38 @@ async function main() {
     check('auto-allow: nothing is journaled, no card', recs().length === before, recs().slice(before));
   }
 
+  // heartbeat file: written whole (temp file renamed into place); a missing file is not fresh, an unreadable one is
+  {
+    const dir = path.join(STATE, 'waiters'), f = path.join(dir, '424242.json');
+    J.waiterBeat(424242);
+    check('heartbeat: a beat is fresh and leaves no temp file behind', J.waiterFresh(424242, 60000) && !fs.readdirSync(dir).some(n => n.endsWith('.tmp')), fs.readdirSync(dir));
+    fs.writeFileSync(f, '{"pid":4242');
+    check('heartbeat: a torn or half-written file counts as fresh (unknown never sweeps a card)', J.waiterFresh(424242, 60000) === true);
+    J.waiterBeat(424242, 3600000);
+    check('heartbeat: a beat carries its own stale window, honored by a reader with a shorter one', J.waiterFresh(424242, 30000, Date.now() + 120000) === true && J.waiterFresh(424242, 30000, Date.now() + 2 * 3600000) === false);
+    J.waiterDone(424242);
+    check('heartbeat: a missing file is not fresh', J.waiterFresh(424242, 60000) === false);
+  }
+  // a sweep's system no that lands after an owner yes does not win the fold (the server checks the fold before it reports)
+  {
+    const K = require('../modules/approval-cards/cards');
+    const c0 = { type: 'card', card_id: 'card-race01', task_id: null, tool: 'Bash', input: {}, created_at: new Date().toISOString(), expires_at: null, live: true };
+    const stale = [c0], out = [];
+    const closed = K.closeCard(r => out.push(r), stale, 'card-race01', 'closed: test');
+    const full = [c0, { type: 'card_answer', card_id: 'card-race01', answer: 'yes', who: 'owner' }, ...out];
+    const f = K.fold(full).get('card-race01');
+    check('race: closeCard on a stale snapshot appends its no, but the earlier owner yes is the effective answer', closed && f.state === 'approved' && f.decided.who === 'owner', f);
+  }
+
   // b. red line -> card -> approve
   {
-    const c = clock(1000, 3, () => answer('tb', 'yes'));
+    let beat = false;
+    const c = clock(1000, 3, () => { beat = J.waiterFresh(process.pid, 60000); return answer('tb', 'yes'); });
     const r = await A.decide({ tool_name: 'Bash', input: { command: RED } }, { io, task_id: 'tb', now: c.now, sleep: c.sleep });
     const card = cardOf('tb');
-    check('red line: a live card is raised with no deadline', !!card && card.live === true && card.expires_at === null && /^redline:install$/.test(card.rule) && card.input.command === RED, card);
+    check('red line: a live card is raised with no deadline and its waiter pid', !!card && card.live === true && card.expires_at === null && /^redline:install$/.test(card.rule) && card.input.command === RED && card.waiter_pid === process.pid, card);
     check('red line: a needs_you record names the card', recs().some(x => x.type === 'needs_you' && x.task_id === 'tb' && x.card_id === card.card_id && x.kind === 'install'));
+    check('red line: the waiter keeps a fresh heartbeat while it waits and removes it after', beat && !J.waiterFresh(process.pid, 1e12));
     check('red line -> approve: allowed with the same input, card_used journaled', r.behavior === 'allow' && r.updatedInput.command === RED && recs().some(x => x.type === 'card_used' && x.card_id === card.card_id), r);
   }
 
@@ -71,6 +96,12 @@ async function main() {
     const c = clock(1000, 2, async () => { await answer('tu', 'yes'); const k = cardOf('tu'); J.append({ type: 'card_used', module: 'approval-cards', card_id: k.card_id, task_id: 'tu' }); });
     const r = await A.decide({ tool_name: 'Bash', input: { command: 'npm install -g used-tool' } }, { io, task_id: 'tu', now: c.now, sleep: c.sleep });
     check('red line -> approved card already used: the waiter still allows, no second card_used', r.behavior === 'allow' && !!cardOf('tu') && recs().filter(x => x.type === 'card_used' && x.card_id === cardOf('tu').card_id).length === 1, r);
+  }
+
+  // b. red line, heartbeat cannot be written -> denied, no card
+  {
+    const r = await A.decide({ tool_name: 'Bash', input: { command: 'pip install nobeat' } }, { io, task_id: 'tnb', beat: () => false });
+    check('red line, no heartbeat: denied up front and no card is raised', r.behavior === 'deny' && /could not record/.test(r.message) && !cardOf('tnb'), r);
   }
 
   // b. red line -> card -> deny
@@ -282,6 +313,28 @@ async function main() {
         cancelled: () => !stop && polls >= 1 });
       check(`race: a ${label} with a yes in the same poll denies the call, and the yes is not used`, r.behavior === 'deny' && !recs().some(x => x.type === 'card_used' && x.card_id === cardOf(task).card_id), r);
     }
+  }
+
+  // k. a second card raised while the first still waits: each call gets only its own answer
+  {
+    const nap = () => new Promise(r => setTimeout(r, 5));
+    const tkCards = () => recs().filter(r => r.type === 'card' && r.task_id === 'tk2');
+    const until = async f => { for (let i = 0; i < 400 && !f(); i++) await nap(); return f(); };
+    const byId = (id, a) => K.answered(io, K.fold(recs()).get(id), a, undefined, K.source({ where: 'cli' }));
+    let s1 = false, s2 = false;
+    const p1 = A.decide({ tool_name: 'Bash', input: { command: 'winget install first' } }, { io, task_id: 'tk2', sleep: nap }).then(r => { s1 = true; return r; });
+    await until(() => tkCards().length === 1);
+    const p2 = A.decide({ tool_name: 'Bash', input: { command: 'winget install second' } }, { io, task_id: 'tk2', sleep: nap }).then(r => { s2 = true; return r; });
+    await until(() => tkCards().length === 2);
+    const [c1, c2] = tkCards();
+    check('two cards: the second gets its own card while the first waits', !!c1 && !!c2 && c1.card_id !== c2.card_id && c2.input.command === 'winget install second' && !s1 && !s2, { c1, c2, s1, s2 });
+    await byId(c2.card_id, 'no');
+    const r2 = await p2;
+    await nap(); await nap();
+    check('two cards: a no on the second denies only the second; the first keeps waiting', r2.behavior === 'deny' && r2.message.includes(c2.card_id) && !s1, { r2, s1 });
+    await byId(c1.card_id, 'yes');
+    const r1 = await p1;
+    check('two cards: a yes on the first allows the first call unchanged; only that card is used', r1.behavior === 'allow' && r1.updatedInput.command === 'winget install first' && recs().some(x => x.type === 'card_used' && x.card_id === c1.card_id) && !recs().some(x => x.type === 'card_used' && x.card_id === c2.card_id), r1);
   }
 
   fs.rmSync(tmp, { recursive: true, force: true });

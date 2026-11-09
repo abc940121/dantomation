@@ -109,14 +109,15 @@ function reserveId(io) {
   throw new Error('no free card id');
 }
 
-// opts.live: no deadline (expires_at null), see the card record above.
+// opts.live: no deadline (expires_at null), see the card record above. opts.pid: the process waiting on a live card
+// (the startup sweep closes the card once that process is gone).
 async function create(io, { task_id, tool, input, summary, rule, cwd }, settings, opts) {
   const card_id = reserveId(io);
   const t = now();
   const live = !!(opts && opts.live);
   const ms = timeoutMs(settings);
   const rec = io.state.append({ type: 'card', card_id, task_id, tool, input, sha256: hashOf(tool, input), summary, rule, ...(cwd ? { cwd } : {}),
-    created_at: new Date(t).toISOString(), expires_at: live || !ms ? null : new Date(t + ms).toISOString(), ...(live ? { live: true } : {}) });
+    created_at: new Date(t).toISOString(), expires_at: live || !ms ? null : new Date(t + ms).toISOString(), ...(live ? { live: true } : {}), ...(live && Number.isInteger(opts.pid) ? { waiter_pid: opts.pid } : {}) });
   mirror(io, [{ ...rec, state: 'pending', unclear: 0 }]);
   await io.emit('card.created', { card_id, task_id, summary, rule, expires_at: rec.expires_at });
   return rec;
@@ -181,6 +182,14 @@ function claim(io, card_id, task_id = null) {
   return true;
 }
 
+// Close one live card by id, if it is still pending (the startup sweep: never a task-wide close).
+function closeCard(append, records, card_id, why) {
+  const c = fold(records).get(card_id);
+  if (!c || !c.live || c.state !== 'pending') return false;
+  append({ type: 'card_answer', module: 'approval-cards', card_id: c.card_id, task_id: c.task_id, answer: 'no', who: 'system', where: null, reason: String(why || '').slice(0, 120) });
+  return true;
+}
+
 function closeLive(append, records, task_id, why) {
   const out = [];
   for (const c of fold(records).values()) {
@@ -191,4 +200,4 @@ function closeLive(append, records, task_id, why) {
   return out;
 }
 
-module.exports = { claim, closeLive, source, sourceText, decisionLabel, denyMessage, systemDeny, WHO, WHERE, DEFAULT_TIMEOUT_MIN, fold, create, sweep, answered, pending, note, mirror, hashOf, isExpired, now, timeoutMs, canon };
+module.exports = { claim, closeLive, closeCard, source, sourceText, decisionLabel, denyMessage, systemDeny, WHO, WHERE, DEFAULT_TIMEOUT_MIN, fold, create, sweep, answered, pending, note, mirror, hashOf, isExpired, now, timeoutMs, canon };

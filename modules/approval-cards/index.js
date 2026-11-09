@@ -268,5 +268,5 @@ module.exports = {
     skip: { type: 'array', items: 'string', default: [], description: 'ids of built-in rules to switch off' },
   },
   // fold, pending, isExpired are the pure journal helpers the server lists cards with.
-  api: { raise, parseAnswer, voiceAnswer, source: K.source, decisionLabel: K.decisionLabel, rules, listCards, answerCard, fold: K.fold, pending: K.pending, closeLive: K.closeLive, isExpired: K.isExpired, create: K.create, answered: K.answered, denyMessage: K.denyMessage, now: K.now },
+  api: { raise, parseAnswer, voiceAnswer, source: K.source, decisionLabel: K.decisionLabel, rules, listCards, answerCard, fold: K.fold, pending: K.pending, closeLive: K.closeLive, closeCard: K.closeCard, isExpired: K.isExpired, create: K.create, answered: K.answered, denyMessage: K.denyMessage, now: K.now },
 };

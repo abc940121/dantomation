@@ -107,10 +107,13 @@ async function decide(params, deps = {}) {
   const what = clip(tool === 'Bash' || tool === 'PowerShell' ? input.command : input.file_path || input.url || JSON.stringify(input), 160);
   const now = deps.now || K.now, wait = deps.sleep || sleep;
   const where = cwd ? require('path').resolve(String(cwd)) : null;
-  const card = await K.create(io, { task_id, tool, input, rule: 'redline:' + c[1], cwd: where, summary: `${c[2]}: ${what}${where ? ` (in ${clip(where, 80)})` : ''}` }, io.settings, { live: true });
+  // No heartbeat, no card: the server could not tell this waiter from a dead one and would close its card.
+  if (!(deps.beat || J.waiterBeat)(process.pid, J.staleFor(POLL_MS())))
+    return deny(`red line (${c[1]}): ${c[2]}. Taskmote could not record that this approval is being waited on (its state folder is not writable), so it cannot be approved; skip this step and tell the person.`);
+  const card = await K.create(io, { task_id, tool, input, rule: 'redline:' + c[1], cwd: where, summary: `${c[2]}: ${what}${where ? ` (in ${clip(where, 80)})` : ''}` }, io.settings, { live: true, pid: process.pid });
   WAITING.set(card.card_id, { io, card, K });
   try { return await waitOn(K, io, card, input, c, task_id, now, wait, deps.cancelled || (() => false)); }
-  finally { WAITING.delete(card.card_id); }
+  finally { WAITING.delete(card.card_id); if (!WAITING.size) J.waiterDone(); }
 }
 
 async function waitOn(K, io, card, input, c, task_id, now, wait, cancelled) {
@@ -143,6 +146,7 @@ async function waitOn(K, io, card, input, c, task_id, now, wait, cancelled) {
       J.append({ type: 'card_reminder', task_id, card_id: card.card_id, n: reminders, waited_min: Math.floor(waited / 60000) });
       continue;
     }
+    J.waiterBeat(process.pid, J.staleFor(POLL_MS()));
     await wait(POLL_MS());
   }
 }
@@ -209,6 +213,7 @@ async function closeWaiting(why) {
     } catch { /* the harness closes it when the turn ends */ }
   }
   WAITING.clear();
+  J.waiterDone();
 }
 
 if (require.main === module) serve();
