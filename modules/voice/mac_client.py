@@ -20,8 +20,8 @@ Env:
   VOICE_CHAT_URL    server base for voice-chat, default http://127.0.0.1:7420
   VOICE_CHAT_TOKEN  bearer token for that server (empty = none; localhost needs none)
   VOICE_CAPTURE_CMD command that writes 16 kHz mono s16le raw PCM to stdout (default: sox `rec`)
-  ASR_URL       default http://127.0.0.1:8001/v1/audio/transcriptions (OpenAI-style, mlx_audio)
-  TTS_URL       default http://127.0.0.1:8001/v1/audio/speech; "say" = macOS say only
+  ASR_URL       default http://127.0.0.1:8011/v1/audio/transcriptions (OpenAI-style, local mlx_audio server)
+  TTS_URL       default http://127.0.0.1:8011/v1/audio/speech; "say" = macOS say only
   ASR_MODEL / TTS_MODEL  model ids your mlx_audio server expects
   TTS_VOICE     speaker name for TTS models that need one (default vivian; empty = send none)
   Install pins (THIRD_PARTY.md): hf download <id> --revision <commit> before starting mlx_audio.
@@ -45,9 +45,9 @@ from speech_pipeline import SpeechPipeline
 
 BRIDGE_URL = os.environ.get('BRIDGE_URL', 'http://127.0.0.1:8790')
 BRIDGE_TOKEN = os.environ.get('BRIDGE_TOKEN', '')
-ASR_URL = os.environ.get('ASR_URL', 'http://127.0.0.1:8001/v1/audio/transcriptions')
+ASR_URL = os.environ.get('ASR_URL', 'http://127.0.0.1:8011/v1/audio/transcriptions')
 ASR_MODEL = os.environ.get('ASR_MODEL', 'mlx-community/Qwen3-ASR-1.7B-8bit')
-TTS_URL = os.environ.get('TTS_URL', 'http://127.0.0.1:8001/v1/audio/speech')
+TTS_URL = os.environ.get('TTS_URL', 'http://127.0.0.1:8011/v1/audio/speech')
 TTS_MODEL = os.environ.get('TTS_MODEL', 'mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit')
 TTS_VOICE = os.environ.get('TTS_VOICE', 'vivian')  # CustomVoice models refuse a request without a speaker
 

@@ -260,6 +260,9 @@ function roomTests() {
   check('rooms: app never summarises and only calls say/messages/list', !/\/summary/.test(app + fs.readFileSync(path.join(UI, 'rooms.js'), 'utf8')) && /RM\.sayPath/.test(app));
   check('rooms: stale poll responses are dropped by a selection generation', /roomGen\+\+/.test(app) && /gen === roomGen/.test(app) && (app.match(/roomGen\+\+/g) || []).length >= 3);
   check('rooms: a finished send clears the composer only if room and text are unchanged', /\$\('text'\)\.value === sentText/.test(app) && /ui\.room === sentRoom && roomGen === sentGen/.test(app));
+  check('rooms: ?room= read from the query and written back, other params kept', RM.roomFromSearch('?room=dev') === 'dev' && RM.roomFromSearch('?a=1') === null && RM.roomFromSearch('') === null && RM.withRoom('?a=1', 'x y') === '?a=1&room=x+y' && RM.withRoom('?room=dev', null) === '' && RM.withRoom('?a=1&room=dev', null) === '?a=1' && RM.roomFromSearch(RM.withRoom('', 'a&b=c')) === 'a&b=c');
+  check('rooms: picker is a select filled from the room list and kept in sync with the URL', /id="room-pick"/.test(fs.readFileSync(path.join(UI, 'index.html'), 'utf8')) && /drawRoomPick/.test(app) && app.includes('RM.withRoom(location.search, ui.room)') && app.includes('RM.roomFromSearch(location.search)') && app.includes('selectRoom(e.target.value || null)'));
+  check('rooms: a failed list (401, offline) is not a successful one, so it cannot drop ?room=', RM.listOk({ ok: true, body: { rooms: [] } }) === true && RM.listOk({ ok: false, status: 401, body: null }) === false && RM.listOk(null) === false && RM.listOk({ ok: true, body: {} }) === false && /ok && ui.room && !rooms.list.some/.test(app));
   check('rooms: index.html loads rooms.js before app.js', /rooms\.js[^]*app\.js/.test(fs.readFileSync(path.join(UI, 'index.html'), 'utf8')));
 }
 
@@ -269,7 +272,7 @@ function hashTests() {
   const run = hash => {
     const store = new Map(), handlers = {};
     const location = { hash, pathname: '/m/chat-ui/ui/index.html', search: '' };
-    const win = { DantoState: D, addEventListener: (ev, f) => { handlers[ev] = f; } };
+    const win = { DantoState: D, DantoRooms: require(path.join(UI, 'rooms.js')), addEventListener: (ev, f) => { handlers[ev] = f; } };
     const ctx = { window: win, DantoState: D, location, history: { replaceState: (a, b, url) => { location.hash = ''; ctx.replaced = url; } },
       localStorage: { getItem: k => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)) },
       document: { getElementById: stub, createElement: stub, addEventListener: () => {}, body: stub(), hidden: false },

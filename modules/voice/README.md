@@ -29,6 +29,8 @@ The executor lock is core. A `start`/`resume` that finds the lock held by a shor
 
 Run: `TEXT_TARGET=voice-chat VOICE_CHAT_URL=http://<desktop>:7420 python3 mac_client.py --listen`
 
+ASR and TTS default to a local mlx_audio server at `http://127.0.0.1:8011` (`/v1/audio/transcriptions`, `/v1/audio/speech`); override with `ASR_URL` / `TTS_URL`.
+
 ## Test
 
     node modules/voice/test/voice-lock.js

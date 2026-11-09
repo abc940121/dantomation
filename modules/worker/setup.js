@@ -11,6 +11,15 @@ const https = require('https');
 const crypto = require('crypto');
 const { execFileSync } = require('child_process');
 
+// One resolver for `token` and `check`, same order as the worker: config worker.token_file, then the env var, then the default.
+// A missing config is fine; an unreadable or malformed one is an error (no detail printed: it could echo file text).
+function resolveTokenFile() {
+  const C = require('../../lib/config');
+  let w;
+  try { w = C.load().worker; } catch { return { error: `The config file ${C.file()} cannot be read or is not valid JSON; the worker would not start either. Fix it first.` }; }
+  if (w && typeof w.token_file === 'string' && w.token_file) return { file: path.resolve(w.token_file), fromConfig: true };
+  return { file: tokenFile(), fromConfig: false };
+}
 const tokenFile = () => process.env.HARNESS_WORKER_TOKEN_FILE || path.join(os.homedir(), '.harness', 'worker-token');
 
 // Owner-only: Windows -> icacls, current user only, no inheritance; others -> chmod 600.
@@ -25,7 +34,9 @@ function lockDown(file) {
 }
 
 function cmdToken(args) {
-  const file = tokenFile();
+  const R = resolveTokenFile();
+  if (R.error) { console.error(R.error); return 1; }
+  const file = R.file;
   const force = args.includes('--force');
   const si = args.indexOf('--set');
   const given = si >= 0 ? args[si + 1] : null;
@@ -73,9 +84,16 @@ async function cmdCheck(args) {
   if (!server) { console.error('usage: node modules/worker/setup.js check --server http://<server-host>:7420'); return 2; }
   let url;
   try { url = new URL(server); if (!/^https?:$/.test(url.protocol)) throw 0; } catch { console.error(`"${server}" is not a URL like http://192.0.2.10:7420`); return 2; }
-  const file = tokenFile();
+  const R = resolveTokenFile();
+  if (R.error) { console.error(R.error); return 1; }
+  const file = R.file, cfgFile = R.fromConfig;
   let token;
-  try { token = fs.readFileSync(file, 'utf8').trim(); } catch { console.error(`No token at ${file}. Run first:  node modules/worker/setup.js token`); return 1; }
+  try { token = fs.readFileSync(file, 'utf8').trim(); } catch (e) {
+    if (e.code === 'ENOENT') console.error(`No token at ${file}${cfgFile ? ' (set by worker.token_file in the config)' : ''}. Run first:  node modules/worker/setup.js token`);
+    else console.error(`Cannot read the token file ${file} (${e.code || 'error'}).`);
+    return 1;
+  }
+  if (!token) { console.error(`The token file ${file} is empty. Run:  node modules/worker/setup.js token --force`); return 1; }
   const r = await get(url, token);
   if (r.error) {
     console.error(`CANNOT REACH ${url.origin} (${r.error}).\n  - Is the server running (node bin/dantomation.js serve)?\n  - Is it set to listen on the LAN (config server.host), not only 127.0.0.1?\n  - Does the server's firewall allow inbound TCP ${url.port || 80} from this machine?`);

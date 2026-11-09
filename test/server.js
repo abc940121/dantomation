@@ -56,7 +56,7 @@ function req(port, method, p, body, headers = {}) {
   if (headers.authorization === null) delete headers.authorization;
   else if (!headers.authorization && ownerToken()) headers.authorization = `Bearer ${ownerToken()}`;
   return new Promise((resolve, reject) => {
-    const data = body === undefined ? null : JSON.stringify(body);
+    const data = body === undefined ? null : Buffer.isBuffer(body) ? body : JSON.stringify(body);
     const r = http.request({ host: '127.0.0.1', port, method, path: p, headers: { ...(data ? { 'content-type': 'application/json', 'content-length': Buffer.byteLength(data) } : {}), ...headers } }, res => {
       let s = ''; res.on('data', c => { s += c; });
       res.on('end', () => { let j = null; try { j = JSON.parse(s); } catch { /* none */ } resolve({ status: res.statusCode, body: j, raw: s }); });
@@ -177,6 +177,10 @@ async function main() {
   note('auth: tokenless loopback POST /api/cards/:id -> 401, card stays pending', noTokCard.status === 401 && afterNoTok.some(c => c.id === card.card_id && c.state === 'pending'), noTokCard.raw);
   const wrongTokCard = await req(port2, 'POST', `/api/cards/${card.card_id}`, { answer: 'yes' }, { authorization: 'Bearer nope' });
   note('auth: wrong token on a card answer -> 401', wrongTokCard.status === 401);
+  const badUtf8 = await req(port2, 'POST', '/api/chat', Buffer.from([0x7b, 0x22, 0x74, 0x22, 0x3a, 0x22, 0xa7, 0x22, 0x7d]));
+  note('body: invalid UTF-8 bytes -> 400 "not valid UTF-8 JSON", not stored as U+FFFD', badUtf8.status === 400 && /valid UTF-8 JSON/.test(badUtf8.raw), badUtf8.raw);
+  const zhBody = await req(port2, 'POST', '/api/cards/no-such-card', { answer: 'yes', note: '你好世界' });
+  note('body: valid Chinese UTF-8 still passes the body reader', zhBody.status !== 400, zhBody.raw);
   const noTokOthers = await Promise.all([['POST', '/api/tasks', { prompt: 'x' }], ['POST', `/api/tasks/${taskId}/stop`, {}], ['POST', `/api/tasks/${taskId}/undo`, {}], ['POST', `/api/tasks/${taskId}/resume`, {}], ['POST', '/api/chat', { bots: 'all', text: 'x' }], ['POST', '/api/worker/hello', { workerId: 'w' }], ['POST', '/api/worker/claim', { workerId: 'w' }]].map(([m, p, b]) => req(port2, m, p, b, { authorization: null })));
   note('auth: every other state-changing route and worker route -> 401 without a token', noTokOthers.every(r => r.status === 401), noTokOthers.map(r => r.status).join());
   note('auth: tokenless loopback GET (read-only) still works', (await req(port2, 'GET', '/api/bots', undefined, { authorization: null })).status === 200);

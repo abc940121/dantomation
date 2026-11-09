@@ -7,7 +7,7 @@
   const RM = window.DantoRooms;
   const rooms = { list: [], msgs: [], busy: false }; // stays empty (and invisible) while the rooms module is off
   const TOKEN_KEY = 'dantomation.token';
-  const ui = { view: null, all: false, targets: new Set(), openChips: new Set(), confirmUndo: null, cardMsg: {}, busyCards: new Set(), conn: 'connecting', needAuth: false, room: null };
+  const ui = { view: null, all: false, targets: new Set(), openChips: new Set(), confirmUndo: null, cardMsg: {}, busyCards: new Set(), conn: 'connecting', needAuth: false, room: RM.roomFromSearch(location.search) };
   const $ = id => document.getElementById(id);
 
   // ---- token: a #t= fragment is stripped from the URL and kept in localStorage.
@@ -114,7 +114,26 @@
     const n = D.pendingCards(S).length, w = $('waiting');
     w.hidden = !n; w.textContent = n + ' waiting for you';
     const c = $('conn'); c.dataset.state = ui.conn; c.textContent = ui.conn;
+    drawRoomPick();
   }
+
+  // Room picker: a select shown only while the rooms module answers. Options are rebuilt only when the list
+  // changes, so an open dropdown is not closed by a re-render. The ?room= query follows the selection.
+  function drawRoomPick() {
+    const sel = $('room-pick');
+    sel.hidden = !rooms.list.length;
+    const sig = rooms.list.map(r => r.id + '\n' + r.name).join('\n');
+    if (sel.dataset.sig !== sig) {
+      sel.dataset.sig = sig;
+      sel.replaceChildren(h('option', { value: '' }, 'No room'), ...rooms.list.map(r => h('option', { value: r.id }, r.name)));
+    }
+    sel.value = ui.room || '';
+    try {
+      const q = RM.withRoom(location.search, ui.room);
+      if (q !== location.search) history.replaceState(null, '', location.pathname + q + location.hash);
+    } catch (e) { /* ignore */ }
+  }
+  $('room-pick').addEventListener('change', e => selectRoom(e.target.value || null));
 
   function drawRoster() {
     const pend = {};
@@ -152,8 +171,10 @@
   }
   setInterval(pollRoom, 3000);
   async function loadRooms() {
-    try { const r = await api(RM.listPath()); rooms.list = RM.parseRooms(r); } catch (err) { rooms.list = []; }
-    if (ui.room && !rooms.list.some(r => r.id === ui.room)) { ui.room = null; roomGen++; }
+    let ok = false;
+    try { const r = await api(RM.listPath()); rooms.list = RM.parseRooms(r); ok = RM.listOk(r); } catch (err) { rooms.list = []; }
+    // Only a successful list can say the requested room is gone; a 401 or network error keeps ?room= until the next try.
+    if (ok && ui.room && !rooms.list.some(r => r.id === ui.room)) { ui.room = null; roomGen++; }
   }
 
   function selectView(id) {

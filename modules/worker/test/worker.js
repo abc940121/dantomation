@@ -311,6 +311,41 @@ const journalOf = e => { try { return fs.readFileSync(path.join(e.state, 'journa
     await m.close();
     const down = await new Promise(r => { const c = spawn(process.execPath, [path.join(__dirname, '..', 'setup.js'), 'check', '--server', `http://127.0.0.1:${m.port}`], { env: { ...process.env, HARNESS_WORKER_TOKEN_FILE: tf } }); let o = ''; c.stderr.on('data', d => o += d); c.on('exit', code => r({ code, o })); });
     check('setup check: unreachable server explained', down.code === 1 && /CANNOT REACH/.test(down.o), down);
+    // token_file in the config: used by check; missing, empty and unreadable files are reported; the token is never printed
+    const cfgTf = path.join(dir, 'cfg-tok'), cfgPath = path.join(dir, 'cfg.json');
+    fs.writeFileSync(cfgPath, JSON.stringify({ worker: { token_file: cfgTf } }));
+    const chk = (url) => new Promise(r => { const c = spawn(process.execPath, [path.join(__dirname, '..', 'setup.js'), 'check', '--server', url], { env: { ...process.env, HARNESS_WORKER_TOKEN_FILE: tf, HARNESS_CONFIG: cfgPath } }); let o = ''; c.stdout.on('data', d => o += d); c.stderr.on('data', d => o += d); c.on('exit', code => r({ code, o })); });
+    const m2 = await mockServer().listen();
+    const missing = await chk(m2.url());
+    check('setup check: worker.token_file missing is reported with its path', missing.code === 1 && /No token at/.test(missing.o) && missing.o.includes(cfgTf) && /worker.token_file/.test(missing.o), missing);
+    fs.writeFileSync(cfgTf, '\n');
+    const empty = await chk(m2.url());
+    check('setup check: worker.token_file empty is reported', empty.code === 1 && /empty/.test(empty.o), empty);
+    fs.rmSync(cfgTf); fs.mkdirSync(cfgTf);
+    const unread = await chk(m2.url());
+    check('setup check: worker.token_file unreadable is reported', unread.code === 1 && /Cannot read the token file/.test(unread.o), unread);
+    fs.rmSync(cfgTf, { recursive: true }); fs.writeFileSync(cfgTf, TOKEN + '\n');
+    fs.writeFileSync(tf, 'ignored-env-token-0123456789\n');
+    const good = await chk(m2.url());
+    check('setup check: worker.token_file accepted and wins over the env file; token not printed', good.code === 0 && /^OK/.test(good.o) && !good.o.includes(TOKEN) && !good.o.includes(TOKEN.slice(0, 6)), good);
+    // token and check share one resolver: config token_file wins for `token`, an empty one falls back to the env path for both
+    const newTf = path.join(dir, 'made-by-token');
+    fs.writeFileSync(cfgPath, JSON.stringify({ worker: { token_file: newTf } }));
+    const mk = spawnSync(process.execPath, [path.join(__dirname, '..', 'setup.js'), 'token'], { env: { ...process.env, HARNESS_WORKER_TOKEN_FILE: tf, HARNESS_CONFIG: cfgPath }, encoding: 'utf8', timeout: 30000 });
+    check('setup token: writes to worker.token_file from the config, not the env path', mk.status === 0 && fs.existsSync(newTf) && fs.readFileSync(tf, 'utf8').startsWith('ignored-env-token'), mk);
+    fs.writeFileSync(cfgPath, JSON.stringify({ worker: { token_file: '' } }));
+    fs.writeFileSync(tf, TOKEN + '\n');
+    const emptyCfg = await chk(m2.url());
+    check('setup check: empty worker.token_file falls back to the env path', emptyCfg.code === 0 && /^OK/.test(emptyCfg.o), emptyCfg);
+    const noForce = spawnSync(process.execPath, [path.join(__dirname, '..', 'setup.js'), 'token'], { env: { ...process.env, HARNESS_WORKER_TOKEN_FILE: tf, HARNESS_CONFIG: cfgPath }, encoding: 'utf8', timeout: 30000 });
+    check('setup token: empty worker.token_file targets the same env path as check', noForce.status === 1 && noForce.stderr.includes(tf), noForce);
+    fs.writeFileSync(cfgPath, '{ "worker": { "token_file": SECRET-NOT-JSON');
+    const badCfg = await chk(m2.url());
+    check('setup check: malformed config is an error, not a silent fallback; nothing from the file is echoed', badCfg.code === 1 && /cannot be read or is not valid JSON/.test(badCfg.o) && !/SECRET/.test(badCfg.o) && !/^OK/.test(badCfg.o), badCfg);
+    fs.rmSync(cfgPath);
+    const noCfg = await chk(m2.url());
+    check('setup check: a missing config is fine', noCfg.code === 0 && /^OK/.test(noCfg.o), noCfg);
+    await m2.close();
     try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* */ }
   }
 

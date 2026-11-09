@@ -158,3 +158,9 @@ M5: the pure function auditReport(text, evidence) is exported and tested on its 
 - mac_client sends a TTS speaker (`TTS_VOICE`, default vivian); CustomVoice TTS models refuse requests without one.
 - Open: `voice_transcript` is passed through the rooms say route when the caller sends `type`, but nothing upstream sends it yet.
 - Server: module jobs start in the main server once it is listening (`registry.startJobs`) and stop in `close()`, which now returns a promise that `serve` awaits before exiting. Without this a job such as chat-endpoint's `register` never ran under `serve`, so its rooms members always answered "unavailable". A job error is written to stderr and never stops the server. Only the main role starts jobs: the worker process builds a registry only for its policy modules (guard-base, guard-private-rules, checkpoint, worker), none of which declare jobs, so it does not start jobs.
+- Voice: mac_client defaults ASR_URL/TTS_URL to a local mlx_audio server on 127.0.0.1:8011; env overrides unchanged, so a different port is one variable.
+- Worker: setup.js check follows config worker.token_file like the worker does (config, then HARNESS_WORKER_TOKEN_FILE, then default); a missing, unreadable or empty file is a problem and the token, its prefix and length are never printed.
+- Chat UI: a room select in the header (filled from the rooms list, hidden when the module is off) replaces editing the URL; ?room=<id> is read at start and kept in sync with replaceState, so a phone can bookmark a room.
+- Server: readBody decodes with a fatal UTF-8 TextDecoder and answers 400 'body is not valid UTF-8 JSON' for invalid bytes, instead of storing U+FFFD from a non-UTF-8 shell.
+- Worker setup: token and check share one token-path resolver (config worker.token_file, env, default); a malformed config is an error, a missing one is fine.
+- Chat UI: ?room= is dropped only when a successful rooms list lacks it; a 401 or network failure keeps it.

@@ -16,6 +16,8 @@ html, body { height: 100%; margin: 0; }
 body { background: var(--bg); color: var(--text); font: 16px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-text-size-adjust: 100%; }
 button, textarea, input { font: inherit; color: inherit; }
 button { min-height: 44px; min-width: 44px; padding: 0 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); cursor: pointer; }
+select { font: inherit; color: inherit; min-height: 44px; max-width: 45vw; padding: 0 8px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+select:focus-visible { outline: 3px solid var(--accent); outline-offset: 1px; }
 button:disabled { opacity: .5; cursor: default; }
 button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 3px solid var(--accent); outline-offset: 1px; }
 code { font-family: ui-monospace, Consolas, monospace; font-size: .9em; }
