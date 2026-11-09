@@ -82,6 +82,17 @@ function mockServer() {
   o = await run(vc, 'something else');
   check('follow-up window closes after followup_s', o.r.ignored === 'no-wake' && m.chats.length === 2);
 
+  // ---- inCall (hands-free call): no wake phrase needed; default unchanged
+  vc = mk(); m.chats = []; m.script = [say1()];
+  const lines0 = []; await vc.utterance({ text: 'call mode question', inCall: true }, x => lines0.push(x), {});
+  check('inCall: no wake phrase needed, chat sent', m.chats.length === 1 && m.chats[0].text === 'call mode question', JSON.stringify(m.chats));
+  vc = mk(); m.chats = [];
+  o = await run(vc, 'call mode question');
+  check('without inCall the wake phrase is still required', o.r.ignored === 'no-wake' && m.chats.length === 0);
+  vc = mk(); m.chats = [];
+  await vc.utterance({ text: 'call mode question', inCall: 'yes' }, () => {}, {});
+  check('inCall must be exactly true', m.chats.length === 0);
+
   // ---- card read-aloud and answers
   const card = { id: 'c1', task: 't-b1', bot: 'b1', tool: 'Bash', summary: 'git push origin main', expiresAt: 'x' };
   vc = mk(); m.cards = [card]; m.answers = [];

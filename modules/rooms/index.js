@@ -81,6 +81,8 @@ module.exports = {
     { method: 'GET', path: '/rooms', description: 'rooms, their members and flags', handler: guard(e => ({ status: 200, json: { rooms: e.rooms(), problems: e.problems } })) },
     { method: 'GET', path: '/rooms/:id/messages', description: 'transcript with speaker labels; ?since=<message id>',
       handler: guard((e, ctx) => ({ status: 200, json: { messages: e.messages(ctx.params.id, ctx.query && ctx.query.since) } })) },
+    { method: 'GET', path: '/rooms/:id/status', access: 'owner', description: 'room presence {busy, speaker, queue:[member ids], lead, floor}',
+      handler: guard((e, ctx) => (e.rooms().some(r => r.id === ctx.params.id) ? { status: 200, json: e.status(ctx.params.id) } : { status: 404, json: { error: 'unknown room' } })) },
     { method: 'POST', path: '/rooms/:id/say', description: 'the human speaks {text, type?: "voice_transcript"}; flushes pending bot turns; answers 202, read the transcript for replies',
       handler: guard((e, ctx) => {
         const text = ctx.body && ctx.body.text;

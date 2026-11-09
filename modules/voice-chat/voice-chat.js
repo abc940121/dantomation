@@ -165,7 +165,8 @@ function createVoiceChat({ cfg, now = Date.now, api, parseAnswer } = {}) {
     const wake = stripWake(text, S.wake);
     const card = await pendingCard();
     const live = card && (!cardSt(card.id).parked || wake.matched);
-    if (!wake.matched && !live && !followupOpen()) return { ignored: 'no-wake' };
+    const inCall = !!(body && body.inCall === true); // a hands-free call: every utterance counts as inside the follow-up window
+    if (!wake.matched && !live && !inCall && !followupOpen()) return { ignored: 'no-wake' };
     if (live && await handleCard(card, wake.rest, wake, emit, ctx)) return {};
     if (!wake.rest) { speak(emit, 'Yes?'); return {}; }
     await chat(wake.rest, emit, ctx);

@@ -1,0 +1,35 @@
+{
+  "name": "dantomation-app-ui-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Web source of the optional app-ui module. The built output is committed in ../ui.",
+  "scripts": {
+    "build": "vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@tanstack/react-virtual": "^3.14.13",
+    "clsx": "^2.1.1",
+    "katex": "^0.16.47",
+    "lucide-react": "^0.539.0",
+    "mdast-util-from-markdown": "^2.0.3",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "react-markdown": "^10.1.0",
+    "rehype-katex": "^7.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0",
+    "shiki": "^4.4.3",
+    "tailwind-merge": "^3.3.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.11",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^4.7.0",
+    "tailwindcss": "^4.1.11",
+    "typescript": "^5.8.3",
+    "vite": "^7.1.0"
+  }
+}

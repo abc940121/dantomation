@@ -1,0 +1,11 @@
+{
+  "suites": [
+    {
+      "label": "app-ui",
+      "file": "test/run.js",
+      "needs": [
+        "app-ui"
+      ]
+    }
+  ]
+}

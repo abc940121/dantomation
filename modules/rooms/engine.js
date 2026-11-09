@@ -51,7 +51,7 @@ function normalize(rooms) {
 function createEngine({ rooms, store, deliver, now = Date.now, humanLabel = 'human', maxHopTargets = 3 }) {
   const norm = normalize(rooms);
   const st = new Map();
-  const state = id => { if (!st.has(id)) st.set(id, { queue: [], gen: 0, drain: null, inflight: new Set(), budget: createBudget(now), floorUntil: 0 }); return st.get(id); };
+  const state = id => { if (!st.has(id)) st.set(id, { queue: [], current: null, gen: 0, drain: null, inflight: new Set(), budget: createBudget(now), floorUntil: 0 }); return st.get(id); };
   const room = id => norm.rooms[id] || null;
   const canUse = (voice, roomId, memberId) => !norm.voiceOwner.has(voice) || norm.voiceOwner.get(voice) === roomId + '/' + memberId;
   // Text of members flagged journalText:false lives only here, in this process; the store keeps metadata.
@@ -134,7 +134,9 @@ function createEngine({ rooms, store, deliver, now = Date.now, humanLabel = 'hum
       const results = [];
       while (s.queue.length) {
         const turn = s.queue.shift();
-        const res = await runTurn(r, s, turn);
+        s.current = turn.member;
+        let res;
+        try { res = await runTurn(r, s, turn); } finally { s.current = null; }
         if (res) results.push(res);
       }
       return results;
@@ -168,6 +170,14 @@ function createEngine({ rooms, store, deliver, now = Date.now, humanLabel = 'hum
       const all = transcript(roomId);
       const i = since ? all.findIndex(m => m.id === since) : -1;
       return all.slice(i + 1).map(m => ({ id: m.id, ts: m.ts, speaker: m.speaker, label: labelOf(roomId, m.speaker), kind: m.kind, text: m.text, ...(m.emotion ? { emotion: m.emotion } : {}) }));
+    },
+    // Read-only view for UIs: who is answering, who waits, the lead and whether the owner holds the floor.
+    status(roomId) {
+      const r = room(roomId);
+      if (!r) throw new Error('unknown room');
+      const s = state(roomId);
+      const queue = s.queue.map(t => t.member);
+      return { busy: !!s.drain || s.current !== null || queue.length > 0, speaker: s.current, queue, lead: r.lead, floor: now() < s.floorUntil };
     },
     setSummary(roomId, text) {
       if (!room(roomId)) throw new Error('unknown room');

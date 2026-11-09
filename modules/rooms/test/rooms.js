@@ -377,6 +377,33 @@ const idLines = p => p.split('\n').filter(l => l.startsWith('- [id='));
     check('say: type voice_transcript is recorded on the line, anything else is not', hs[0].input === 'voice_transcript' && !('input' in hs[1]), hs);
   }
 
+  {
+    // status: presence for UIs
+    const st = mem(); let release; const gate = new Promise(r => { release = r; });
+    const eng = createEngine({ rooms: ROOM(), store: st, deliver: async ({ member }) => { if (member.id === 'ann') await gate; return 'ok ' + member.id; } });
+    const idle = eng.status('dev');
+    check('status: idle room has the documented shape', idle.busy === false && Array.isArray(idle.queue) && idle.queue.length === 0 && idle.lead === 'ann' && idle.floor === false && idle.speaker === null, idle);
+    const p = eng.say('dev', '@ann @bob @cy go');
+    await tick(); await tick();
+    const busy = eng.status('dev');
+    check('status: busy with the speaker and the waiting members', busy.busy === true && busy.speaker === 'ann' && busy.queue.join() === 'bob,cy', busy);
+    eng.holdFloor('dev', true);
+    check('status: floor is reported while held', eng.status('dev').floor === true);
+    eng.holdFloor('dev', false);
+    release(); await p;
+    const done = eng.status('dev');
+    check('status: idle again once the turns end', done.busy === false && done.queue.length === 0 && done.speaker === null, done);
+    let threw = false; try { eng.status('nope'); } catch (e) { threw = /unknown room/.test(e.message); }
+    check('status: unknown room throws', threw);
+    const sh = mod.routes.find(r => r.method === 'GET' && r.path === '/rooms/:id/status');
+    check('status route exists and is owner-only', sh && sh.access === 'owner', sh && sh.access);
+    const sctx = settings => ({ settings: { rooms: ROOM(), human_label: 'human', reply_timeout_s: 30, poll_ms: 10 }, state: { append: r => r }, tasks: {}, query: {}, body: {}, ...settings });
+    const ok = sh.handler(sctx({ params: { id: 'dev' } }));
+    check('status route: 200 with {busy, queue, lead, floor}', ok.status === 200 && typeof ok.json.busy === 'boolean' && Array.isArray(ok.json.queue) && 'lead' in ok.json && typeof ok.json.floor === 'boolean', ok);
+    const nf = sh.handler(sctx({ params: { id: 'zz' } }));
+    check('status route: unknown room is 404', nf.status === 404, nf);
+  }
+
   console.log(`result: ${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });

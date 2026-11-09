@@ -140,7 +140,8 @@ function revokeLocked(id) {
 }
 
 // Deny by default. A device token may do exactly this: read the roster, tasks, cards, status
-// and the event stream; send chat; answer an approval card; stop a task; talk to voice-chat; read rooms and speak in one (never the summary).
+// and the event stream; send chat; answer an approval card; stop a task; talk to voice-chat; read rooms and speak in one (never the summary); use the app-ui module's snapshot, config, questions
+// and bot-message routes (never its bot settings, and never creating a question).
 // No task creation outside chat, undo, resume, config, module settings, worker routes,
 // pairing admin, or any other module route.
 const ALLOW = [
@@ -153,6 +154,13 @@ const ALLOW = [
   ['GET', /^\/m\/rooms\/rooms$/],
   ['GET', /^\/m\/rooms\/rooms\/[\w-]+\/messages$/],
   ['POST', /^\/m\/rooms\/rooms\/[\w-]+\/say$/],
+  ['GET', /^\/m\/rooms\/rooms\/[\w-]+\/status$/],
+  ['GET', /^\/m\/app-ui\/api\/(snapshot|config|instances|questions)$/],
+  ['GET', /^\/m\/app-ui\/api\/bots\/[\w-]+\/messages$/],
+  ['GET', /^\/m\/app-ui\/api\/questions\/[\w-]+$/],
+  ['POST', /^\/m\/app-ui\/api\/bots\/[\w-]+\/messages$/],
+  ['POST', /^\/m\/app-ui\/api\/config$/],
+  ['POST', /^\/m\/app-ui\/api\/questions\/[\w-]+\/answer$/],
 ];
 const allows = (method, p) => ALLOW.some(([m, re]) => m === method && re.test(String(p)));
 
