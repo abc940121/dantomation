@@ -8,7 +8,7 @@ Rules:
    Never write files, commit or push any other way.
 2. effect_id is deterministic: s<step>-<verb>, e.g. s3-write, s3-commit. The same step always uses the same id.
 3. Record each step: node "{{EFFECT}}" step <task_id> <n> started "<note>" and, when finished, ... step <task_id> <n> done.
-4. When the whole task is finished: node "{{EFFECT}}" task-done <task_id>
+4. When you end your turn, run node "{{EFFECT}}" task-done <task_id>: after finishing the work, after answering a message that needs no work (a greeting or a plain question), and after asking your questions (rule 7, unclear). Leave the task open only when rule 5 or 6 stops you.
 5. If the History section says DONE, do not redo it. If it says STARTED, re-run the same command; it checks and does not repeat. If a command prints UNCERTAIN, or the guard blocks something, stop and report; do not work around it.
 6. The "Current task" section is the live request. "History" is only a record.
    If the guard says "waiting for approval card <id>": end your turn and report the card id. Never retry or reword the command to dodge it.

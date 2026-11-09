@@ -301,6 +301,45 @@ async function main() {
   note('ui: /ui/m/<module> is gone (404); an unknown module panel is 404', (await req(i.port, 'GET', '/ui/m/demo/', undefined, { authorization: `Bearer ${tokenText}` })).status === 404 && (await req(i.port, 'GET', '/m/demo/ui/', undefined, { authorization: `Bearer ${tokenText}` })).status === 404);
   killTree(srv.pid); await waitFor(() => !alive(srv.pid), 15000);
 
+  // ---- 7: safety net: a turn that ends without task-done does not keep the bot busy or block the queue
+  i = await startServer();
+  const post = p => req(i.port, 'POST', '/api/tasks', { prompt: p });
+  const stateOf = async id => ((await req(i.port, 'GET', `/api/tasks/${id}`)).body || {}).state;
+  const ended = id => waitFor(async () => { const s = await stateOf(id); return ['done', 'failed', 'stopped'].includes(s) && !procsBusy(id) ? s : null; }, 60000);
+  const procsBusy = id => !journal().some(r => r.type === 'task_done' && r.task_id === id);
+  const greet = (await post('greeting [no-done]')).body.id, after = (await post('next message')).body.id;
+  note('net: no task-done + exit 0 closes the turn as done', await ended(greet) === 'done' && journal().some(r => r.type === 'task_done' && r.task_id === greet && r.auto === true && !r.failed));
+  note('net: the next queued message still runs', await ended(after) === 'done');
+  const boom = (await post('boom [exit 3]')).body.id;
+  note('net: no task-done + exit 3 closes the turn as failed', await ended(boom) === 'failed' && journal().some(r => r.type === 'task_done' && r.task_id === boom && r.failed === true && r.code === 3));
+  const evNet = await sse(i.port, 0, e => e.some(x => x.type === 'task_end' && x.task === boom), 10000);
+  note('net: the chat gets task_end failed and the bot goes idle', evNet.some(e => e.type === 'task_end' && e.task === boom && e.state === 'failed') && evNet.some(e => e.type === 'bot_status' && e.status === 'idle'));
+  killTree(srv.pid); await waitFor(() => !alive(srv.pid), 15000);
+  // a crash in the middle of an effect stays open for resume (the journal has an intent with no done)
+  i = await startServer({ HARNESS_PAUSE_EFFECT: 's2-write', HARNESS_PAUSE_AFTER_ACT_MS: '120000' });
+  const midT = (await post('crash mid effect')).body.id;
+  await waitFor(() => fs.existsSync(path.join(state, 'paused.flag')), 60000);
+  const lk = (() => { try { return JSON.parse(fs.readFileSync(path.join(state, 'executor.lock'), 'utf8')); } catch { return null; } })();
+  for (const p of (lk && lk.pids) || []) killTree(p);
+  await waitFor(async () => (await stateOf(midT)) !== 'running', 15000);
+  await tick(500);
+  fs.rmSync(path.join(state, 'paused.flag'), { force: true });
+  note('net: a crash mid-effect leaves the task open for resume', !journal().some(r => r.type === 'task_done' && r.task_id === midT) && ((await req(i.port, 'GET', `/api/tasks/${midT}`)).body || {}).open === true);
+  await req(i.port, 'POST', `/api/tasks/${midT}/stop`, {});
+  killTree(srv.pid); await waitFor(() => !alive(srv.pid), 15000);
+
+  // a turn run by the CLI (not the server) that ended without task-done: closed by the sweep, never while the executor lock is held
+  const cli = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'harness.js'), 'start', 'cli turn [no-done]'], { env: { ...env, HARNESS_NO_SERVER: '1' }, encoding: 'utf8', timeout: 60000 });
+  const cliT = (journal().filter(r => r.type === 'engine_exit').pop() || {}).task_id;
+  const lockFile = path.join(state, 'executor.lock');
+  fs.writeFileSync(lockFile, JSON.stringify({ pids: [process.pid], task_id: cliT, nonce: 'test-holder' }));
+  i = await startServer();
+  await tick(2500);
+  note('net: no close while another process holds the executor lock', !!cliT && !journal().some(r => r.type === 'task_done' && r.task_id === cliT), cli.stdout + cli.stderr);
+  fs.rmSync(lockFile, { force: true });
+  note('net: a CLI-run turn left open is closed by the sweep', !!(await waitFor(() => journal().some(r => r.type === 'task_done' && r.task_id === cliT && r.auto === true && !r.failed), 15000)));
+  killTree(srv.pid); await waitFor(() => !alive(srv.pid), 15000);
+
   // ---- 2b: a bot must not read the token (guard-base is on in this config)
   const tokenPath = path.join(state, 'server.token');
   const hook = (tool, ti) => spawnSync(process.execPath, [path.join(ROOT, 'guards', 'guard.js')], { input: JSON.stringify({ session_id: 'fake', tool_name: tool, tool_input: ti, cwd: work }), env, encoding: 'utf8' });

@@ -54,4 +54,7 @@ if (viaGuard) {
 }
 // Opt-in HARNESS_FAKE_STREAM=<file>: its lines (stream-json, as the real engine prints) go to stdout, which the harness logs.
 if (process.env.HARNESS_FAKE_STREAM) process.stdout.write(fs.readFileSync(process.env.HARNESS_FAKE_STREAM, 'utf8'));
+// Markers in the request, for the server safety-net test: "[no-done]" ends the turn without task-done; "[exit N]" also exits N.
+const ex = /\[exit (\d+)\]/.exec(request);
+if (/\[no-done\]/.test(request) || ex) process.exit(ex ? Number(ex[1]) : 0);
 eff(['task-done', task]);
