@@ -42,10 +42,12 @@ function sane(it) {
 }
 function load(dir) {
   let d = null;
+  const corrupt = why => { const e = new Error('memory-tiers data.json is corrupt or unreadable (' + why + '); nothing was changed. Fix it or move it aside'); e.code = 'data_unreadable'; return e; };
   try { d = JSON.parse(fs.readFileSync(fileOf(dir), 'utf8')); } catch (e) {
-    if (e.code !== 'ENOENT') throw new Error('memory-tiers data.json unreadable: ' + e.message);
+    if (e.code !== 'ENOENT') throw corrupt(e.code || 'not JSON');
   }
-  const items = d && Array.isArray(d.items) ? d.items.filter(sane) : [];
+  if (d !== null && (typeof d !== 'object' || !Array.isArray(d.items))) throw corrupt('unexpected shape');
+  const items = d ? d.items.filter(sane) : [];
   return { items };
 }
 function save(dir, data) {
@@ -55,39 +57,62 @@ function save(dir, data) {
   try { fs.renameSync(tmp, f); } catch (e) { try { fs.unlinkSync(tmp); } catch { /* gone */ } throw e; }
 }
 
-// ---- lock: owner token; unlink only our own token; a stale lock is broken by rename then verify.
-const STALE_MS = 30000, WAIT_MS = 5000;
+// ---- lock: owner token, created atomically (wx) and released only if it still holds our token.
+// A stale lock is broken under a breaker mutex (lock.break, created wx): holding it, re-read the lock and
+// unlink it only if it is byte-identical to what was judged stale and still old. No rename, no link-back.
+const STALE_MS = 30000, WAIT_MS = 5000, BREAK_STALE_MS = 10000;
 const sleep = ms => { try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); } catch { /* no wait available */ } };
 const readTok = f => { try { return fs.readFileSync(f, 'utf8'); } catch { return null; } };
+const ageOf = f => { try { return Date.now() - fs.statSync(f).mtimeMs; } catch { return 0; } };
 function breakStale(lock, seen) {
-  // Move the stale lock aside, then check that what we moved is what we judged stale.
-  const aside = lock + '.stale-' + crypto.randomBytes(4).toString('hex');
-  try { fs.renameSync(lock, aside); } catch { return; } // someone else broke it first
-  if (readTok(aside) === seen) { try { fs.unlinkSync(aside); } catch { /* gone */ } return; }
-  // We moved a live lock that replaced the stale one: put it back if the slot is still free.
-  try { if (!fs.existsSync(lock)) fs.renameSync(aside, lock); else fs.unlinkSync(aside); } catch { /* best effort */ }
+  const brk = lock + '.break';
+  if (ageOf(brk) > BREAK_STALE_MS) { try { fs.unlinkSync(brk); } catch { /* gone */ } }
+  let fd;
+  try { fd = fs.openSync(brk, 'wx'); } catch { return; } // another breaker holds the mutex
+  try {
+    fs.closeSync(fd);
+    if (readTok(lock) === seen && ageOf(lock) > STALE_MS) { try { fs.unlinkSync(lock); } catch { /* gone */ } }
+  } finally { try { fs.unlinkSync(brk); } catch { /* gone */ } }
+}
+function acquire(lock, token) {
+  const end = Date.now() + WAIT_MS;
+  for (;;) {
+    try { fs.writeFileSync(lock, token, { flag: 'wx' }); return; } catch (e) { if (e.code !== 'EEXIST') throw e; }
+    const seen = readTok(lock);
+    if (seen === null) continue; // released between our create and read: try again at once
+    if (ageOf(lock) > STALE_MS) { breakStale(lock, seen); continue; }
+    if (Date.now() > end) throw new Error('memory-tiers store is busy');
+    sleep(20);
+  }
 }
 function update(dir, fn, limits) {
   fs.mkdirSync(dir, { recursive: true });
   const lock = path.join(dir, 'lock');
   const token = `${process.pid}:${crypto.randomBytes(8).toString('hex')}`;
-  const end = Date.now() + WAIT_MS;
-  for (;;) {
-    try { fs.writeFileSync(lock, token, { flag: 'wx' }); break; } catch (e) {
-      if (e.code !== 'EEXIST') throw e;
-      const seen = readTok(lock);
-      let age = 0; try { age = Date.now() - fs.statSync(lock).mtimeMs; } catch { age = 0; }
-      if (seen !== null && age > STALE_MS) { breakStale(lock, seen); continue; }
-      if (Date.now() > end) throw new Error('memory-tiers store is busy');
-      sleep(20);
-    }
-  }
+  acquire(lock, token);
   try {
     const data = load(dir);
     const r = fn(data);
-    if (r && !r.error) { enforce(data, limits || DEFAULT_LIMITS, now()); save(dir, data); }
+    if (r && !r.error) {
+      enforce(data, limits || DEFAULT_LIMITS, now());
+      if (readTok(lock) !== token) throw new Error('memory-tiers lock was lost; nothing written');
+      save(dir, data);
+    }
     return r;
   } finally { if (readTok(lock) === token) { try { fs.unlinkSync(lock); } catch { /* gone */ } } }
+}
+
+// ---- owner signatures: each core entry carries an HMAC (sha256) over its fields, keyed by a module secret
+// that only the owner paths obtain. The prompt hook injects verified core entries only.
+const sigOf = (key, it) => crypto.createHmac('sha256', key).update(JSON.stringify([it.id, 'core', it.text, it.ts, it.from || ''])).digest('hex');
+function verified(key, it) {
+  if (!key || !it || it.tier !== 'core' || typeof it.sig !== 'string' || !/^[0-9a-f]{64}$/.test(it.sig)) return false;
+  return crypto.timingSafeEqual(Buffer.from(it.sig, 'hex'), Buffer.from(sigOf(key, it), 'hex'));
+}
+// -> { ok: [core items whose signature verifies], bad: count of the rest }
+function coreSplit(data, key) {
+  const core = inTier(data, 'core'), ok = core.filter(i => verified(key, i));
+  return { ok, bad: core.length - ok.length };
 }
 
 // ---- tiers
@@ -129,13 +154,17 @@ function addRecall(data, { task_id, text }) {
 }
 
 // pin: new text, or an existing recall/archive item by id, goes into core if it fits the budget.
-function pin(data, input, L) {
+function pin(data, input, L, key) {
+  if (typeof key !== 'string' || key.length < 16) return { error: 'owner key required to pin', status: 403 };
   let it, text;
   if (input && input.id !== undefined) {
     if (typeof input.id !== 'string' || !ID_RE.test(input.id)) return { error: 'bad id', status: 400 };
     it = find(data, input.id);
     if (!it) return { error: 'no such item', status: 404 };
-    if (it.tier === 'core') return { error: 'already pinned', status: 409 };
+    if (it.tier === 'core') {
+      if (verified(key, it)) return { error: 'already pinned', status: 409 };
+      it.sig = sigOf(key, it); return { item: it }; // owner re-adopts an entry whose signature did not verify
+    }
     text = it.text;
   } else {
     const v = ownerText(input && input.text); if (v.error) return { error: v.error, status: 400 };
@@ -145,6 +174,7 @@ function pin(data, input, L) {
   if (coreChars(data) + text.length > L.core_chars) return { error: `core budget is ${L.core_chars} chars; ${coreChars(data)} used, this needs ${text.length}. Unpin or forget something first`, status: 409 };
   const t = iso(now());
   if (it) { it.tier = 'core'; it.ts = t; it.from = 'promoted'; } else { it = { id: newId(), tier: 'core', text, task_id: '', ts: t, from: 'owner' }; data.items.push(it); }
+  it.sig = sigOf(key, it);
   return { item: it };
 }
 
@@ -153,7 +183,7 @@ function unpin(data, id) {
   const it = ID_RE.test(id || '') ? find(data, id) : null;
   if (!it) return { error: 'no such item', status: 404 };
   if (it.tier !== 'core') return { error: 'not pinned', status: 409 };
-  it.tier = 'recall'; it.ts = iso(now()); it.from = 'demoted';
+  it.tier = 'recall'; it.ts = iso(now()); it.from = 'demoted'; delete it.sig;
   return { item: it };
 }
 
@@ -192,4 +222,4 @@ function search(data, query, tiers, limit) {
 const view = it => ({ id: it.id, tier: it.tier, text: it.text, task_id: it.task_id || '', ts: it.ts, from: it.from || '' });
 const counts = data => ({ core: inTier(data, 'core').length, recall: inTier(data, 'recall').length, archive: inTier(data, 'archive').length, core_chars: coreChars(data) });
 
-module.exports = { ITEM_MAX, ID_RE, TIERS, DEFAULT_LIMITS, STALE_MS, now, iso, clip, load, save, update, enforce, inTier, find, coreChars, recallIsLive, addRecall, pin, unpin, restore, forget, search, view, counts, ownerText, msOf };
+module.exports = { breakStale, sigOf, verified, coreSplit, ITEM_MAX, ID_RE, TIERS, DEFAULT_LIMITS, STALE_MS, now, iso, clip, load, save, update, enforce, inTier, find, coreChars, recallIsLive, addRecall, pin, unpin, restore, forget, search, view, counts, ownerText, msOf };

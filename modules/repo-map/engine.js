@@ -70,6 +70,7 @@ function tokensOf(text, cap) {
 
 // Is `p` inside `root` (both already real paths)?
 function inside(root, p) {
+  if (process.platform === 'win32') { root = root.toLowerCase(); p = p.toLowerCase(); }
   const rel = path.relative(root, p);
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
 }
@@ -151,6 +152,8 @@ function build(rootIn, opts) {
     const abs = path.join(root, rel);
     let st;
     try {
+      // any symlinked directory on the way (not just the last component) must stay inside the root
+      if (!inside(root, fs.realpathSync(abs))) { skipped++; continue; }
       st = fs.lstatSync(abs);
       if (st.isSymbolicLink()) {
         const real = fs.realpathSync(abs);

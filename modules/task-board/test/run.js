@@ -258,6 +258,34 @@ const boardFile = path.join(process.env.HARNESS_STATE_DIR, 'm', 'task-board', 'b
       check('workspace failure: 500 and the task is open again', r.status === 500 && g.json.status === 'open' && g.json.owner === null, `${r.status} ${g.json.status}`);
     }
 
+    // ---- breaker mutex: stale-lock break never removes a fresh successor's lock
+    {
+      const dir = fs.mkdtempSync(path.join(tmp, 'brk-')); const lf = path.join(dir, 'lock'); const brk = lf + '.break';
+      const o = { staleMs: 50, waitMs: 150, transient: new Set(['EPERM', 'EACCES', 'EBUSY']), sleepMs: ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms), busyError: () => new Error('busy') };
+      const old = new Date(Date.now() - 20000);
+      fs.writeFileSync(lf, 'dead.token'); fs.utimesSync(lf, old, old);
+      let fired = 0, busy = false;
+      const hooks = { afterSeen() { if (fired++) return; fs.unlinkSync(lf); fs.writeFileSync(lf, 'fresh.live'); } };
+      try { S.lockAcquire(lf, { ...o, staleMs: 5000, hooks: { afterSeen: hooks.afterSeen } }); } catch (e) { busy = /busy/.test(e.message); }
+      // lock is not stale at staleMs 5000 once replaced, so this alone proves little; do the real race below
+      fs.writeFileSync(lf, 'dead.token'); fs.utimesSync(lf, old, old); fired = 0;
+      busy = false; let got = null;
+      try { got = S.lockAcquire(lf, { ...o, hooks: { afterSeen() { if (fired++) return; fs.unlinkSync(lf); fs.writeFileSync(lf, 'fresh.live'); const f = new Date(Date.now() + 60000); fs.utimesSync(lf, f, f); } } }); } catch (e) { busy = /busy/.test(e.message); }
+      check('breaker: fresh lock that replaced the stale one between read and break survives', busy && got === null && fs.readFileSync(lf, 'utf8') === 'fresh.live' && !fs.existsSync(brk));
+      fs.unlinkSync(lf);
+      fs.writeFileSync(lf, 'dead.token'); fs.utimesSync(lf, old, old);
+      fs.writeFileSync(brk, ''); // a live breaker holds the mutex: we must not break the lock
+      busy = false; try { S.lockAcquire(lf, o); } catch (e) { busy = /busy/.test(e.message); }
+      check('breaker: a fresh .break file blocks breaking', busy && fs.readFileSync(lf, 'utf8') === 'dead.token' && fs.existsSync(brk));
+      fs.utimesSync(brk, old, old); // abandoned breaker older than 10 s
+      const tk = S.lockAcquire(lf, o);
+      check('breaker: a .break file older than 10 s is cleared and the stale lock is then broken', fs.readFileSync(lf, 'utf8') === tk && !fs.existsSync(brk));
+      S.lockRelease(lf, tk);
+      check('breaker: no leftovers', fs.readdirSync(dir).length === 0, fs.readdirSync(dir).join());
+      fs.writeFileSync(lf, 'mine');
+      check('lockHeld: true for own token, false after loss', S.lockHeld(lf, 'mine') && (fs.writeFileSync(lf, 'other'), !S.lockHeld(lf, 'mine')));
+    }
+
     // ---- review fixes: lock ownership, safe release, dependency-aware prune ----
     {
       const dir = path.join(tmp, 'locks');

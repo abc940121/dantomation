@@ -150,9 +150,10 @@ const writeRec = (id, f) => { const r = readRec(id); f(r); fs.writeFileSync(task
     await ev('task.start', { task_id: 's1', request: 'x', workdir: '.', resumed: false });
     await ev('task.start', { task_id: 's2', request: 'x', workdir: '.', resumed: false });
     check('worker cannot predict for an already started task', (await post(`${P}/tasks/s2/predict`, { minutes: 1 }, wB)).status === 403 && !readRec('s2').prediction);
-    check('worker B cannot write result of A task', (await post(`${P}/tasks/s1/result`, { result: 'evil' }, wB)).status === 403 && !readRec('s1').actual_result);
-    check('worker A writes result once', (await post(`${P}/tasks/s1/result`, { result: 'good' }, wA)).status === 200);
-    check('result is write-once for non-owners', (await post(`${P}/tasks/s1/result`, { result: 'again' }, wA)).status === 409 && readRec('s1').actual_result === 'good');
+    check('a worker cannot write any result (no distinct worker identity): not B, not the predicting A', (await post(`${P}/tasks/s1/result`, { result: 'evil' }, wB)).status === 403 && (await post(`${P}/tasks/s1/result`, { result: 'good' }, wA)).status === 403 && !readRec('s1').actual_result);
+    const anonWorker = { kind: 'worker', id: '' };
+    await post(`${P}/tasks/s3/predict`, { minutes: 1 }, anonWorker);
+    check('an id-less worker cannot write a result for a task with no owner prediction', (await post(`${P}/tasks/s3/result`, { result: 'x' }, anonWorker)).status === 403 && !readRec('s3').actual_result);
     check('owner may overwrite the result', (await post(`${P}/tasks/s1/result`, { result: 'fixed' })).status === 200 && readRec('s1').actual_result === 'fixed');
 
     // review fixes: un-started prediction cap, age and prune
@@ -200,6 +201,75 @@ const writeRec = (id, f) => { const r = readRec(id); f(r); fs.writeFileSync(task
       let threw = false;
       try { await mod.on['tool.done']({ task_id: 'lk3', tool: 'Read', ok: true }, fctx); } catch { threw = true; } finally { fs.writeFileSync = realWrite; }
       check('lock error: hook never throws, nothing written unlocked, status logged', !threw && !fs.existsSync(taskFile('lk3')) && jr.some(r => r.type === 'trace_skipped' && r.task_id === 'lk3'), JSON.stringify(jr));
+    }
+
+    // review fixes: stale-lock break is verified under a breaker mutex
+    {
+      const dir = path.dirname(taskFile('k1'));
+      const lockFile = taskFile('sb1') + '.lock', mutex = lockFile + '.break';
+      await ev('task.start', { task_id: 'sb1', request: 'x', workdir: '.', resumed: false });
+      const realOpen = fs.openSync, realUnlink = fs.unlinkSync, realWrite = fs.writeFileSync, realRead = fs.readFileSync;
+      fs.writeFileSync(lockFile, 'dead-holder'); const old = new Date(Date.now() - 60000); fs.utimesSync(lockFile, old, old);
+      // between judging the lock stale and taking the breaker mutex, a successor replaces it with a live lock
+      let violated = false, swapped = false, live = false;
+      fs.openSync = (p, ...r) => {
+        const fd = realOpen(p, ...r);
+        if (String(p) === mutex && !swapped) { swapped = true; live = true; realUnlink(lockFile); realWrite(lockFile, 'successor'); setTimeout(() => { live = false; try { realUnlink(lockFile); } catch { /* gone */ } }, 300); }
+        return fd;
+      };
+      fs.unlinkSync = p => { if (String(p) === lockFile && live && realRead(lockFile, 'utf8') === 'successor') violated = true; return realUnlink(p); };
+      const t0 = Date.now();
+      try { await ev('tool.done', { task_id: 'sb1', tool: 'Read', ok: true }); } finally { fs.openSync = realOpen; fs.unlinkSync = realUnlink; }
+      check('a live successor lock is not broken by a stale-judging waiter', swapped && !violated && Date.now() - t0 >= 250 && readRec('sb1').tool_count === 1);
+      check('breaker mutex and lock are cleaned up, no rename leftovers', !fs.existsSync(mutex) && !fs.existsSync(lockFile) && !fs.readdirSync(dir).some(n => n.includes('.stale.')));
+      // a stale breaker mutex (crashed breaker) is cleared and the stale lock then broken
+      fs.writeFileSync(lockFile, 'dead-holder'); fs.utimesSync(lockFile, old, old);
+      fs.writeFileSync(mutex, 'dead-breaker'); fs.utimesSync(mutex, old, old);
+      await ev('tool.done', { task_id: 'sb1', tool: 'Read', ok: true });
+      check('a stale .break mutex is cleared and the update runs', readRec('sb1').tool_count === 2 && !fs.existsSync(mutex) && !fs.existsSync(lockFile));
+      // a fresh breaker mutex held by someone else blocks the break
+      fs.writeFileSync(lockFile, 'dead-holder'); fs.utimesSync(lockFile, old, old); fs.writeFileSync(mutex, 'live-breaker');
+      const pend = ev('tool.done', { task_id: 'sb1', tool: 'Read', ok: true });
+      await new Promise(r => setTimeout(r, 250));
+      const blocked = fs.readFileSync(lockFile, 'utf8') === 'dead-holder' && readRec('sb1').tool_count === 2;
+      fs.unlinkSync(mutex); await pend;
+      check('a live breaker mutex blocks the stale break until released', blocked && readRec('sb1').tool_count === 3);
+      // the lock is stolen while the holder works: the final state write is refused
+      await ev('task.start', { task_id: 'sb2', request: 'x', workdir: '.', resumed: false });
+      const lock2 = taskFile('sb2') + '.lock';
+      fs.readFileSync = (p, ...r) => { const out = realRead(p, ...r); if (String(p) === taskFile('sb2')) realWrite(lock2, 'thief'); return out; };
+      try { await ev('tool.done', { task_id: 'sb2', tool: 'Read', ok: true }); } finally { fs.readFileSync = realRead; }
+      const kept = realRead(lock2, 'utf8') === 'thief' && readRec('sb2').tool_count === 0;
+      fs.unlinkSync(lock2);
+      check('state write is skipped when the lock is no longer ours; thief lock untouched', kept);
+    }
+
+    // review fixes: pruning takes the task lock and re-checks eligibility
+    {
+      const pr = M.registry({ modules: { trace: true }, trace: { max_tracked_tasks: 10 }, ...PRICES });
+      const tpl = { request: '', started_ts: 1, code: 0, resumed: 0, tokens: { input: 0, output: 0, cache_write: 0, cache_read: 0 }, cost_usd: null, tool_count: 0, tool_errors: 0, tool_ms: 0, events: [], dropped_events: 0, prediction: null, overrun: null };
+      for (let i = 0; i < 14; i++) fs.writeFileSync(taskFile(`pr${i}`), JSON.stringify(Object.assign({}, tpl, { task_id: `pr${i}`, ended_ts: 1 + i })));
+      // pr0 is the first prune candidate; between listing and unlinking it is resumed (running again)
+      const realWrite = fs.writeFileSync, lockName = taskFile('pr0') + '.lock'; let hit = false;
+      fs.writeFileSync = (f, ...r) => {
+        if (String(f) === lockName && !hit) { hit = true; const x = readRec('pr0'); x.ended_ts = null; x.started_ts = Date.now(); realWrite(taskFile('pr0'), JSON.stringify(x)); }
+        return realWrite(f, ...r);
+      };
+      try { await pr.callRoute(pr.findRoute('GET', `${P}/tasks`), { query: {}, actor: owner }); } finally { fs.writeFileSync = realWrite; }
+      check('prune re-checks under the lock: a task resumed meanwhile is kept', hit && fs.existsSync(taskFile('pr0')) && !readRec('pr0').ended_ts);
+      check('prune still drops other old ended tasks', !fs.existsSync(taskFile('pr1')));
+      check('prune leaves no lock files', !fs.readdirSync(path.dirname(taskFile('k1'))).some(n => /^pr\d+\.json\.lock$/.test(n)));
+    }
+
+    // review fixes: the unstarted-prediction cap is checked under a module-wide lock
+    {
+      const dir = path.dirname(taskFile('k1'));
+      const cap = M.registry({ modules: { trace: true }, trace: { max_unstarted_predictions: 1, max_tracked_tasks: 5000 }, ...PRICES });
+      for (const n of fs.readdirSync(dir)) if (n.endsWith('.json') && !readRec(n.slice(0, -5)).started_ts) fs.rmSync(path.join(dir, n), { force: true });
+      const pc = id => cap.callRoute(cap.findRoute('POST', `${P}/tasks/${id}/predict`), { body: { minutes: 1 }, actor: wA });
+      const codes = (await Promise.all(['race1', 'race2', 'race3', 'race4'].map(pc))).map(r => r.status).sort();
+      check('concurrent predictions for different tasks cannot pass the cap together', codes.join() === '200,429,429,429', codes.join());
+      check('predictions.lock released', !fs.existsSync(path.join(dir, 'predictions.lock')));
     }
   } catch (e) {
     check('no exception', false, e && e.stack);

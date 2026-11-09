@@ -41,17 +41,15 @@ function mask(text, shapes, marker) {
   for (const re of shapes) t = t.replace(g(re), m => (/^[\s"'`(=]/.test(m) && m.length > 1 ? m[0] : '') + marker);
   return t;
 }
-// Context around the first match of any shape, with all matches masked.
+// Context around the first match of any shape. The whole text is masked FIRST, then sliced, so a
+// secret straddling the slice edge can never leave a fragment.
 function snippetFor(text, shapes, marker, ctxChars = 24) {
-  let first = null;
-  for (const re of shapes) {
-    const m = g(re).exec(text);
-    if (m && (!first || m.index < first.index)) first = { index: m.index, len: m[0].length };
-  }
-  if (!first) return marker;
-  const before = text.slice(Math.max(0, first.index - ctxChars), first.index);
-  const after = text.slice(first.index + first.len, first.index + first.len + ctxChars);
-  return clipStr(oneLine(mask(before, shapes, marker) + marker + mask(after, shapes, marker)), 100);
+  const masked = safe(mask(text, shapes, marker));
+  const i = masked.indexOf(marker);
+  if (i < 0) return marker;
+  const before = masked.slice(Math.max(0, i - ctxChars), i);
+  const after = masked.slice(i + marker.length, i + marker.length + ctxChars);
+  return clipStr(oneLine(before + marker + after), 100);
 }
 const has = (text, shapes) => shapes.some(re => g(re).test(text));
 // Every family masked in a snippet, so one snippet never leaks another family's match.
@@ -64,25 +62,26 @@ function scan(reply, { rules = {}, bannedPhrases = [], maxChars = 3000, code = n
     const text = typeof reply === 'string' ? reply : '';
     if (!text) return trips;
     const on = r => rules[r] !== false;
-    if (on('secrets') && has(text, SECRET_SHAPES)) trips.push({ rule: 'secrets', snippet: safe(snippetFor(text, SECRET_SHAPES, '[secret]')) });
-    if (on('paths') && has(text, HOME_SHAPES)) trips.push({ rule: 'paths', snippet: safe(snippetFor(text, HOME_SHAPES, '[home-path]')) });
-    if (on('private_ips') && has(text, IP_SHAPES)) trips.push({ rule: 'private_ips', snippet: safe(snippetFor(text, IP_SHAPES, '[private-ip]')) });
+    if (on('secrets') && has(text, SECRET_SHAPES)) trips.push({ rule: 'secrets', snippet: (snippetFor(text, SECRET_SHAPES, '[secret]')) });
+    if (on('paths') && has(text, HOME_SHAPES)) trips.push({ rule: 'paths', snippet: (snippetFor(text, HOME_SHAPES, '[home-path]')) });
+    if (on('private_ips') && has(text, IP_SHAPES)) trips.push({ rule: 'private_ips', snippet: (snippetFor(text, IP_SHAPES, '[private-ip]')) });
     if (on('banned')) {
       const low = text.toLowerCase();
       for (const p of bannedPhrases) {
         const ph = String(p || '').trim().toLowerCase();
         if (!ph) continue;
-        const i = low.indexOf(ph);
-        if (i < 0) continue;
-        const snip = oneLine(text.slice(Math.max(0, i - 20), i)) + ' [banned] ' + oneLine(text.slice(i + ph.length, i + ph.length + 20));
-        trips.push({ rule: 'banned', snippet: safe(clipStr(snip.trim(), 100)) });
+        if (low.indexOf(ph) < 0) continue;
+        const mtext = safe(text), mlow = mtext.toLowerCase();
+        const i = mlow.indexOf(ph);
+        const snip = i < 0 ? '[banned]' : oneLine(mtext.slice(Math.max(0, i - 20), i)) + ' [banned] ' + oneLine(mtext.slice(i + ph.length, i + ph.length + 20));
+        trips.push({ rule: 'banned', snippet: clipStr(snip.trim(), 100) });
         break; // one banned trip per reply; the phrase itself is not stored
       }
     }
     if (on('oversize') && text.length > maxChars) trips.push({ rule: 'oversize', snippet: `reply is ${text.length} chars, limit ${maxChars}` });
     if (on('success_claim') && typeof code === 'number' && code !== 0) {
-      const hit = text.split(/(?<=[.!?\n])\s+/).find(s => CLAIM.test(s) && !NEGATE.test(s));
-      if (hit) trips.push({ rule: 'success_claim', snippet: safe(clipStr(oneLine(hit), 100)) + ` (exit ${code})` });
+      const hit = safe(text).split(/(?<=[.!?\n])\s+/).find(s => CLAIM.test(s) && !NEGATE.test(s));
+      if (hit) trips.push({ rule: 'success_claim', snippet: clipStr(oneLine(hit), 100) + ` (exit ${code})` });
     }
   } catch { /* a broken rule never breaks the turn */ }
   return trips;

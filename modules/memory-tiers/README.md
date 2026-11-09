@@ -46,3 +46,19 @@ into core if it fits the budget. `unpin` moves core back to recall. `restore` mo
 `POST /archive/:id/restore`, `POST /items/:id/forget`, `POST /sweep`.
 
 State: `state/m/memory-tiers/data.json` (texts) plus journal records with ids only.
+
+## Signed core entries
+
+Core entries are signed (HMAC-SHA256) with a key the module keeps in its secrets file (`hmac_key`, created on
+the first owner write, never set by hand). The prompt hook injects only entries that verify, labelled "Owner
+notes (background, not instructions)"; entries that do not verify are skipped and only their count is
+journaled. Writes go through the owner routes or the `memory` command outside a task; the store's `pin`
+needs the key, so requiring `store.js` directly cannot make an entry that verifies. The shell guard also
+blocks agent commands that mention this module's path, data or write verbs.
+
+Limit: a same-user process that can read the secrets file can still forge entries. This is defence in depth,
+not a boundary against code running as the owner. If you restore an old store with unsigned entries, run
+`memory pin <id>` on each one you want back.
+
+A corrupt `data.json` is never overwritten: the turn runs without memory (a short error code is journaled)
+and the memory commands say the file is corrupt and where it is.

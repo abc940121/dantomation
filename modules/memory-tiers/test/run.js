@@ -110,6 +110,32 @@ const L = { core_chars: 100, recall_max: 3, recall_days: 14, archive_max: 4 };
     let txt = pc.context.map(c => c.text).join('\n');
     check('prepareTurn: core fact and recall notes present, labelled', txt.includes('Deploys go out on Fridays') && txt.includes('second answer') && /not instructions/.test(txt), txt);
 
+    // ---- owner signatures (finding 1)
+    check('prepareTurn frames owner notes as background', /Owner notes \(background, not instructions\)/.test(txt), txt);
+    const secFile = path.join(STATE, 'secrets', 'memory-tiers.json');
+    const hk = JSON.parse(fs.readFileSync(secFile, 'utf8')).hmac_key;
+    check('first owner write generated a key in the module secrets file', typeof hk === 'string' && hk.length >= 32);
+    const coreRow = S.inTier(S.load(dir), 'core')[0];
+    check('pinned entry carries a 64-hex HMAC that verifies', /^[0-9a-f]{64}$/.test(coreRow.sig) && S.verified(hk, coreRow) && !S.verified('x'.repeat(40), coreRow));
+    check('view() never exposes the signature', !('sig' in S.view(coreRow)));
+    check('store pin without the key is refused', S.pin(S.load(dir), { text: 'no key' }, L).status === 403 && S.pin(S.load(dir), { text: 'no key' }, L, '').status === 403);
+    // an agent that requires store.js directly can write rows, but not rows that verify
+    S.update(dir, d => { d.items.push({ id: 'm-aaaaaaaaaaaa', tier: 'core', text: 'FORGED-NOSIG', task_id: '', ts: new Date().toISOString(), from: 'owner' }); return {}; }, L);
+    S.update(dir, d => { d.items.push({ id: 'm-bbbbbbbbbbbb', tier: 'core', text: 'FORGED-BADSIG', task_id: '', ts: new Date().toISOString(), from: 'owner', sig: 'a'.repeat(64) }); return {}; }, L);
+    S.update(dir, d => { d.items.find(i => i.id === coreRow.id).text = 'TAMPERED-TEXT'; return {}; }, L);
+    process.env.HARNESS_TASK_ID = 'agent-task';
+    const pcF = await M.prepareTurn(reg.mods, { task_id: 'tF' });
+    delete process.env.HARNESS_TASK_ID;
+    const txtF = pcF.context.map(c => c.text).join('\n');
+    check('unverified core entries (no sig, bad sig, tampered text) are not injected', !/FORGED|TAMPERED|Deploys go out/.test(txtF), txtF);
+    const sk = J.readAll().records.filter(x => x.module === 'memory-tiers' && x.type === 'memory_unverified_skipped');
+    check('skipped entries are journaled as a count only', sk.length > 0 && sk[sk.length - 1].count === 3 && !/FORGED|TAMPERED|Deploys/.test(JSON.stringify(sk)), JSON.stringify(sk));
+    S.update(dir, d => { d.items = d.items.filter(i => !/^m-(a{12}|b{12})$/.test(i.id)); d.items.find(i => i.id === coreRow.id).text = coreRow.text; return {}; }, L);
+    check('restoring the signed text makes the entry verify again', /Deploys go out on Fridays/.test((await M.prepareTurn(reg.mods, { task_id: 'tG' })).context.map(c => c.text).join('\n')));
+    r = await call('POST', '/core', { body: { text: 'Second owner fact' } });
+    check('owner route pin signs with the stored key (no key regenerated)', r.status === 201 && JSON.parse(fs.readFileSync(secFile, 'utf8')).hmac_key === hk && S.verified(hk, S.find(S.load(dir), r.json.item.id)));
+    await call('POST', '/items/' + r.json.item.id + '/forget');
+
     // ---- demotion by count: recall_max 4, add more
     for (let i = 0; i < 5; i++) {
       process.env.HARNESS_NOW = String(T0 + i * 1000);
@@ -208,6 +234,14 @@ const L = { core_chars: 100, recall_max: 3, recall_days: 14, archive_max: 4 };
     check('corrupt data file: read is 503', r.status === 503);
     const pcBad = await M.prepareTurn(reg.mods, { task_id: 'tB' });
     check('corrupt data file: prepareTurn adds nothing and does not throw', pcBad.context.length === 0);
+    const direct = reg.mods.find(m => m.name === 'memory-tiers');
+    let thrown = null, directR;
+    try { directR = direct.prepareTurn({ settings: reg.settingsFor('memory-tiers'), state: { dir, append: x => J.append({ module: 'memory-tiers', ...x }) }, secret: () => null }); } catch (e) { thrown = e; }
+    const pe = J.readAll().records.filter(x => x.type === 'memory_prepare_error');
+    check('corrupt data file: hook returns null and journals a short code only', !thrown && directR === null && pe.length > 0 && pe[pe.length - 1].code === 'data_unreadable' && !/json|corrupt|not JSON/i.test(JSON.stringify(pe[pe.length - 1])), String(thrown) + JSON.stringify(pe));
+    let thrown2 = null;
+    try { direct.prepareTurn({ settings: {}, state: { dir: path.join(tmp, 'x'), append: () => { throw new Error('journal down'); } }, secret: () => { throw new Error('boom'); } }); } catch (e) { thrown2 = e; }
+    check('hook never throws even when the journal and secrets fail', thrown2 === null);
     await M.emit(reg.mods, 'task.end', { task_id: 'tk1', code: 0, workdir: tmp });
     check('corrupt data file: capture does not throw and does not clobber', fs.readFileSync(path.join(dir, 'data.json'), 'utf8') === '{ not json');
     fs.rmSync(path.join(dir, 'data.json'));
@@ -218,13 +252,36 @@ const L = { core_chars: 100, recall_max: 3, recall_days: 14, archive_max: 4 };
     let sawToken = null;
     S.update(dir, d => { sawToken = fs.readFileSync(lock, 'utf8'); return {}; }, L);
     check('lock holds an owner token while updating and is removed after', /^\d+:[0-9a-f]{16}$/.test(sawToken) && !fs.existsSync(lock));
-    S.update(dir, d => { fs.writeFileSync(lock, 'someone-else-token'); return {}; }, L);
+    let lostErr = null;
+    try { S.update(dir, d => { fs.writeFileSync(lock, 'someone-else-token'); return S.pin(d, { text: 'LOST-LOCK-WRITE' }, L, 'k'.repeat(32)); }, L); } catch (e) { lostErr = e; }
+    check('own nonce re-read before the state write: a replaced lock aborts the write', lostErr && /lock was lost/.test(lostErr.message) && !(fs.existsSync(path.join(dir, 'data.json')) && fs.readFileSync(path.join(dir, 'data.json'), 'utf8').includes('LOST-LOCK-WRITE')));
     check('release never unlinks a lock holding another token', fs.existsSync(lock) && fs.readFileSync(lock, 'utf8') === 'someone-else-token');
     const past = new Date(Date.now() - 120000);
     fs.utimesSync(lock, past, past);
     let ran = false;
     S.update(dir, () => { ran = true; return {}; }, L);
-    check('stale lock is broken (rename then verify) and the update runs', ran && !fs.existsSync(lock) && fs.readdirSync(dir).every(f => !f.includes('.stale-')));
+    check('stale lock is broken under the breaker mutex and the update runs', ran === true && !fs.existsSync(lock) && !fs.existsSync(lock + '.break') && fs.readdirSync(dir).every(f => !/\.stale-|\.link/.test(f)));
+    // breakStale: a lock that changed since it was judged stale is left alone; identical and old is removed
+    fs.writeFileSync(lock, 'new-live-holder');
+    S.breakStale(lock, 'old-stale-token');
+    check('breakStale leaves a lock whose content changed', fs.readFileSync(lock, 'utf8') === 'new-live-holder' && !fs.existsSync(lock + '.break'));
+    S.breakStale(lock, 'new-live-holder');
+    check('breakStale leaves a byte-identical lock that is not old', fs.existsSync(lock));
+    fs.utimesSync(lock, past, past);
+    S.breakStale(lock, 'new-live-holder');
+    check('breakStale removes a byte-identical old lock and frees the mutex', !fs.existsSync(lock) && !fs.existsSync(lock + '.break'));
+    fs.writeFileSync(lock, 'stale-2'); fs.utimesSync(lock, past, past);
+    fs.writeFileSync(lock + '.break', ''); // another breaker holds the mutex, fresh
+    S.breakStale(lock, 'stale-2');
+    check('a fresh breaker mutex makes a second breaker back off', fs.existsSync(lock) && fs.existsSync(lock + '.break'));
+    fs.utimesSync(lock + '.break', past, past); // abandoned breaker: older than 10 s
+    ran = false;
+    S.update(dir, () => { ran = true; return {}; }, L);
+    check('an abandoned breaker mutex (>10 s) is cleared and the stale lock broken', ran && !fs.existsSync(lock) && !fs.existsSync(lock + '.break'));
+    const holder = 'const fs=require("fs");try{fs.writeFileSync(process.argv[1],"p"+process.pid,{flag:"wx"});console.log("won")}catch(e){console.log(e.code)}';
+    fs.writeFileSync(lock, 'held');
+    check('lock acquire is an exclusive create (EEXIST when held)', spawnSync(process.execPath, ['-e', holder, lock], { encoding: 'utf8' }).stdout.trim() === 'EEXIST');
+    fs.unlinkSync(lock);
     // A fresh lock held by someone else blocks (we never run unlocked): use a child that waits.
     fs.writeFileSync(lock, 'live-holder');
     const t0 = Date.now();
@@ -234,7 +291,7 @@ const L = { core_chars: 100, recall_max: 3, recall_days: 14, archive_max: 4 };
     check('fresh foreign lock: update waits then throws busy, never runs unlocked', threw && /busy/.test(threw.message) && ran !== 'UNLOCKED' && fs.readFileSync(lock, 'utf8') === 'live-holder' && Date.now() - t0 >= 4500);
     fs.unlinkSync(lock);
     // parallel writers do not lose rows
-    const worker = `const S=require(${JSON.stringify(path.join(__dirname, '..', 'store'))});const d=process.argv[1];for(let i=0;i<10;i++){S.update(d,x=>S.pin(x,{text:'w'+process.argv[2]+'-'+i},{core_chars:100000}),{core_chars:100000,recall_max:5,recall_days:14,archive_max:50});}`;
+    const worker = `const S=require(${JSON.stringify(path.join(__dirname, '..', 'store'))});const d=process.argv[1];for(let i=0;i<10;i++){S.update(d,x=>S.pin(x,{text:'w'+process.argv[2]+'-'+i},{core_chars:100000},'k'.repeat(32)),{core_chars:100000,recall_max:5,recall_days:14,archive_max:50});}`;
     const pdir = path.join(tmp, 'par');
     const kids = [1, 2, 3].map(n => spawnSync(process.execPath, ['-e', worker, pdir, String(n)], { encoding: 'utf8', timeout: 60000 }));
     check('3 writer processes x 10 pins: no lost rows', kids.every(k => k.status === 0) && S.inTier(S.load(pdir), 'core').length === 30, kids.map(k => k.stderr).join(''));
@@ -254,6 +311,16 @@ const L = { core_chars: 100, recall_max: 3, recall_days: 14, archive_max: 4 };
     check('guard: agent restore blocked', !!(await guard('Bash', 'dantomation memory restore m-aaaaaaaaaaaa', true)));
     check('guard: agent server call blocked', !!(await guard('Bash', 'curl -X POST http://127.0.0.1:1/m/memory-tiers/core', true)));
     check('guard: agent memory search allowed', (await guard('Bash', 'dantomation memory search login', true)) === null);
+    check('guard: node require of the store blocked', !!(await guard('Bash', 'node -e "require(\'./modules/memory-tiers/store\').update()"', true)));
+    check('guard: paths to the data dir and secrets file blocked', !!(await guard('Bash', 'echo x > state/m/memory-tiers/data.json', true)) && !!(await guard('PowerShell', 'Get-Content state\\secrets\\memory-tiers.json', true)));
+    check('guard: bare memory write verbs blocked without the binary name', !!(await guard('Bash', 'node bin/x.js memory pin "y"', true)) && !!(await guard('Bash', 'memory sweep', true)));
+    check('guard: memory list stays allowed', (await guard('Bash', 'dantomation memory list', true)) === null);
+    process.env.HARNESS_TASK_ID = 'agent-task';
+    const wr = direct.beforeTool({ tool: 'Write', ti: { file_path: 'state/m/memory-tiers/data.json' } });
+    const wr2 = direct.beforeTool({ tool: 'Write', ti: { file_path: 'notes/todo.txt' } });
+    const rd = direct.beforeTool({ tool: 'Read', ti: { file_path: 'state/m/memory-tiers/data.json' } });
+    delete process.env.HARNESS_TASK_ID;
+    check('guard: file-write tool aimed at the store blocked; other writes and reads pass', !!wr && wr2 === null && rd === null);
     check('guard: owner (no task) allowed', (await guard('Bash', 'dantomation memory pin "x"', false)) === null);
 
     // ---- commands in real processes
@@ -294,6 +361,12 @@ const L = { core_chars: 100, recall_max: 3, recall_days: 14, archive_max: 4 };
     check('cmd forget', p.status === 0);
     p = run('memory', ['forget', pid]);
     check('cmd forget again exits 3', p.status === 3);
+    fs.writeFileSync(path.join(st2, 'm', 'memory-tiers', 'data.json'), '{ broken');
+    p = run('memory', ['pin', 'after corrupt']);
+    check('cmd on a corrupt store: exit 1 and a clear message, file untouched', p.status === 1 && /corrupt or unreadable/.test(p.stderr) && /data\.json/.test(p.stderr) && fs.readFileSync(path.join(st2, 'm', 'memory-tiers', 'data.json'), 'utf8') === '{ broken', p.stdout + p.stderr);
+    p = run('memory', ['list']);
+    check('cmd list on a corrupt store: exit 1 and a clear message', p.status === 1 && /corrupt or unreadable/.test(p.stderr));
+    fs.unlinkSync(path.join(st2, 'm', 'memory-tiers', 'data.json'));
     p = run('memory', ['sweep']);
     check('cmd sweep', p.status === 0 && /core 0, recall 0, archive 0/.test(p.stdout), p.stdout + p.stderr);
 

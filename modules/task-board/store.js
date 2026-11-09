@@ -16,10 +16,14 @@ const err = (code, msg) => Object.assign(new Error(msg), { code });
 const sleep = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
 // Lock with an owner token. The lock file holds "<pid>.<random>"; only its holder removes it.
-// A stale lock is broken by renaming it aside, confirming the renamed file is still the stale
-// content that was seen (not a successor's fresh lock), and only then deleting it.
-function lockAcquire(lockFile, { staleMs, waitMs, transient, sleepMs, busyError }) {
+// A stale lock is broken under a breaker mutex (<lock>.break, exclusive create): the breaker
+// re-reads the lock and unlinks it only if it is still byte-identical to the stale content it saw,
+// so a fresh successor's lock is never removed. A .break file older than 10 s is itself stale.
+// hooks.afterSeen is a test seam that runs between reading the stale lock and taking the mutex.
+const BREAK_STALE_MS = 10000;
+function lockAcquire(lockFile, { staleMs, waitMs, transient, sleepMs, busyError, hooks }) {
   const token = `${process.pid}.${crypto.randomBytes(8).toString('hex')}`;
+  const brk = lockFile + '.break';
   const start = Date.now();
   for (;;) {
     try { fs.writeFileSync(lockFile, token, { flag: 'wx' }); return token; } catch (e) {
@@ -28,20 +32,28 @@ function lockAcquire(lockFile, { staleMs, waitMs, transient, sleepMs, busyError 
     try {
       if (Date.now() - fs.statSync(lockFile).mtimeMs > staleMs) {
         const seen = fs.readFileSync(lockFile, 'utf8');
-        const aside = `${lockFile}.${token}.stale`;
-        fs.renameSync(lockFile, aside);
-        let same = false;
-        try { same = fs.readFileSync(aside, 'utf8') === seen && Date.now() - fs.statSync(aside).mtimeMs > staleMs; } catch { /* gone */ }
-        if (same) { try { fs.unlinkSync(aside); } catch { /* gone */ } continue; }
-        // We moved a live successor's lock: put it back without clobbering, then retry.
-        try { fs.linkSync(aside, lockFile); } catch { /* someone else took the name */ }
-        try { fs.unlinkSync(aside); } catch { /* gone */ }
-        continue;
+        if (hooks && hooks.afterSeen) hooks.afterSeen();
+        let held = false;
+        try { fs.closeSync(fs.openSync(brk, 'wx')); held = true; } catch (e) {
+          if (e.code === 'EEXIST') {
+            try { if (Date.now() - fs.statSync(brk).mtimeMs > BREAK_STALE_MS) fs.unlinkSync(brk); } catch { /* gone */ }
+          } else if (!transient.has(e.code)) throw e;
+        }
+        if (held) {
+          try {
+            if (fs.readFileSync(lockFile, 'utf8') === seen) fs.unlinkSync(lockFile);
+          } catch { /* gone */ } finally { try { fs.unlinkSync(brk); } catch { /* gone */ } }
+          continue;
+        }
       }
     } catch { /* raced */ }
     if (Date.now() - start > waitMs) throw busyError();
     sleepMs(5);
   }
+}
+// True while the lock file still holds our token (checked before the final write).
+function lockHeld(lockFile, token) {
+  try { return fs.readFileSync(lockFile, 'utf8') === token; } catch { return false; }
 }
 function lockRelease(lockFile, token) {
   try { if (fs.readFileSync(lockFile, 'utf8') === token) fs.unlinkSync(lockFile); } catch { /* gone or not ours */ }
@@ -93,7 +105,7 @@ function open(dir, opts = {}) {
       const changed = expire(d);
       let out; let fnErr = null;
       try { out = fn(d); } catch (e) { fnErr = e; }
-      if (changed || (out && out.save)) write(d); // lease expiry is kept even when fn threw
+      if (changed || (out && out.save)) { if (!lockHeld(lockFile, token)) throw err('lock_lost', 'task-board lock was lost; not writing'); write(d); } // lease expiry is kept even when fn threw
       if (fnErr) throw fnErr;
       return out ? out.value : undefined;
     } finally { lockRelease(lockFile, token); }
@@ -230,4 +242,4 @@ function open(dir, opts = {}) {
   };
 }
 
-module.exports = { open, ID_RE, STATUSES, lockAcquire, lockRelease };
+module.exports = { open, ID_RE, STATUSES, lockAcquire, lockRelease, lockHeld };

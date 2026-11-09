@@ -129,6 +129,20 @@ const names = res => res.files.map(f => f.rel);
       const rs = E.build(sl, {});
       check('symlink outside the root is skipped, inside one is read', !names(rs).includes('link-out.js') && names(rs).includes('link-in.js') && !JSON.stringify(rs.files).includes('outsideSecret'));
     } else console.log('SKIP symlink check: cannot create symlinks here');
+    {
+      const dl = fixture('dl', true);
+      put(outside, 'dirsecret.js', 'function dirSecretFn() {}\n');
+      put(dl, 'docs/dirsecret.js', 'function tracked() {}\n');
+      spawnSync('git', ['add', '-A'], { cwd: dl });
+      fs.rmSync(path.join(dl, 'docs'), { recursive: true, force: true });
+      let dlinked = false;
+      try { fs.symlinkSync(outside, path.join(dl, 'docs'), 'junction'); dlinked = true; } catch { /* none */ }
+      if (dlinked) {
+        const rs = E.build(dl, {});
+        const lst = rs;
+        check('file under a symlinked directory pointing outside is not read', rs.stats && !JSON.stringify(rs.files).includes('dirSecretFn') && !names(rs).includes('docs/dirsecret.js'));
+      } else console.log('SKIP symlinked-directory check: cannot create symlinks here');
+    }
 
     // ---- extraction unit checks
     check('extractSymbols: indented and unknown language give nothing', E.extractSymbols('js', '  function nested() {}\n').length === 0 && E.extractSymbols('zz', 'function f(){}').length === 0);

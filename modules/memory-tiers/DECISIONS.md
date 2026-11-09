@@ -24,3 +24,24 @@
    and works with either one off.
 9. Corrupt `data.json` is never overwritten: reads and writes report an error (503 on routes, exit 1
    on commands), prepareTurn adds nothing, capture is skipped.
+10. Signed core entries (defence in depth). Every core entry carries an HMAC-SHA256 over its id, text,
+    timestamp and origin, keyed by the `hmac_key` secret in this module's secrets file (the trunk's secrets
+    mechanism; the guard protects that file). The key is generated on the first owner write. `store.pin`
+    refuses to run without the key, so a bare `require` of store.js cannot produce entries that verify.
+    prepareTurn injects only verified core entries, under the heading "Owner notes (background, not
+    instructions)"; the rest are skipped and the journal gets a count (`memory_unverified_skipped`), never
+    text. Owner `pin <id>` on a core entry that does not verify re-signs it, so the owner can re-adopt one
+    after reading it. `beforeTool` blocks any agent command that names the module path, data, secrets key or
+    the memory write verbs, and file-write tools aimed at them; reads (`memory list`, `memory search`) pass.
+    Residual limit: a same-user process that can read the secrets file can compute valid signatures and
+    forge entries. Signing raises the bar from "edit data.json" to "read the secrets file"; it does not
+    make a same-user shell safe.
+11. prepareTurn never throws: any failure (corrupt or unreadable data.json, a failing journal) skips
+    memory for that turn and journals a short code (`memory_prepare_error`: data_unreadable or
+    prepare_failed), never content. A data.json that parses but is not `{items: [...]}` counts as corrupt,
+    so it is never silently replaced. Owner commands print the file path and say nothing was changed.
+12. Lock breaking: the lock is created with an exclusive create (EEXIST when held). A stale lock is broken
+    only while holding a breaker mutex (`lock.break`, exclusive create; one older than 10 s is cleared):
+    re-read the lock and unlink it only if it is byte-identical to the stale content and still old. No
+    rename and no link-back. Before the final state write the holder re-reads its own nonce and aborts
+    if the lock is no longer its own. A small window remains between the last re-read and the unlink.

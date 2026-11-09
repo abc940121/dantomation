@@ -50,10 +50,14 @@ function save(dir, data) {
   fs.renameSync(tmp, f);
 }
 // Lock with an owner token. The lock file holds "<pid>.<random>"; only its holder removes it.
-// A stale lock is broken by renaming it aside, confirming the renamed file is still the stale
-// content that was seen (not a successor's fresh lock), and only then deleting it.
-function lockAcquire(lockFile, { staleMs, waitMs, transient, sleepMs, busyError }) {
+// A stale lock is broken under a breaker mutex (<lock>.break, exclusive create): the breaker
+// re-reads the lock and unlinks it only if it is still byte-identical to the stale content it saw,
+// so a fresh successor's lock is never removed. A .break file older than 10 s is itself stale.
+// hooks.afterSeen is a test seam that runs between reading the stale lock and taking the mutex.
+const BREAK_STALE_MS = 10000;
+function lockAcquire(lockFile, { staleMs, waitMs, transient, sleepMs, busyError, hooks }) {
   const token = `${process.pid}.${crypto.randomBytes(8).toString('hex')}`;
+  const brk = lockFile + '.break';
   const start = Date.now();
   for (;;) {
     try { fs.writeFileSync(lockFile, token, { flag: 'wx' }); return token; } catch (e) {
@@ -62,20 +66,28 @@ function lockAcquire(lockFile, { staleMs, waitMs, transient, sleepMs, busyError 
     try {
       if (Date.now() - fs.statSync(lockFile).mtimeMs > staleMs) {
         const seen = fs.readFileSync(lockFile, 'utf8');
-        const aside = `${lockFile}.${token}.stale`;
-        fs.renameSync(lockFile, aside);
-        let same = false;
-        try { same = fs.readFileSync(aside, 'utf8') === seen && Date.now() - fs.statSync(aside).mtimeMs > staleMs; } catch { /* gone */ }
-        if (same) { try { fs.unlinkSync(aside); } catch { /* gone */ } continue; }
-        // We moved a live successor's lock: put it back without clobbering, then retry.
-        try { fs.linkSync(aside, lockFile); } catch { /* someone else took the name */ }
-        try { fs.unlinkSync(aside); } catch { /* gone */ }
-        continue;
+        if (hooks && hooks.afterSeen) hooks.afterSeen();
+        let held = false;
+        try { fs.closeSync(fs.openSync(brk, 'wx')); held = true; } catch (e) {
+          if (e.code === 'EEXIST') {
+            try { if (Date.now() - fs.statSync(brk).mtimeMs > BREAK_STALE_MS) fs.unlinkSync(brk); } catch { /* gone */ }
+          } else if (!transient.has(e.code)) throw e;
+        }
+        if (held) {
+          try {
+            if (fs.readFileSync(lockFile, 'utf8') === seen) fs.unlinkSync(lockFile);
+          } catch { /* gone */ } finally { try { fs.unlinkSync(brk); } catch { /* gone */ } }
+          continue;
+        }
       }
     } catch { /* raced */ }
     if (Date.now() - start > waitMs) throw busyError();
     sleepMs(5);
   }
+}
+// True while the lock file still holds our token (checked before the final write).
+function lockHeld(lockFile, token) {
+  try { return fs.readFileSync(lockFile, 'utf8') === token; } catch { return false; }
 }
 function lockRelease(lockFile, token) {
   try { if (fs.readFileSync(lockFile, 'utf8') === token) fs.unlinkSync(lockFile); } catch { /* gone or not ours */ }
@@ -89,7 +101,7 @@ function update(dir, fn) {
   try {
     const data = load(dir);
     const r = fn(data);
-    if (r && !r.error) save(dir, data);
+    if (r && !r.error) { if (!lockHeld(lock, token)) throw new Error('goals lock was lost; not writing'); save(dir, data); }
     return r;
   } finally { lockRelease(lock, token); }
 }
@@ -209,4 +221,4 @@ function lessonView(l, windowWeeks, t) {
   return { lesson_id: l.lesson_id, what: l.what, missed_by: l.missed_by, fix: l.fix, created_at: l.created_at, repeat_count: l.repeats.length, weekly: weekly(l), status: status(l, windowWeeks, t === undefined ? now() : t) };
 }
 
-module.exports = { lockAcquire, lockRelease, DEFAULT_RETENTION, LIMITS, ID_RE, load, save, update, now, activeGoal, missing, setGoal, editGoal, confirmGoal, closeGoal, addLesson, repeatLesson, weekly, weekStart, status, lessonView };
+module.exports = { lockAcquire, lockRelease, lockHeld, DEFAULT_RETENTION, LIMITS, ID_RE, load, save, update, now, activeGoal, missing, setGoal, editGoal, confirmGoal, closeGoal, addLesson, repeatLesson, weekly, weekStart, status, lessonView };

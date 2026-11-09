@@ -43,6 +43,14 @@ const IPPUB = ['8', '8', '8', '8'].join('.');
     check('private ips: two private ranges', ids(scan(`host ${IP10}`)) === 'private_ips' && ids(scan(`host ${IP192}`)) === 'private_ips');
     check('private ips: public ip is fine, snippet hides ip', scan(`dns ${IPPUB}`).length === 0 && !scan(`host ${IP10} here`)[0].snippet.includes(IP10));
     check('banned phrase, case-insensitive, phrase not stored', (() => { const t = scan('Well, As An AI model I cannot', { bannedPhrases: ['as an ai model'] }); return ids(t) === 'banned' && !/as an ai/i.test(t[0].snippet); })());
+    {
+      const sec = 'sk-' + 'Qw9zLm3xT7vB2nK8pR4yD6hJ';
+      const t1 = scan('a'.repeat(23) + ' ' + FAKE_KEY + ' ' + sec + ' tail');
+      const t2 = scan('ctx ' + 'b'.repeat(16) + sec + ' ' + FAKE_KEY);
+      const t3 = scan('Done fixed. ' + 'c'.repeat(80) + ' ' + sec + ' all done', { code: 1 });
+      const leak = sn => { for (let k = 0; k + 6 <= sec.length; k++) if (sn.includes(sec.slice(k, k + 6))) return true; return false; };
+      check('snippet slice edge: no secret fragment', [t1, t2, t3].every(t => t.length && t.every(x => !leak(x.snippet))), JSON.stringify([t1, t2, t3].map(t => t.map(x => x.snippet))));
+    }
     check('oversize', ids(scan('a'.repeat(120), { maxChars: 100 })) === 'oversize' && scan('a'.repeat(100), { maxChars: 100 }).length === 0);
     check('success claim with exit 1', ids(scan('All done. Tests pass.', { code: 1 })) === 'success_claim');
     check('success claim ignored with exit 0 or unknown', scan('All done. Tests pass.', { code: 0 }).length === 0 && scan('All done.', {}).length === 0);
