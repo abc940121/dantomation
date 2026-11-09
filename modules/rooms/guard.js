@@ -23,7 +23,8 @@ function impersonation(text, member, room) {
 
 // Secrets always; PII (email, phone, SSN-like, card-like numbers) for members that need it.
 function scrub(text, { pii } = {}) {
-  let s = redactFull(text);
+  // A PEM block is removed whole (BEGIN to END, or BEGIN to the end of the text when unterminated).
+  let s = redactFull(String(text == null ? '' : text).replace(/-----BEGIN [A-Z0-9 ]+-----[\s\S]*?(?:-----END [A-Z0-9 ]+-----|$)/g, '[REDACTED]'));
   if (pii) {
     s = s.replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '[PII]')
       .replace(/\b\d{3}-\d{2}-\d{4}\b/g, '[PII]')

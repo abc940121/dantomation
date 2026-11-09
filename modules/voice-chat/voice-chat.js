@@ -8,7 +8,7 @@ const { EchoGuard } = require('./echo');
 
 const DEFAULTS = {
   wake: ['hey assistant', 'okay assistant', 'ok assistant', 'hey claude', 'okay claude', '你好助手', '嘿助手', '小助手', '助手'],
-  followup_s: 8, bots: null, status_s: 4, timeout_s: 180, api_base: 'http://127.0.0.1:7420',
+  followup_s: 8, bots: null, status_s: 4, timeout_s: 180, reply_grace_s: 8, api_base: 'http://127.0.0.1:7420',
 };
 
 function settings(cfg) {
@@ -116,7 +116,7 @@ function createVoiceChat({ cfg, now = Date.now, api, parseAnswer } = {}) {
       if (!t) { if (d.task !== undefined) early.push(ev); return; }
       if (ev.type === 'message') {
         for (const s of t.speak.feed(d.text)) say(t.bot, s);
-        if (d.final) for (const s of t.speak.flush()) say(t.bot, s);
+        if (d.final) { for (const s of t.speak.flush()) say(t.bot, s); t.final = true; check(); }
       } else if (ev.type === 'tool_call') {
         const n = now();
         if (n - lastStatus.t >= S.status_s * 1000) {
@@ -131,8 +131,14 @@ function createVoiceChat({ cfg, now = Date.now, api, parseAnswer } = {}) {
       } else if (ev.type === 'task_end') {
         for (const s of t.speak.flush()) say(t.bot, s);
         t.done = true;
-        if ([...taskIds.values()].every(x => x.done)) { ended = true; finish(); }
+        // The final reply can land just after task_end; wait up to reply_grace_s for it.
+        if (!t.final) graces.push(setTimeout(() => { t.final = true; check(); }, S.reply_grace_s * 1000));
+        check();
       }
+    }
+    const graces = [];
+    function check() {
+      if (!ended && [...taskIds.values()].every(x => x.done && x.final)) { ended = true; finish(); }
     }
 
     let opened; const openP = new Promise(r => { opened = r; });
@@ -144,10 +150,10 @@ function createVoiceChat({ cfg, now = Date.now, api, parseAnswer } = {}) {
       let r;
       try { r = await A.json('POST', '/api/chat', { bots, text }); } catch { r = { status: 0 }; }
       if (r.status < 200 || r.status >= 300 || !Array.isArray(r.body)) { speak(emit, 'I could not send that to the bots.'); return; }
-      for (const x of r.body) taskIds.set(x.taskId, { bot: x.bot, speak: new Speakable(), done: false });
+      for (const x of r.body) taskIds.set(x.taskId, { bot: x.bot, speak: new Speakable(), done: false, final: false });
       for (const ev of early.splice(0)) onEvent(ev);
       if (!ended && taskIds.size) await donePromise;
-    } finally { clearTimeout(timer); clearInterval(abort); stream.close(); }
+    } finally { clearTimeout(timer); graces.forEach(clearTimeout); clearInterval(abort); stream.close(); }
   }
 
   // -> {ignored?: reason}

@@ -148,3 +148,12 @@ M5: the pure function auditReport(text, evidence) is exported and tested on its 
 - Open: a room's transcript loads in full on first open (no paging yet). The chat-ui race guards (stale poll, composer clear) are covered by static checks only.
 - Possible future optional module: paid cloud voice, off by default, using the user's own key. Not built; local ASR/TTS stays the default.
 - Open: the commit-crash suite failed once inside `node test/run-all.js core` during the integration work and passed on rerun; treated as a timing flake and tracked, cause not found yet.
+- chat-endpoint (OpenAI-style chat engine) is off by default and starts in mode `shadow`: it calls the door, discards the reply, and logs metadata only. `live` must be set explicitly per bot.
+- Shadow calls are fire and forget, at most 2 in flight per bot; extra calls are recorded as `skipped_busy`. A shadow call is not aborted by later owner speech; it ends on its own timeout.
+- Emotion tags pass an allowlist of 10 values and are never stored when `journal_text` is false.
+- Voice ownership is keyed by room and member: canUseVoice(voice, memberId, roomId). No other speaker may use a bot's voice.
+- A reply containing any configured token is dropped whole; the event carries only a count. Any PEM block is removed whole; an unterminated BEGIN removes everything after it.
+- Speaker names go through one shared helper (screenName). no_reply, aborted and timed-out calls drop the line and are never replayed, shadow included.
+- voice-chat waits up to `reply_grace_s` (default 8) after task_end for the final reply, because a bot can report done before its last message.
+- mac_client sends a TTS speaker (`TTS_VOICE`, default vivian); CustomVoice TTS models refuse requests without one.
+- Open: `voice_transcript` is passed through the rooms say route when the caller sends `type`, but nothing upstream sends it yet.

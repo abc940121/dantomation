@@ -23,6 +23,7 @@ Env:
   ASR_URL       default http://127.0.0.1:8001/v1/audio/transcriptions (OpenAI-style, mlx_audio)
   TTS_URL       default http://127.0.0.1:8001/v1/audio/speech; "say" = macOS say only
   ASR_MODEL / TTS_MODEL  model ids your mlx_audio server expects
+  TTS_VOICE     speaker name for TTS models that need one (default vivian; empty = send none)
   Install pins (THIRD_PARTY.md): hf download <id> --revision <commit> before starting mlx_audio.
 """
 from __future__ import annotations
@@ -48,6 +49,7 @@ ASR_URL = os.environ.get('ASR_URL', 'http://127.0.0.1:8001/v1/audio/transcriptio
 ASR_MODEL = os.environ.get('ASR_MODEL', 'mlx-community/Qwen3-ASR-1.7B-8bit')
 TTS_URL = os.environ.get('TTS_URL', 'http://127.0.0.1:8001/v1/audio/speech')
 TTS_MODEL = os.environ.get('TTS_MODEL', 'mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit')
+TTS_VOICE = os.environ.get('TTS_VOICE', 'vivian')  # CustomVoice models refuse a request without a speaker
 
 PREFETCH = int(os.environ.get('TTS_PREFETCH', '2'))  # sentences synthesized ahead (voice-chat target)
 TAIL_S = 0.3  # the mic stays deaf this long after TTS ends
@@ -142,7 +144,8 @@ def _synth(sentence: str):
         return None
     try:
         req = urllib.request.Request(TTS_URL, data=json.dumps(
-            {'model': TTS_MODEL, 'input': sentence, 'response_format': 'wav'}).encode(),
+            {'model': TTS_MODEL, 'input': sentence, 'response_format': 'wav',
+             **({'voice': TTS_VOICE} if TTS_VOICE else {})}).encode(),
             headers={'Content-Type': 'application/json'})
         with urllib.request.urlopen(req, timeout=30) as r:
             return r.read()

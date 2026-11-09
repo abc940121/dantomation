@@ -253,6 +253,32 @@ const idLines = p => p.split('\n').filter(l => l.startsWith('- [id='));
   check('say answers 202', sy.status === 202);
   check('summary route validates text', h('POST', '/rooms/:id/summary')(ctx({ params: { id: 'dev' }, body: {} })).status === 400);
 
+  // ---- external engine members (engine + endpoint block), the floor route
+  {
+    const EXT = { id: 'ex', name: 'Example', engine: 'x-eng', voice: 'v-ex', endpoint: {} };
+    const rm = { dev: { lead: 'ann', members: [{ id: 'ann', name: 'Ann', voice: 'v-ann' }, { id: 'bob', name: 'Bob', voice: 'v-ex' }, EXT] } };
+    const eng = createEngine({ rooms: rm, store: mem(), deliver: async () => '' });
+    const ex = eng.rooms()[0].members.find(m => m.id === 'ex');
+    check('engine member defaults: never lead, addressed only, no room memory', ex.neverLead && ex.addressedOnly && ex.noRoomMemory);
+    check('engine member voice is reserved: another member loses it, with a problem', eng.canUseVoice('v-ex', 'ex', 'dev') && !eng.canUseVoice('v-ex', 'bob', 'dev') && eng.problems.some(x => /reserved/.test(x)));
+    const calls = [];
+    const EXT_J = { ...EXT, endpoint: { journal_text: true } };
+    const e2 = createEngine({ rooms: { dev: { members: [{ id: 'ann', name: 'Ann' }, EXT_J] } }, store: mem(), deliver: async a => { if (a.member.id === 'ex') calls.push(a); return a.member.id === 'ex' ? { text: 'hi', voice: 'v-other', emotion: 'calm' } : ''; } });
+    e2.setSummary('dev', 'SUMMARY-MARK');
+    await e2.say('dev', 'one'); await e2.say('dev', '@Example two');
+    check('engine member: gets original lines, never the summary; reply voice not its own is ignored, emotion kept', calls.length === 1 && !calls[0].prompt.includes('SUMMARY-MARK') && Array.isArray(calls[0].lines) && calls[0].trigger.text === '@Example two' && e2.messages('dev').find(m => m.speaker === 'ex').emotion === 'calm');
+    const e3 = createEngine({ rooms: { dev: { members: [{ id: 'ann', name: 'Ann' }, EXT] } }, store: mem(), deliver: async () => { throw Object.assign(new Error('Example is unavailable'), { unavailable: true }); } });
+    await e3.say('dev', '@Example hi');
+    const sys = e3.messages('dev').filter(m => m.speaker === 'system');
+    check('unavailable engine: exactly one system line, no bot line', sys.length === 1 && !e3.messages('dev').some(m => m.speaker === 'ex'));
+    const c3 = { settings: { rooms: { dev: { members: [{ id: 'ann', name: 'Ann' }, EXT] } }, human_label: 'human-e', reply_timeout_s: 5, poll_ms: 10 }, state: { append: r => ({ id: 'q' + (++rn), ...r }) }, tasks: { enqueue: async () => { throw new Error('must not be used'); } }, params: { id: 'dev' }, query: {}, body: { text: '@Example hi' } };
+    check('no deliverer registered: the say route is accepted and no task is used', h('POST', '/rooms/:id/say')(c3).status === 202);
+    const fl = h('POST', '/rooms/:id/floor');
+    check('floor route: 200 on a known room, 400 on an unknown one', fl({ ...c3, body: { speaking: true } }).status === 200 && fl({ ...c3, params: { id: 'nope' }, body: {} }).status === 400);
+    const un = typeof mod.api.registerDeliverer === 'function' && mod.api.registerDeliverer('zz-test', () => 1);
+    check('registerDeliverer returns an unregister function', typeof un === 'function'); un();
+  }
+
   // ---- a flushed or timed-out turn stops its bot task (signal -> ctx.tasks.cancel)
   {
     const sig = [];
@@ -281,6 +307,74 @@ const idLines = p => p.split('\n').filter(l => l.startsWith('- [id='));
     const before = cancelled.length;
     say(c2, 'anyone @cy'); await waitFor(() => cancelled.length > before + 0 && cancelled.includes('tk3'));
     check('timeout: a turn that outlives reply_timeout_s stops its task', cancelled.includes('tk3'), cancelled);
+  }
+
+
+  // ---- review fixes: PEM scrub, emotion allowlist, floor recheck, voice by room+member, voice_transcript
+  {
+    const { scrub } = require('../guard');
+    const pem = (k, body) => '-----BEGIN ' + k + '-----\n' + body + '\n-----END ' + k + '-----';
+    const out1 = scrub('before ' + pem('PRIVATE KEY', 'QUJDREVGR0g=') + ' after');
+    check('scrub: a whole PEM block is removed (body and END marker too)', !/QUJDREVGR0g|BEGIN|END/.test(out1) && /before/.test(out1) && /after/.test(out1), out1);
+    const out2 = scrub('x ' + pem('CERTIFICATE', 'MIIBcertbody') + ' y ' + pem('OPENSSH PRIVATE KEY', 'b3BlbnNzaA=='));
+    check('scrub: any PEM label, several blocks', !/certbody|b3BlbnNzaA|BEGIN|END/.test(out2) && /x/.test(out2) && /y/.test(out2), out2);
+    const out3 = scrub('keep this\n-----BEGIN ' + 'RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA\nmore lines');
+    check('scrub: an unterminated BEGIN removes everything to the end', out3.startsWith('keep this') && !/MIIEow|more lines|BEGIN/.test(out3), out3);
+    const st = mem();
+    const e = createEngine({ rooms: ROOM(), store: st, deliver: async () => '' });
+    await e.say('dev', 'hi @ann ' + pem('PRIVATE KEY', 'SECRETBODYXYZ'));
+    check('say: PEM body is not persisted', !JSON.stringify(st.all()).includes('SECRETBODYXYZ'));
+    const e2 = createEngine({ rooms: ROOM(), store: st, deliver: async () => 'ok ' + pem('PRIVATE KEY', 'REPLYBODYXYZ') });
+    await e2.say('dev', 'hi @ann');
+    check('reply: PEM body is not persisted or delivered', !JSON.stringify(st.all()).includes('REPLYBODYXYZ') && !JSON.stringify(e2.messages('dev')).includes('REPLYBODYXYZ'));
+  }
+  {
+    const mk = (journal, emotion) => {
+      const store = mem();
+      const eng = createEngine({ rooms: { dev: { members: [{ id: 'ann', name: 'Ann' }, { id: 'ex', name: 'Ex', engine: 'x', endpoint: { journal_text: journal } }] } }, store,
+        deliver: async a => (a.member.id === 'ex' ? { text: 'hello', emotion } : '') });
+      return { eng, store };
+    };
+    let allKept = true;
+    for (const emo of ['neutral', 'happy', 'sad', 'angry', 'surprised', 'calm', 'excited', 'worried', 'tender', 'playful']) {
+      const t = mk(true, emo); await t.eng.say('dev', '@Ex a');
+      if (t.store.all().find(r => r.speaker === 'ex').emotion !== emo) allKept = false;
+    }
+    check('emotion: all ten allowlisted values are kept (journal_text true)', allKept);
+    const bad = mk(true, 'confidential'); await bad.eng.say('dev', '@Ex a');
+    check('emotion: a value outside the allowlist is ignored', !('emotion' in bad.store.all().find(r => r.speaker === 'ex')));
+    const nj = mk(false, 'happy'); await nj.eng.say('dev', '@Ex a');
+    const rec = nj.store.all().find(r => r.speaker === 'ex');
+    check('emotion: with journal_text false it is never persisted', rec && !('emotion' in rec) && rec.text === '' && !JSON.stringify(nj.store.all()).includes('happy'), rec);
+  }
+  {
+    // floor recheck after delivery and before posting
+    const rm = () => ({ dev: { members: [{ id: 'ann', name: 'Ann' }] } });
+    const t1 = createEngine({ rooms: rm(), store: mem(), deliver: async () => { t1.holdFloor('dev', true, 150); return 'late reply'; } });
+    const r1 = await t1.say('dev', '@ann go');
+    check('floor: held while the reply was coming, then released: waits, then posts', r1.results.some(x => x.posted), r1.results);
+    let clock = 1000000;
+    const t2 = createEngine({ rooms: rm(), store: mem(), now: () => (clock += 1000), deliver: async () => { t2.holdFloor('dev', true, 1e9); return 'never posted'; } });
+    const r2 = await t2.say('dev', '@ann go');
+    check('floor: still held after 20 s, the reply is dropped', r2.results.length === 1 && !r2.results[0].posted && r2.results[0].reason === 'floor' && !t2.messages('dev').some(m => m.speaker === 'ann'), r2.results);
+    const t3 = createEngine({ rooms: rm(), store: mem(), deliver: async () => { t3.holdFloor('dev', true, 60000); setTimeout(() => t3.say('dev', 'new line'), 60); return 'stale'; } });
+    const r3 = await t3.say('dev', '@ann go');
+    check('floor: the generation changed while waiting, the reply is dropped', r3.results.some(x => x.reason === 'stale') && !t3.messages('dev').some(m => m.speaker === 'ann'), r3.results);
+  }
+  {
+    // voice ownership is room + member
+    const rm = { a: { members: [{ id: 'alex', name: 'Alex', engine: 'x', voice: 'v-shared', endpoint: {} }] }, b: { members: [{ id: 'alex', name: 'Alex B', voice: 'v-shared' }] } };
+    const eng = createEngine({ rooms: rm, store: mem(), deliver: async () => '' });
+    check('voice: the same member id in another room does not inherit the reserved voice', eng.canUseVoice('v-shared', 'alex', 'a') === true && eng.canUseVoice('v-shared', 'alex', 'b') === false && eng.canUseVoice('v-shared', 'alex') === false);
+    check('voice: voiceFor honours room+member', eng.voiceFor('a', { speaker: 'alex' }) === 'v-shared' && eng.voiceFor('b', { speaker: 'alex' }) === null);
+    check('voice: the other room is told, with a problem noted', eng.problems.some(x => /reserved/.test(x)), eng.problems);
+  }
+  {
+    const st = mem();
+    const eng = createEngine({ rooms: ROOM(), store: st, deliver: async () => '' });
+    await eng.say('dev', 'spoken line @ann', { type: 'voice_transcript' }); await eng.say('dev', 'typed line @ann', { type: 'bogus' });
+    const hs = st.all().filter(r => r.speaker === 'human');
+    check('say: type voice_transcript is recorded on the line, anything else is not', hs[0].input === 'voice_transcript' && !('input' in hs[1]), hs);
   }
 
   console.log(`result: ${pass} passed, ${fail} failed`);

@@ -15,7 +15,7 @@ Routes and field names are provisional until S0 fixes the module route shape. Th
    - an approval card is pending and not parked;
    - the follow-up window is open: `voice_chat.followup_s` (default 8) seconds after the last spoken line.
 4. Pending card: the question is read once in one short sentence ("Allow <summary>, yes or no?"). The next utterance is accepted only if `parseAnswer` (the approval-cards closed word list) says yes or no. Unclear gets one re-ask ("Sorry, yes or no?"); a second unclear leaves the card pending, says so, and parks it until a wake phrase is spoken. Text that started while speech was playing is never taken as an answer.
-5. Otherwise the text goes to `POST /api/chat` for `voice_chat.bots` (default: the first bot). Sentences from SSE `message` events are spoken as they arrive: short, code blocks replaced by a placeholder, URLs read as their domain. A `tool_call` gives "Running <tool>." at most every `status_s` seconds (default 4). If a card becomes pending during the task, it is read aloud and the stream closes; the answer comes as the next utterance.
+5. Otherwise the text goes to `POST /api/chat` for `voice_chat.bots` (default: the first bot). Sentences from SSE `message` events are spoken as they arrive: short, code blocks replaced by a placeholder, URLs read as their domain. A `tool_call` gives "Running <tool>." at most every `status_s` seconds (default 4). If a card becomes pending during the task, it is read aloud and the stream closes; the answer comes as the next utterance. A bot may report its task ended just before its final reply; the stream then waits up to `reply_grace_s` seconds (default 8) for that reply.
 
 ### The wake word is text-level
 
@@ -63,6 +63,7 @@ The Mac needs to reach the desktop's server. Same LAN is enough. Use Tailscale o
           "bots": null,
           "status_s": 4,
           "timeout_s": 180,
+          "reply_grace_s": 8,
           "api_base": "http://127.0.0.1:7420",
           "token": ""
         }

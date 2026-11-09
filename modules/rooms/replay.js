@@ -8,6 +8,7 @@
 //   history, in quotes.
 // - Every message is role "user". The room never writes in the assistant role.
 const { scrub } = require('./guard');
+const { mentioned, mentionTokens } = require('./route');
 
 const quote = s => JSON.stringify(String(s)).replace(/\[/g, '\\u005b').replace(/</g, '\\u003c').replace(/>/g, '\\u003e');
 const label = s => String(s).replace(/[^\w .@-]/g, '_').slice(0, 40);
@@ -22,6 +23,14 @@ function omittedNote(omitted, labels) {
   for (const m of omitted) per.set(labels(m.speaker), (per.get(labels(m.speaker)) || 0) + 1);
   const who = [...per].map(([s, n]) => `${n} from ${label(s)}`).join(', ');
   return `${omitted.length} earlier messages were posted (${who}), from id ${omitted[0].id} to id ${omitted[omitted.length - 1].id}.`;
+}
+
+function hopOf(m, messages) {
+  if (m.kind === 'human') return 0;
+  if (m.kind !== 'bot') return null;
+  if (!m.reply_to) return 1;
+  const parent = messages.find(x => x.id === m.reply_to);
+  return parent && parent.kind === 'human' ? 1 : 2;
 }
 
 // opts: { room, member, messages (whole transcript, oldest first), trigger (message), summary (string|null), humanLabel }
@@ -61,7 +70,11 @@ function buildContext(opts) {
   }
   const prompt = sec.join('\n');
   const seen = [...shown.map(m => m.id), ...(trigger ? [trigger.id] : [])];
-  return { prompt, messages: [{ role: 'user', content: prompt }], seen, omitted: omitted.length };
+  return { prompt, messages: [{ role: 'user', content: prompt }], seen, omitted: omitted.length, trigger: trigger || null,
+    // mentions: member ids the trigger line addresses, plus 'everyone'. hop: 0 a human line, 1 a bot line answering a
+    // human, 2 a bot line answering a bot line (or an unknown parent: assumed deeper, never forwarded).
+    mentions: trigger ? [...new Set([...mentioned(trigger.text, room.members), ...(mentionTokens(trigger.text).includes('everyone') ? ['everyone'] : [])])] : [],
+    lines: [...shown, ...(trigger ? [trigger] : [])].map(m => ({ id: m.id, speaker: m.speaker, label: labels(m.speaker), is_bot: m.kind === 'bot', kind: m.kind, text: m.text, hop: hopOf(m, messages) })) };
 }
 
 module.exports = { buildContext, quote };

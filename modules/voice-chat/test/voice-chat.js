@@ -181,7 +181,7 @@ function mockServer() {
   check('sanitize: Chinese sentences split on full stops', new Speakable().feed('第一句。第二句！第三句？').length === 3);
 
   // ---- streaming through chat: code/URL filtered, tool_call throttled, multi-bot
-  vc = mk({ status_s: 4 }); m.chats = []; m.cards = [];
+  vc = mk({ status_s: 4, reply_grace_s: 0.05 }); m.chats = []; m.cards = [];
   m.script = [[
     ['message', { task: 't-b1', bot: 'b1', text: 'Working. ```sh\nrm -rf x\n``` See https://a.b/c now.', final: false }],
     ['tool_call', { task: 't-b1', bot: 'b1', callId: '1', tool: 'Bash', summary: 'curl http://secret' }],
@@ -199,6 +199,11 @@ function mockServer() {
   m.script = [bots => bots.map(b => [['message', { task: 't-' + b, bot: b, text: 'Hi.', final: true }], ['task_end', { task: 't-' + b, state: 'done' }]]).flat()];
   o = await run(vc, 'hey assistant all of you');
   check('bots: "all" fans out; replies are prefixed by bot', m.chats[0].bots === 'all' && o.say.includes('b1: Hi.') && o.say.includes('b2: Hi.'), JSON.stringify(o));
+  // the final reply can arrive just after task_end (the bot marks the task done, then answers)
+  vc = mk({ reply_grace_s: 2 }); m.chats = [];
+  m.script = [[['task_end', { task: 't-b1', state: 'done' }], ['message', { task: 't-b1', bot: 'b1', text: 'hello', final: true }]]];
+  o = await run(vc, 'hey assistant say hello');
+  check('reply after task_end is still spoken', o.say.join('|') === 'hello.' || o.say.join('|') === 'hello', o.say.join('|'));
   vc = mk(); m.script = [[['card_pending', { card: { id: 'c9', task: 't-b1', bot: 'b1', tool: 'Bash', summary: 'delete files', expiresAt: 'x' } }]]];
   m.cards = [{ id: 'c9', summary: 'delete files' }];
   o = await run(vc, 'hey assistant clean up');
