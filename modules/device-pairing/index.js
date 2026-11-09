@@ -28,7 +28,7 @@ module.exports = {
       const m = S.mintCode();
       console.log(`Pairing code (valid 2 minutes, single use): ${m.short}`);
       console.log(`Link fragment for the QR: #p=${m.code}`);
-      console.log('Open <server address>/m/chat-ui/ui/#p=<code> on the phone, or type the six digits into the page.');
+      console.log('Open <server address>/m/app-ui/ui/#p=<code> (or /m/chat-ui/ui/) in the browser or on the phone, or type the six digits into the page.');
       return { handled: true, code: 0 };
     },
     async devices() {

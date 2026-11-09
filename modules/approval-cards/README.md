@@ -37,7 +37,7 @@ Unclear never approves. The card stays pending and `status` says the last answer
 
 ## Risky list (data, extendable)
 
-Defaults are in `default-risky.json`: `git push`; deleting files outside the task folder; package installs (npm, pnpm, yarn, pip, winget, choco, apt, brew, cargo, go); anything that publishes (`gh release`, `gh repo`, `npm publish`, `docker push`); calls to well-known paid API hosts by URL (shell or fetch tool). Extend or trim in your config, like the private rules:
+Defaults are in `default-risky.json`: `git push`; deleting files outside the task folder; package installs (npm, pnpm, yarn, pip, winget, choco, apt, brew, cargo, go); anything that publishes (`gh release`, `gh repo`, `npm publish`, `docker push`); calls to well-known paid API hosts, by URL or bare host name (shell or fetch tool, so curl, wget, `Invoke-WebRequest`, Python and Node one-liners all count); and the OpenAI and Anthropic SDKs or CLIs used from the shell. It is pattern matching, so a call that hides the host or the SDK name gets through. Extend or trim in your config, like the private rules:
 
     "approval_cards": {
       "timeout_minutes": 10,

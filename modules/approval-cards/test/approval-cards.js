@@ -135,6 +135,19 @@ startTask('t5');
 const blocked = c => hook(c, 't5', {}, 'Bash').status === 2 && /approval card/.test(hook(c, 't5').stderr);
 check('pip/winget installs, gh release, npm publish each ask', ['pip install requests', 'winget install Foo.Bar', 'gh release create v1', 'npm publish', 'gh repo create x'].every(blocked));
 check('a paid API call by URL asks (shell and fetch tool)', blocked('curl https://api.openai.com/v1/chat/completions') && hook('', 't5', {}, 'WebFetch', { url: 'https://api.anthropic.com/v1/messages' }).status === 2);
+const PAID = {
+  'python requests': `python -c "import requests; requests.post('https://api.openai.com/v1/chat/completions')"`,
+  'python httpx': `python -c "import httpx; httpx.post('https://openrouter.ai/api/v1/chat/completions')"`,
+  'node fetch': `node -e "fetch('https://api.anthropic.com/v1/messages',{method:'POST'})"`,
+  'Invoke-WebRequest': 'Invoke-WebRequest -Uri https://api.openai.com/v1/models -Method Post',
+  'irm': 'irm -Method Post openrouter.ai/api/v1/chat/completions',
+  'wget': 'wget --post-data x api.anthropic.com/v1/messages',
+  'openai CLI': 'openai api chat.completions.create -m gpt-4o -g user hi',
+  'anthropic SDK (python)': `python -c "import anthropic; anthropic.Anthropic().messages.create()"`,
+  'openai SDK (node)': `node -e "const O=require('openai'); new O().chat.completions.create({})"`,
+};
+for (const [name, c] of Object.entries(PAID)) check(`a paid API call via ${name} asks`, blocked(c));
+check('commands that only name a model or a company pass', ['node summarize.js --model gpt-4o', 'echo openai is a company', 'git log --grep anthropic'].every(c => hook(c, 't5').status === 0));
 check('a rule added in config (deploy-site) asks', blocked('deploy-site --prod'));
 check('rm inside the task folder passes; rm outside asks', hook('rm notes.txt', 't5').status === 0 && hook('rm ../elsewhere/notes.txt', 't5').status === 2 && hook('rm /etc/hosts', 't5').status === 2);
 check('ordinary commands (ls, node script, git commit) pass', ['ls', 'node build.js', 'git commit -m x', 'npm test'].every(c => hook(c, 't5').status === 0));

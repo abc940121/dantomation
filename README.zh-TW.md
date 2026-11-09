@@ -1,6 +1,6 @@
 [English](README.md) | **繁體中文**
 
-> 以英文版為準；本翻譯同步至英文版 README.md（git blob `1e4fbd7`，可用 `git hash-object README.md` 核對）。
+> 以英文版為準；本翻譯同步至英文版 README.md（git blob `71a1dd4`，可用 `git hash-object README.md` 核對）。
 
 # Taskmote
 
@@ -62,7 +62,7 @@ Windows 上 `bin\taskmote.cmd` 效果相同；把 `bin` 加入 PATH 就能直接
 
 1. 在設定檔（`~/.harness/config.json`，或 `HARNESS_CONFIG` 指定的檔案）加入 `"preset": "v1"`。還沒有設定檔的話，建立內容為 `{ "preset": "v1" }` 的檔案。你自己寫的 `modules` 設定永遠優先於 preset。
 2. 執行 `node bin/taskmote.js serve`，它會監聽 `127.0.0.1:7420`。
-3. 開啟 <http://127.0.0.1:7420/m/app-ui/ui/>。**成功的話**，送出 "hello" 會看到回覆。
+3. 開啟 <http://127.0.0.1:7420/m/app-ui/ui/>（結尾的 `/ui/` 要保留）。第一次開啟時頁面會要求配對碼，在本機也一樣：執行 `node bin/harness.js pair`，輸入它印出的六位數字。**成功的話**，送出 "hello" 會看到回覆。
 4. **手機（選用）。** 手機連不到 `127.0.0.1`。把這台電腦加入你自己控制的私人網路（例如 Tailscale），把 `server.host` 設成該位址，重新啟動 `serve`。然後執行 `node bin/harness.js pair`，在手機上開啟印出的連結或輸入配對碼。`node bin/harness.js devices` 列出手機，`node bin/harness.js revoke <id>` 移除手機。絕對不要把連接埠開放到網際網路。
 
 `node bin/taskmote.js preset v1` 會列出這個 preset 開啟哪些模組，它不會寫入任何檔案。

@@ -60,7 +60,7 @@ On Windows, `bin\taskmote.cmd` does the same; put `bin` on your PATH to type `ta
 
 1. In your config file (`~/.harness/config.json`, or the file named by `HARNESS_CONFIG`), add `"preset": "v1"`. If you have no config yet, create the file as `{ "preset": "v1" }`. Your own `modules` entries always win over the preset.
 2. Run `node bin/taskmote.js serve`. It listens on `127.0.0.1:7420`.
-3. Open <http://127.0.0.1:7420/m/app-ui/ui/>. **It worked if** you can send "hello" and see a reply.
+3. Open <http://127.0.0.1:7420/m/app-ui/ui/> (keep the `/ui/` at the end). The page asks for a pairing code the first time, even on this computer: run `node bin/harness.js pair` and type the six digits it prints. **It worked if** you can send "hello" and see a reply.
 4. **Phone (optional).** A phone cannot reach `127.0.0.1`. Put this computer on a private network you control (for example Tailscale), set `server.host` to that address, and restart `serve`. Then run `node bin/harness.js pair`, and open the printed link on the phone or type the code there. `node bin/harness.js devices` lists phones and `node bin/harness.js revoke <id>` removes one. Never open the port to the internet.
 
 `node bin/taskmote.js preset v1` shows what the preset turns on. It never writes a file.
