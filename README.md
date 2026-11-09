@@ -2,13 +2,42 @@
 
 # Taskmote
 
-**A personal agent harness that runs on your own computer: give it a task from the terminal, a browser or your phone, and it works through Claude Code, records every step, and can be undone.**
+**Approve Claude Code's risky actions from your phone. Crash-safe, undoable.**
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+<!-- demo: docs/demo.gif (phone approval card, 20s) -->
+
+
+- **Phone approval cards:** risky steps wait for your tap before they run.
+- **A guard that blocks red-line commands** before the agent can run them.
+- **A journal that survives crashes:** close the lid mid-task, then run `do` with no request to resume; no side effect runs twice.
+- **One-command undo:** `undo` steps the task folder back one change.
+
+## Quick start
+
+You need Node.js 18+, Git, and [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed and logged in.
+
+```sh
+git clone https://github.com/abc940121/taskmote && cd taskmote
+node bin/taskmote.js do "create hello.txt that says hello"
+node bin/taskmote.js status
+node bin/taskmote.js undo
+```
+
+Phone approval cards need the `v1` preset: see [Try the v1 base](#try-the-v1-base-phone-chat-voice-approval-cards).
+
+## Before you rely on it
 
 > **Before you start:** Taskmote runs AI agents on your machine, with your user's rights. The trunk only listens on `127.0.0.1`, and every optional module is **off** until you turn it on. Read [Security](#security) before you expose it to a phone or a network.
 
 > **A paired phone has your powers.** By default (`engine.profile: "full"`) each bot is a persistent Claude Code session with your own Claude settings, tools and MCP servers. Anyone holding a paired device can make it do what you could do at this keyboard, except the red-line actions, which the guard blocks or holds for your yes. Treat pairing like handing over a logged-in laptop: pair only devices you own, list them with `node bin/harness.js devices`, and remove one with `node bin/harness.js revoke <id>`. Set `engine.profile` to `"locked"` for the older narrow tool allowlist.
+
+**It is not**
+- **Not a sandbox.** The guard is pattern matching in front of the agent's tools, not isolation. An agent can do what your user account can do.
+- Not a hosted service, and not for multiple users. There is one owner; there are no accounts.
+- Not an API-key product. It drives your logged-in Claude Code subscription and strips API-key variables from the agent's environment.
+- Not finished. It is a v1 base; see [Known limits](docs/reference.md#known-limits).
 
 Taskmote was called *dantomation* until November 2026. The old command name `dantomation` still works as an alias.
 
@@ -16,18 +45,12 @@ Taskmote was called *dantomation* until November 2026. The old command name `dan
 
 Coding agents are good at doing things, but they are less good at stopping cleanly when your laptop sleeps, telling you honestly whether a test passed, or waiting for you before they `git push`. Taskmote is a small wrapper around Claude Code that handles those parts: it keeps a crash-safe journal, gives one task one executor, takes a checkpoint before every change, and stops risky actions until you say yes.
 
-## What it is, and what it is not
+## What it is
 
 **It is**
 - A local, single-owner tool. Pure Node.js 18+, no dependencies to install for the core.
 - A small trunk (journal, lock, engine launch, resume, config, module loader) plus opt-in modules: phone chat, voice, approval cards, rooms, a worker on a second machine.
 - Built to survive a shutdown at any moment: `do` with no request resumes the open task, and no side effect runs twice.
-
-**It is not**
-- **Not a sandbox.** The guard is pattern matching in front of the agent's tools, not isolation. An agent can do what your user account can do.
-- Not a hosted service, and not for multiple users. There is one owner; there are no accounts.
-- Not an API-key product. It drives your logged-in Claude Code subscription and strips API-key variables from the agent's environment.
-- Not finished. It is a v1 base; see [Known limits](docs/reference.md#known-limits).
 
 ## Quickstart
 
@@ -98,11 +121,11 @@ On Windows, `bin\taskmote.cmd` does the same; put `bin` on your PATH to type `ta
 
 ## Modules
 
-Every module is off by default, except the two safety modules `guard-base` and `checkpoint`. "Can touch" is what the module itself reads or changes beyond the trunk.
+Every module is off by default, except the two safety modules `guard-base` and `checkpoint`. `guard-base` is locked on: a config or preset that turns it off is refused, so `serve` will not start and every tool call is blocked until it is fixed. Turning `approval-cards` off is allowed, but `serve` warns that every red-line step will then be refused. "Can touch" is what the module itself reads or changes beyond the trunk.
 
 | Module | What it does | Can touch | Default | In v1 |
 |---|---|---|---|---|
-| `guard-base` | blocks API keys, mass deletion, skipped git hooks, secret writes | nothing; it only blocks | on | ✓ |
+| `guard-base` | blocks API keys, mass deletion, skipped git hooks, secret writes | nothing; it only blocks | on (locked) | ✓ |
 | `checkpoint` | snapshot before every change; `undo`/`restore` | the task folder (git snapshots) | on | ✓ |
 | `guard-private-rules` | your own red lines from a rules file | reads your rules file | off | ✓ |
 | `approval-cards` | risky actions ask yes/no | nothing; it only pauses | off | ✓ |
@@ -144,6 +167,11 @@ A red-line card never times out, and a waiting approval pauses all bots until an
 <details><summary><b><code>do</code> says another task is open (exit 4)</b></summary>
 
 One task runs at a time. Run `node bin/taskmote.js do` with no request to resume it, or check `status`.
+</details>
+
+<details><summary><b>Every tool call is blocked, even Read (or <code>serve</code> exits 2)</b></summary>
+
+The config could not be loaded, so Taskmote fails closed. Common causes: invalid JSON, `"guard-base": false` (it is locked on), or an enabled module that cannot load. Run `node bin/taskmote.js serve` in a terminal to see the reason, then fix `~/.harness/config.json` (or the file `HARNESS_CONFIG` points to) by hand in an editor outside the agent.
 </details>
 
 <details><summary><b>Exit 3: UNCERTAIN</b></summary>

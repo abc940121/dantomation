@@ -17,7 +17,7 @@ const J = require('../lib/journal');
 const C = require('../lib/config');
 const M = require('../lib/modules');
 let CONFIG;
-try { CONFIG = C.load(); } catch (e) { console.error(`harness: ${e.message}; fix or remove it (HARNESS_CONFIG / ~/.harness/config.json)`); process.exit(2); }
+try { CONFIG = C.load(); } catch (e) { console.error(`taskmote: ${e.message}; fix or remove it (HARNESS_CONFIG / ~/.harness/config.json)`); process.exit(2); }
 const EFFECT = path.join(J.ROOT, 'bin', 'effect.js');
 let MODS = [];   // enabled modules, set by main() (loadModules)
 

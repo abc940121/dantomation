@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 // The module loader and the guard dispatcher (core; needs no module on):
-//  - every module off: the guard allows a call guard-base would block
+//  - every changeable module off: guard-base (locked on) still blocks; turning it off is refused
 //  - private_rules without a "modules" key turns guard-private-rules on; with a
 //    "modules" key only that key counts
 //  - an enabled module that cannot load (unknown, throws on require, bad exports,
@@ -23,13 +23,38 @@ const guard = (cfg, tool, ti) => {
   return { code: r.status, kind: (r.stderr.match(/BLOCKED \(([^)]+)\)/) || [])[1] || null, err: r.stderr.trim() };
 };
 const harness = (cfg, ...a) => spawnSync(process.execPath, [path.join(ROOT, 'bin', 'harness.js'), ...a], { env: { ...env(cfg), HARNESS_ENGINE_SCRIPT: path.resolve(ROOT, 'test', 'fake-engine.js'), HARNESS_FAKE_DELAY_MS: '0' }, encoding: 'utf8', timeout: 60000 });
-const OFF = { 'guard-base': false, checkpoint: false, 'guard-private-rules': false, 'spend-count': false, voice: false };
+const OFF = { 'guard-base': true, checkpoint: false, 'guard-private-rules': false, 'spend-count': false, voice: false };
 const RM = ['Bash', { command: 'rm -rf /data' }];
 
 // every module off
 const off = cfgFile('off', { modules: OFF });
-res['all modules off: rm -rf is allowed (core has no rules)'] = guard(off, ...RM).code === 0;
-res['guard-base on: the same call is blocked (kind delete)'] = guard(cfgFile('base', { modules: { ...OFF, 'guard-base': true } }), ...RM).kind === 'delete';
+res['every changeable module off: rm -rf is still blocked (kind delete)'] = guard(off, ...RM).kind === 'delete';
+const lk = guard(cfgFile('base-off', { modules: { ...OFF, 'guard-base': false } }), 'Read', { file_path: 'README.md' });
+res['guard-base off: the config is refused and the guard blocks a harmless Read'] = lk.code === 2 && /locked on/.test(lk.err);
+
+// the lock cannot be edited away: the loaders and the guard-base folder are self_modify (a hard block)
+for (const rel of ['lib/config.js', 'lib/modules.js', 'lib/preset.js', 'modules/guard-base/index.js', 'modules/guard-base/redline.js', 'guards/guard.js']) {
+  const g = guard(off, 'Edit', { file_path: path.join(ROOT, rel), old_string: 'a', new_string: 'b' });
+  res[`editing ${rel} is blocked (self_modify)`] = g.code === 2 && g.kind === 'self_modify';
+}
+// every production entry point gets its module map from config.load(), never from a raw map
+for (const rel of ['bin/harness.js', 'bin/taskmote.js', 'bin/approve-mcp.js', 'guards/guard.js', 'lib/server.js']) {
+  const src = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+  const calls = src.match(/\bM\.load\(([^)]*)\)/g) || [];
+  res[`${rel}: module map comes from config.load()`] = /\bC\.load\(\)/.test(src) && calls.every(c => /M\.load\((CONFIG|cfg)\)/.test(c));
+}
+
+// a new entry point that loads modules must join the list above, or this fails
+{
+  const ENTRIES = new Set(['bin/harness.js', 'bin/taskmote.js', 'bin/approve-mcp.js', 'guards/guard.js', 'lib/server.js']);
+  const extra = [];
+  for (const dir of ['bin', 'lib', 'guards']) for (const f of fs.readdirSync(path.join(ROOT, dir))) {
+    if (!f.endsWith('.js')) continue;
+    const rel = dir + '/' + f, src = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    if (rel !== 'lib/modules.js' && /require\(['"](\.\.?\/)+(lib\/)?modules(\.js)?['"]\)|\bM\.load\(/.test(src) && !ENTRIES.has(rel)) extra.push(rel);
+  }
+  res['no unlisted file in bin/, lib/ or guards/ loads modules' + (extra.length ? ': ' + extra.join(', ') : '')] = extra.length === 0;
+}
 
 // private_rules auto-enable
 fs.writeFileSync(path.join(tmp, 'pr.json'), JSON.stringify({ rules: [{ kind: 'private_shell', match: 'shell', pattern: 'shutdown', reason: 'no' }] }));
@@ -48,7 +73,7 @@ try {
   fs.mkdirSync(brokenDir, { recursive: true }); fs.writeFileSync(path.join(brokenDir, 'index.js'), "throw new Error('boom');\n");
   fs.mkdirSync(noName, { recursive: true }); fs.writeFileSync(path.join(noName, 'index.js'), "module.exports = { name: 'something-else', beforeTool() { return null; } };\n");
   fs.mkdirSync(badHook, { recursive: true }); fs.writeFileSync(path.join(badHook, 'index.js'), "module.exports = { name: 'zz-test-badhook', beforeTool: 'yes' };\n");
-  const failing = [['unknown name', 'no-such-module', true], ['throws on require', 'zz-test-throws', true], ['wrong exported name', 'zz-test-noname', true], ['beforeTool is not a function', 'zz-test-badhook', true], ['non-boolean flag', 'guard-base', 'yes']];
+  const failing = [['unknown name', 'no-such-module', true], ['throws on require', 'zz-test-throws', true], ['wrong exported name', 'zz-test-noname', true], ['beforeTool is not a function', 'zz-test-badhook', true], ['non-boolean flag', 'checkpoint', 'yes']];
   for (const [label, mod, val] of failing) {
     const c = cfgFile('fail-' + mod, { modules: { ...OFF, [mod]: val } });
     const g = guard(c, 'Read', { file_path: 'README.md' });

@@ -120,7 +120,9 @@ async function runMode(mode, opts) {
     enabled = [...new Set([name, ...suites.flatMap(s => s[2])])];
     cfg = tempConfig(enabled);
   } else {
-    enabled = mode === 'all' ? MODULES : mode === 'core' ? [] : [mode];
+    // locked modules (guard-base) cannot be off, so 'core' and single-module modes keep them on
+    const LOCKED = Object.keys(require('../lib/config').LOCKED);
+    enabled = mode === 'all' ? MODULES : [...new Set([...LOCKED, ...(mode === 'core' ? [] : [mode])])];
     cfg = tempConfig(enabled);
   }
   console.log(`\n== mode ${mode}${opts.parallel ? ' (parallel)' : ''}: ${cfg ? 'HARNESS_CONFIG=' + cfg.file + ' modules ' + JSON.stringify(cfg.modules) : 'no HARNESS_CONFIG (owner config if present)'}`);

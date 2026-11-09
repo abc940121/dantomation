@@ -149,7 +149,7 @@ async function undoDirect(args) {
 
 const [verb, ...rest] = process.argv.slice(2);
 const run = { 'new-module': async () => { try { process.exitCode = require('../lib/scaffold').cli(rest); } catch (e) { fail('taskmote: ' + e.message, 2); } }, do: doVerb, status: statusVerb, undo: undoVerb,
-  serve: async () => { await require('../lib/server').serve(); },
+  serve: async () => { const w = C.warn(); if (w) console.error(w); await require('../lib/server').serve(); },
   token: async () => {
     if (rest[0] !== 'new') fail(USAGE, 2);
     const worker = rest[1] === '--worker';

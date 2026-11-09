@@ -58,8 +58,19 @@ const cfgOf = modules => ({ ...C.DEFAULTS, owner_name: 'Tester', modules });
   };
   const a1 = loadIn('on', { preset: 'v1' });
   check('"preset": "v1" turns every v1 module on at load', !a1.error && V1.every(m => a1.modules[m] === true) && a1.warn === null, a1.error || JSON.stringify(a1.warn));
-  const a2 = loadIn('over', { preset: 'v1', modules: { tripwires: false, 'guard-base': false } });
-  check('a user false overrides the preset', a2.modules.tripwires === false && a2.modules['guard-base'] === false && a2.modules.trace === true);
+  const a2 = loadIn('over', { preset: 'v1', modules: { tripwires: false, 'task-board': false } });
+  check('a user false overrides the preset', a2.modules.tripwires === false && a2.modules['task-board'] === false && a2.modules.trace === true);
+  // module tiers: guard-base is locked on; approval-cards can be turned off, and says so
+  const lk = loadIn('locked', { preset: 'v1', modules: { 'guard-base': false } });
+  check('a locked module cannot be turned off: the config is refused', !!lk.error && /locked on/.test(lk.error) && !lk.modules, JSON.stringify(lk).slice(0, 200));
+  const lk2 = loadIn('locked2', { modules: { 'guard-base': 'no' } });
+  check('a locked module with a non-true value is refused too', !!lk2.error && /locked on/.test(lk2.error));
+  const sv = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'taskmote.js'), 'serve'], { env: { ...process.env, HARNESS_CONFIG: path.join(sd, 'locked.json'), HARNESS_STATE_DIR: path.join(sd, 'st-locked') }, encoding: 'utf8', timeout: 20000 });
+  check('serve refuses to start with guard-base off, and says why', sv.status === 2 && /module "guard-base" is locked on/.test(sv.stderr) && !fs.existsSync(path.join(sd, 'st-locked', 'server.json')), `exit ${sv.status} ${(sv.stderr || '').slice(0, 200)}`);
+  const ac = loadIn('acoff', { preset: 'v1', modules: { 'approval-cards': false } });
+  check('approval-cards off loads, with a warning that red lines are refused', !ac.error && ac.modules['approval-cards'] === false && /module "approval-cards" is off: red-line steps cannot be approved/.test(ac.warn || ''), JSON.stringify(ac.warn));
+  const ad = loadIn('acdefault', { modules: { trace: true } });
+  check('approval-cards off only by default: no tier warning', !ad.error && !/approval-cards/.test(ad.warn || ''), JSON.stringify(ad.warn));
   const a3 = loadIn('none', {});
   check('without the key no v1-only module is on', a3.modules.tripwires !== true && a3.modules.rooms !== true);
   for (const bad of ['nope', '../v1', 'V1', 'v1/../v1', '', 7]) {
