@@ -161,7 +161,8 @@ async function main() {
       check('stdio: an ordinary call comes back allow with updatedInput', ok.behavior === 'allow' && ok.updatedInput.file_path === 'a.txt', ok);
       const pend = call('tools/call', { name: 'approve', arguments: { tool_name: 'Bash', input: { command: 'winget install foo' }, tool_use_id: 'u2' } });
       let card = null;
-      for (let i = 0; i < 200 && !card; i++) { await new Promise(r => setTimeout(r, 25)); card = cardOf('tg'); }
+      const needs = c => !!c && recs().some(x => x.type === 'needs_you' && x.card_id === c.card_id); // needs_you is written just after the card
+      for (let i = 0; i < 400 && !needs(card); i++) { await new Promise(r => setTimeout(r, 25)); card = cardOf('tg'); }
       check('stdio: a red line raises a live card and needs_you through the approval-cards module', !!card && card.live && recs().some(x => x.type === 'needs_you' && x.card_id === card.card_id));
       let settled = false; pend.then(() => { settled = true; });
       await new Promise(r => setTimeout(r, 200));

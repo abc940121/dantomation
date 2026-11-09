@@ -28,16 +28,23 @@ async function main() {
   fs.mkdirSync(w, { recursive: true });
   g('init', '-q', '-b', 'main');
   fs.writeFileSync(path.join(w, 'base.txt'), 'base'); g('add', '.'); g('commit', '-qm', 'base');
-  fs.writeFileSync(path.join(w, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\nsleep 60\n');
+  fs.writeFileSync(path.join(w, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\ntouch .git/hook-started\nsleep 60\n');
   const head0 = g('rev-parse', 'HEAD');
   fs.writeFileSync(path.join(w, 'a.txt'), 'a\n');
 
   const p = spawn(process.execPath, [EFFECT, 'commit', 'C1', 's1-commit', 'add a', 'a.txt'], { cwd: w, env, stdio: 'ignore', windowsHide: true });
   const lockFile = path.join(w, '.git', 'index.lock');
   const t0 = Date.now();
-  while (!fs.existsSync(lockFile) && Date.now() - t0 < 30000) await tick(100);
+  const started = path.join(w, '.git', 'hook-started'); // git has released index.lock by the time the hook runs
+  while (!fs.existsSync(started) && Date.now() - t0 < 90000) await tick(100);
+  if (!fs.existsSync(started)) throw new Error('setup: the commit never reached its pre-commit hook within 90 s (machine overloaded?)');
   await tick(1000); // well inside the hook
-  execSync(`taskkill /T /F /PID ${p.pid}`, { stdio: 'ignore' });
+  if (p.exitCode !== null) throw new Error(`setup: the commit exited (code ${p.exitCode}) before it could be killed inside its pre-commit hook`);
+  // taskkill /T can exit non-zero when part of the tree (the hook's sleep) is already gone; what counts is that the commit died
+  try { execSync(`taskkill /T /F /PID ${p.pid}`, { stdio: 'ignore' }); } catch { /* checked below */ }
+  const tk = Date.now();
+  while (p.exitCode === null && p.signalCode === null && Date.now() - tk < 10000) await tick(100);
+  if (p.exitCode === null && p.signalCode === null) throw new Error('setup: the commit process survived taskkill');
   await tick(1000);
 
   const atKill = { lock: fs.existsSync(lockFile), staged: g('diff', '--cached', '--name-only'), head: g('rev-parse', 'HEAD') === head0 };
@@ -69,7 +76,8 @@ async function main() {
   fs.rmSync(flag, { force: true });
   const p3 = spawn(process.execPath, [EFFECT, 'commit', 'C3', 's1-commit', 'add c', 'c.txt'], { cwd: w3, env: { ...env, HARNESS_PAUSE_MID_ACT_MS: '600000', HARNESS_PAUSE_EFFECT: 's1-commit' }, stdio: 'ignore', windowsHide: true });
   const t3 = Date.now();
-  while (!(fs.existsSync(flag) && /MID/.test(fs.readFileSync(flag, 'utf8'))) && Date.now() - t3 < 30000) await tick(100);
+  while (!(fs.existsSync(flag) && /MID/.test(fs.readFileSync(flag, 'utf8'))) && Date.now() - t3 < 90000) await tick(100);
+  if (!(fs.existsSync(flag) && /MID/.test(fs.readFileSync(flag, 'utf8')))) throw new Error('setup: the effect never paused mid-act within 90 s (machine overloaded?)');
   execSync(`taskkill /T /F /PID ${p3.pid}`, { stdio: 'ignore' });
   await tick(1000);
   fs.rmSync(flag, { force: true });

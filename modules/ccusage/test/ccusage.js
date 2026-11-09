@@ -74,6 +74,9 @@ const SESS = { sessions: [{ sessionId: 'abcdef123456', lastActivity: '2026-01-02
     api.setRunner(async () => ({ code: 3, stdout: '', stderr: 'boom\nmore' }));
     const fail = await api.report('daily', {}, settings);
     check('nonzero exit is a one-line error', !fail.ok && /exited 3: boom$/.test(fail.error));
+    api.setRunner(async () => ({ code: null, error: 'timed out after 5 ms' }));
+    const slow = await api.report('daily', {}, settings);
+    check('timeout says it timed out and names timeout_ms, not the install hint', !slow.ok && /timed out after 5 ms/.test(slow.error) && /timeout_ms/.test(slow.error) && !/could not run/.test(slow.error), slow.error);
   } catch (e) { check('no exception', false, e.stack); }
   finally { fs.rmSync(tmp, { recursive: true, force: true }); }
   const n = results.filter(Boolean).length;

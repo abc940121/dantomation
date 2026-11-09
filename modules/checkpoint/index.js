@@ -82,6 +82,13 @@ function undoCmd(args, { J, EXEC_LOCK }) {
   const l = J.lock(EXEC_LOCK, { pids: [process.pid], task_id: t.task_id, restore: true });
   if (!l.held) { console.error('a task is still running; wait for it to finish (or stop it) before undoing'); process.exit(4); }
   try {
+    // Skip points whose snapshot equals the folder now (e.g. taken before a tool that changed
+    // nothing): restoring one would change nothing, and the person would see "removed 0 file(s)".
+    try {
+      const cur = ck.currentTree(t.task_id, ck.taskDir(t.task_id));
+      while (stack.length && ck.treeOf(t.task_id, stack[stack.length - 1]) === cur) stack.pop();
+    } catch { /* cannot compare: undo the top point as before */ }
+    if (!stack.length) { console.log(`nothing left to undo for task ${t.task_id}: ${t.workdir} already matches every undo point`); return; }
     const n = stack[stack.length - 1];
     // restore() takes a fresh checkpoint of the current state before it changes
     // anything (r.undo), so the undo itself can be undone.

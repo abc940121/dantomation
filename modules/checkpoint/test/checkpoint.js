@@ -137,6 +137,19 @@ const files4 = JSON.parse(fs.readFileSync(path.join(st2, 'journal.jsonl'), 'utf8
 console.log(`4: harness repo (${files4} files): first checkpoint hook ${cold.toFixed(0)} ms; warm hook median ${median(warm).toFixed(0)} ms vs hook without checkpoint ${median(plain).toFixed(0)} ms -> overhead ${(median(warm) - median(plain)).toFixed(0)} ms; checkpoint work alone median ${median(inner)} ms (n=20)`);
 res['4 overhead measured (20 warm runs)'] = warm.length === 20;
 
+// ---- 5. undo skips points equal to the folder now (a checkpoint before a tool that changed nothing)
+const st3 = path.join(base, 'state3'), w3 = path.join(base, 'w3');
+fs.mkdirSync(w3, { recursive: true }); fs.mkdirSync(st3, { recursive: true });
+const env3 = { ...env, HARNESS_STATE_DIR: st3 };
+fs.writeFileSync(path.join(st3, 'journal.jsonl'), JSON.stringify({ id: 'x', ts: new Date().toISOString(), type: 'task_start', task_id: 'tNOOP', request: 'r', workdir: w3 }) + '\n');
+const hook3 = () => spawnSync(process.execPath, [GUARD], { env: { ...env3, HARNESS_TASK_ID: 'tNOOP', HARNESS_TASK_DIR: w3 }, input: JSON.stringify({ session_id: 's', tool_name: 'Write', tool_input: { file_path: path.join(w3, 'hello.txt'), content: 'hi' }, cwd: w3 }), encoding: 'utf8' });
+hook3(); fs.writeFileSync(path.join(w3, 'hello.txt'), 'hi\n'); hook3(); hook3();
+const u5 = spawnSync(process.execPath, [HARNESS, 'undo'], { env: env3, encoding: 'utf8' });
+console.log(`5: undo after a no-op point: exit ${u5.status}; ${String(u5.stdout).split('\n')[0]}`);
+res['5 one undo removes the file even when the newest points match the folder'] = u5.status === 0 && !fs.existsSync(path.join(w3, 'hello.txt')) && /removed 1 file/.test(u5.stdout);
+const u5b = spawnSync(process.execPath, [HARNESS, 'undo'], { env: env3, encoding: 'utf8' });
+res['5 next undo says nothing is left'] = u5b.status === 0 && /nothing left to undo/.test(u5b.stdout);
+
 let ok = true;
 for (const [k, v] of Object.entries(res)) { ok = ok && v; console.log(`${v ? 'PASS' : 'FAIL'} ${k}`); }
 fs.rmSync(base, { recursive: true, force: true });

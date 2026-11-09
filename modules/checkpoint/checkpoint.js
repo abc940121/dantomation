@@ -61,8 +61,8 @@ function withTaskLock(task, fn) {
   try { return fn(); } finally { J.unlock(file, l.nonce); }
 }
 
-function snap(task, dir, tool) {
-  const t0 = Date.now();
+// Stage the folder into the task's private index; returns its tree and what was skipped.
+function stage(task, dir) {
   const index = path.join(CK, safe(task) + '.index');
   const g = (args, input) => git(dir, index, args, input);
   const excl = [];
@@ -85,7 +85,13 @@ function snap(task, dir, tool) {
   }
   if (drop.length) g(['rm', '--cached', '-q', '--ignore-unmatch', '--pathspec-from-file=-', '--pathspec-file-nul'], drop.join('\0'));
   if (keep.length) g(['add', '-A', '--pathspec-from-file=-', '--pathspec-file-nul'], keep.join('\0'));
-  const tree = g(['write-tree']).trim();
+  return { tree: g(['write-tree']).trim(), keep, big, ignored, nested };
+}
+
+function snap(task, dir, tool) {
+  const t0 = Date.now();
+  const g = (args, input) => git(dir, path.join(CK, safe(task) + '.index'), args, input);
+  const { tree, keep, big, ignored, nested } = stage(task, dir);
   const ns = refsOf(task);
   const n = (ns.length ? ns[ns.length - 1] : 0) + 1;
   const parent = ns.length ? [`-p`, `refs/harness/ckpt/${safe(task)}/${ns[ns.length - 1]}`] : [];
@@ -110,6 +116,15 @@ function checkpoint(task, dir, tool) {
       return snap(task, dir, tool);
     }
   });
+}
+
+// The folder's tree now, without making a checkpoint (undo uses it to skip points equal to it).
+function currentTree(task, dir) {
+  ensureRepo();
+  return withTaskLock(task, () => stage(task, dir).tree);
+}
+function treeOf(task, n) {
+  return git(CK, path.join(CK, 'none.index'), ['rev-parse', '--verify', '-q', `refs/harness/ckpt/${safe(task)}/${n}^{tree}`]).trim();
 }
 
 function taskDir(task, ref) {
@@ -147,4 +162,4 @@ function restore(task, n, opts = {}) {
   } finally { fs.rmSync(tmp, { force: true }); }
 }
 
-module.exports = { checkpoint, restore, MAX_BYTES, REPO, git, ensureRepo, taskDir, safeId: safe };
+module.exports = { checkpoint, restore, currentTree, treeOf, MAX_BYTES, REPO, git, ensureRepo, taskDir, safeId: safe };

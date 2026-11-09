@@ -4,7 +4,7 @@ The lower-level reference that used to live in the README: the CLI details, the 
 
 ## CLI details
 
-- `do "<request>"` starts a task in a fresh folder under `work/` (add `--workdir <dir>` to use your own). If it is interrupted (shutdown, kill), run `node bin/taskmote.js do` with no request to resume it. Starting a second task while one is open is refused, with the resume command in the message.
+- `do "<request>"` starts a task in the bot's folder, `work/bot-main`, kept between tasks (with `engine.profile: "locked"` each task gets a fresh `work/<task id>`; add `--workdir <dir>` to use your own). If it is interrupted (shutdown, kill), run `node bin/taskmote.js do` with no request to resume it. Starting a second task while one is open is refused, with the resume command in the message.
 - `status` prints the open task (request, steps done, last step), the last finished task, how many undo points exist, which modules are on, and any config warning.
 - `undo` rolls the latest task's folder back to the state before the agent's last change; run it again to step back one more. It needs the `checkpoint` module (on by default) and works only for tasks started while it was on. It cannot run while a task is running, and agents cannot run it. When nothing is left it says so. Each undo first takes a fresh checkpoint and prints the line that brings the undone state back (`HARNESS_OWNER=1 node bin/harness.js restore <task> <n>`), so an undo can itself be undone.
 - With the `approval-cards` module on, a risky action (git push, deleting outside the task folder, installs, publishing, paid API calls) stops and waits for you. `status` shows the card; answer with `node bin/taskmote.js do yes` or `do no` (an unclear answer asks again; no answer for 10 minutes counts as no). See [`approval-cards`](../modules/approval-cards/README.md).
@@ -70,6 +70,8 @@ Every field but `contract` and `name` is optional, and every callback may be asy
 | [`guard-private-rules`](../modules/guard-private-rules/README.md) | owner's rules file, self-protection of the config | off |
 | [`spend-count`](../modules/spend-count/README.md) | block a session over the spend limit | off |
 | [`ccusage`](../modules/ccusage/README.md) | per-day / per-session Claude Code token and cost reports (`taskmote usage`) | off |
+| [`ntfy`](../modules/ntfy/README.md) | push pings to your phone through an ntfy server (`ntfy.server`, default `https://ntfy.sh`; topic is a secret: `harness.js secret ntfy topic`) | off |
+| [`gitleaks`](../modules/gitleaks/README.md) | runs the separate gitleaks program on agent commits and pushes; findings block (`gitleaks.scan_commit`, `scan_push`, `scan_timeout_ms` 4000, `on_missing` allow/block) | off |
 | [`voice`](../modules/voice/README.md) | voice bridge, `voice_busy` block | off |
 | [`voice-chat`](../modules/voice-chat/README.md) | hands-free voice: text wake phrase, spoken approval cards, echo guard (needs the voice client) | off |
 | [`approval-cards`](../modules/approval-cards/README.md) | risky actions stop and ask you yes/no (`do yes` / `do no`) instead of running | off |

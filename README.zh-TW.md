@@ -57,9 +57,9 @@ node bin/taskmote.js undo
 
 **成功的話**，`status` 會顯示任務已完成，而它列出的 `work/` 底下資料夾裡會有 `hello.txt`。每次 `undo` 會把資料夾退回一個修改，所以 `hello.txt` 會消失；沒有可復原的步驟時它會告訴你。每次復原都會印出一行指令，可以把狀態還原回來。
 
-- `do "<請求>"`：在 `work/` 下開新資料夾執行任務（`--workdir <dir>` 改用你的資料夾）。
+- `do "<請求>"`：在 bot 的資料夾 `work/bot-main` 執行任務（任務之間會保留；設 `engine.profile: "locked"` 則每個任務開新的 `work/<任務 id>`；`--workdir <dir>` 改用你的資料夾）。
 - `do` 不帶請求：續跑被中斷的任務。
-- `status`：顯示進行中任務、上一個完成的任務、復原點和已開啟的模組。
+- `status`：顯示進行中任務、上一個完成的任務、各自的資料夾、復原點和已開啟的模組。
 - `undo`：把任務資料夾退回上一個修改；再執行一次可再往前退。
 
 Windows 上 `bin\taskmote.cmd` 效果相同；把 `bin` 加入 PATH 就能直接打 `taskmote do "..."`。

@@ -78,9 +78,9 @@ node bin/taskmote.js undo
 
 **It worked if** `status` shows the task as finished and the folder it names under `work/` contains `hello.txt`. Each `undo` steps the folder back one change, so `hello.txt` goes away; when nothing is left, it says so. Every undo prints a line that brings the undone state back.
 
-- `do "<request>"` starts a task in a fresh folder under `work/` (`--workdir <dir>` uses your own).
+- `do "<request>"` starts a task in the bot's folder, `work/bot-main` (kept between tasks; with `engine.profile: "locked"` each task gets a fresh `work/<task id>`). `--workdir <dir>` uses your own.
 - `do` with no request resumes a task that was interrupted.
-- `status` shows the open task, the last finished one, undo points and the modules that are on.
+- `status` shows the open task, the last finished one, the folder each works in, undo points and the modules that are on.
 - `undo` steps the task folder back one change; run it again to go back further.
 
 On Windows, `bin\taskmote.cmd` does the same; put `bin` on your PATH to type `taskmote do "..."`.

@@ -55,7 +55,7 @@ res['do runs the task to done (exit 0, task_done, out.txt has the 2nd change)'] 
 res['two agent checkpoints were made through the guard'] = journal.filter(r => r.type === 'checkpoint').length === 2;
 
 const st = run(statusL, env);
-res['status shows last finished task, undo points 2, modules, and not the raw prompt'] = st.status === 0 && /no open task/.test(st.out) && st.out.includes(request) && /undo points: 2/.test(st.out) && /modules on: guard-base, checkpoint/.test(st.out) && !/## Current task|## History/.test(st.out);
+res['status shows last finished task, its folder, undo points 2, modules, and not the raw prompt'] = st.status === 0 && /no open task/.test(st.out) && st.out.includes(request) && st.out.includes(`folder: ${start.workdir}`) &&/undo points: 2/.test(st.out) && /modules on: guard-base, checkpoint/.test(st.out) && !/## Current task|## History/.test(st.out);
 
 const beforeUndo = read(outFile);
 const u1 = run(undoL, env);
@@ -77,7 +77,7 @@ fs.appendFileSync(path.join(d, 'state', 'journal.jsonl'), JSON.stringify({ id: '
 const refuse = run(doL, env);
 res['do "<request>" with an open task refuses and says how to resume'] = refuse.status !== 0 && /still open/.test(refuse.out) && /taskmote do/.test(refuse.out);
 const so = run(statusL, env);
-res['status shows the open task (request, steps done, last step)'] = /open task: tOPEN/.test(so.out) && /half done thing/.test(so.out) && /steps done: 0/.test(so.out) && /last step: none yet/.test(so.out);
+res['status shows the open task (request, folder, steps done, last step)'] = /open task: tOPEN/.test(so.out) && /half done thing/.test(so.out) && so.out.includes(`folder: ${path.join(d, 'work', 'tOPEN')}`) &&/steps done: 0/.test(so.out) && /last step: none yet/.test(so.out);
 
 // ---- agents cannot undo
 const inEngine = run(undoL, env, { HARNESS_TASK_ID: 'tX' });

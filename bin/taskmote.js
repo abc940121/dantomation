@@ -129,13 +129,14 @@ async function statusDirect() {
     const steps = records.filter(r => r.task_id === open.task_id && r.type === 'step');
     const done = new Set(steps.filter(s => s.status === 'done').map(s => s.step));
     const last = steps[steps.length - 1];
-    lines.push(`open task: ${open.task_id}`, `  request: ${clip(open.request)}`, `  steps done: ${done.size}`,
+    lines.push(`open task: ${open.task_id}`, `  request: ${clip(open.request)}`, `  folder: ${open.workdir || 'unknown'}`, `  steps done: ${done.size}`,
       `  last step: ${last ? `${last.step} ${last.status}${last.note ? ' - ' + clip(last.note, 60) : ''}` : 'none yet'}`,
       '  continue with: taskmote do');
   } else lines.push('no open task');
   const finished = records.filter(r => r.type === 'task_done');
   const lastDone = finished.length && records.find(r => r.type === 'task_start' && r.task_id === finished[finished.length - 1].task_id);
   lines.push(lastDone ? `last finished task: ${lastDone.task_id} - ${clip(lastDone.request)}` : 'last finished task: none');
+  if (lastDone && lastDone.workdir) lines.push(`  folder: ${lastDone.workdir}`);
   const mods = await loadModules();
   lines.push(...await M.statusLines(mods, J)); // e.g. checkpoint: undo points
   const all = Object.entries(CONFIG.modules);

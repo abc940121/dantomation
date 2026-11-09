@@ -50,6 +50,7 @@ async function report(kind, opts, settings, extra = {}) {
   try { args = buildArgs(kind, { ...opts, version: settings.version }); } catch (e) { return { ok: false, error: `ccusage: ${e.message}` }; }
   let r;
   try { r = await runner(args, { timeoutMs: settings.timeout_ms, signal: extra.signal }); } catch (e) { r = { code: null, error: e.message }; }
+  if (r && r.code === null && /^timed out/.test(String(r.error))) return { ok: false, error: `ccusage: ${r.error}. The first run downloads ccusage; try again, or raise "ccusage": { "timeout_ms" } in the config.` };
   if (!r || r.code !== 0) return { ok: false, error: r && r.code === null ? HINT : `ccusage exited ${r && r.code}: ${String((r && r.stderr) || '').trim().split('\n')[0].slice(0, 160)}` };
   try { return { ok: true, data: JSON.parse(r.stdout) }; } catch { return { ok: false, error: 'ccusage: its output was not JSON (try another version setting)' }; }
 }
