@@ -1,6 +1,6 @@
 // Copyright 2026 Milind Soni and OpenMausBot contributors
 // Licensed under the Apache License, Version 2.0 (see LICENSE-APACHE at the repo root)
-// Modified by dantomation contributors
+// Modified by taskmote contributors
 // The small actions under a message: copy, and toggle raw markdown. They show on hover, on keyboard focus and
 // on a tap (touch), as in the original; its overflow menu, reply, fork and the rest are cut.
 import { useEffect, useRef, useState, type ReactNode } from "react";

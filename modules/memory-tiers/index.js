@@ -150,7 +150,7 @@ const sweepRoute = ctx => {
   } catch (e) { return { status: 503, json: { error: e.message } }; }
 };
 
-// ---- commands: dantomation memory ...
+// ---- commands: taskmote memory ...
 const USAGE = 'usage: memory [list] | memory search <words> [--all|--core|--recall] | memory pin "<fact>"|<id> | memory unpin <id> | memory restore <id> | memory forget <id> | memory sweep';
 function bad(msg, code) { console.error(msg); process.exitCode = code || 2; return { ok: false }; }
 function refuseInTask() { console.error('core memory is curated by the person at the keyboard, not by agents (HARNESS_TASK_ID is set). Stopping.'); process.exit(6); }

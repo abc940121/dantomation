@@ -10,8 +10,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from "react";
 import type { ServerFrame, WireBot, WireMessage } from "@shared/wire";
 import { AreaContext, getAreas, type AreaApi } from "@/areas/registry";
-import { client as defaultClient, type Client } from "@/dantomation/client";
-import { startLive } from "@/dantomation/live";
+import { client as defaultClient, type Client } from "@/taskmote/client";
+import { startLive } from "@/taskmote/live";
 import { t } from "@/lib/i18n";
 
 export type Connection = "connecting" | "live" | "offline";

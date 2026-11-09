@@ -34,7 +34,7 @@ module.exports = {
     status_s: { type: 'number', default: 4, min: 0, description: 'seconds between spoken progress notes' },
     timeout_s: { type: 'number', default: 180, min: 1, description: 'give up on a reply after this many seconds' },
     reply_grace_s: { type: 'number', default: 8, min: 0, description: 'after a task ends, wait this many seconds for its final reply' },
-    api_base: { type: 'string', default: 'http://127.0.0.1:7420', description: 'the dantomation server this module talks to' },
+    api_base: { type: 'string', default: 'http://127.0.0.1:7420', description: 'the taskmote server this module talks to' },
     token: { type: 'secret', description: 'bearer token for the server API (set with: node bin/harness.js secret voice-chat token)' },
   },
 };

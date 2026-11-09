@@ -1,6 +1,6 @@
 // Copyright 2026 Milind Soni and OpenMausBot contributors
 // Licensed under the Apache License, Version 2.0 (see LICENSE-APACHE at the repo root)
-// Modified by dantomation contributors
+// Modified by taskmote contributors
 // First-run onboarding in three steps: language, meet your bots (from the snapshot), pairing a phone.
 // Derived from OMB onboarding/WelcomeFlow.tsx and MeetScreen.tsx; sign-in, ConnectAi, the tours and the mascot are dropped.
 import { useEffect, useState } from "react";

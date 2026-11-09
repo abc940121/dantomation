@@ -109,7 +109,7 @@ const route = (method, p) => mod.routes.find(r => r.method === method && r.path 
   check('boundary: imports stay inside the area, the foundation and react', !external.length, external.join('; '));
 
   // ---- licensing of the files this area copied or derived
-  const HEADER = ['Copyright 2026 Milind Soni and OpenMausBot contributors', 'Licensed under the Apache License, Version 2.0 (see LICENSE-APACHE at the repo root)', 'Modified by dantomation contributors'];
+  const HEADER = ['Copyright 2026 Milind Soni and OpenMausBot contributors', 'Licensed under the Apache License, Version 2.0 (see LICENSE-APACHE at the repo root)', 'Modified by taskmote contributors'];
   const prov = fs.readFileSync(path.join(APP, 'provenance', 'bots-settings.md'), 'utf8');
   const listed = [...prov.matchAll(/^\| (modules\/app-ui\/web\/[^ |]+) \|/gm)].map(m => m[1]);
   const wrong = listed.filter(f => !HEADER.every(h => fs.readFileSync(path.join(ROOT, f), 'utf8').split(/\r?\n/).slice(0, 3).join('\n').includes(h)));

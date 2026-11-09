@@ -24,7 +24,7 @@ module.exports = {
     return ['hello_stub', `the word "${w}" is blocked by hello-stub`];
   },
 
-  // Command: `harness hello [name]` / `dantomation hello [name]`.
+  // Command: `harness hello [name]` / `taskmote hello [name]`.
   commands: {
     // ctx.state.append writes a journal record tagged module: "hello-stub".
     async hello(args, ctx) {
@@ -46,7 +46,7 @@ module.exports = {
   // Core events: run after core's journal write; a throw is reported, never fatal.
   on: { 'task.start': () => { tasks++; } },
 
-  // Status lines for `dantomation status`.
+  // Status lines for `taskmote status`.
   // Secrets are read only through ctx.secret(key) (value or null); ctx.settings shows
   // a secret only as "configured" / "missing".
   statusLines: (J, ctx) => (ctx.secret('api_token') === null ? [] : ['hello-stub: token configured']),

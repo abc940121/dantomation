@@ -1,6 +1,6 @@
 # Module contract v3 (FROZEN)
 
-Version: **contract v6**
+Version: **contract v7**
 
 This page is the frozen list of what a module may use, plus the additions made since
 v1 (tests, logs, branch rule, manifest version). Field semantics are specified in
@@ -49,14 +49,14 @@ Manifest fields (unknown fields are a load error):
 | `priority` | order within dependency order |
 | `dependsOn` | modules reached through `ctx.api(name)` |
 | `beforeTool(ctx)` | guard hook, `null` allows, `[kind, reason]` blocks |
-| `statusLines(J, ctx)` | lines for `dantomation status` |
+| `statusLines(J, ctx)` | lines for `taskmote status` |
 | `prepareTurn(ctx)` | context strings added to the engine prompt |
 | `on` | event handlers (events below) |
 | `chooseEngine(turn)` | engine name or `null`; asked in load order, first non-null wins, 200 ms bound, throw/timeout = `null` (contract 6) |
-| `beforeReply(reply, ctx)` | returns the reply, a modified string, or `{block:true, reason}` (contract 6) |
+| `beforeReply(reply, ctx)` | returns the reply, a modified string, or `{block:true, reason}` (contract 6). `ctx.code` (contract 7) is the engine's final exit code (a number; -1 when the executable could not start or ended without an exit code, e.g. killed by a signal), alongside `ctx.task_id` |
 | `failMode` | `"open"` (default) or `"closed"`: what a throwing or timed-out `beforeReply` does (keep or block the reply) |
 | `emits` | extra event prefixes the module may emit |
-| `commands` | `harness.js <verb>` / `dantomation <verb>` |
+| `commands` | `harness.js <verb>` / `taskmote <verb>` |
 | `routes` | HTTP routes under `/m/<name>/`: `{method, path, handler, description?, access?}` |
 | `panels` | UI panels `{id, title, mount, entry}` |
 | `jobs` | background work started by `registry.startJobs(ctx)`: `{id, every, run}` or `{id, start}` |
@@ -134,6 +134,7 @@ never requires another module's folder.
 | 6 | `ctx.api(dep)`: the peer's api functions run with the peer's own ctx (`this.ctx`), not the caller's. |
 | 6 | `chooseEngine(turn)` hook: engine name or `null`, load order, first non-null wins, 200 ms bound, throw or timeout is `null`; journals `engine_choice {module, engine, reason}`. All null leaves behaviour unchanged. |
 | 6 | `beforeReply(reply, ctx)` hook with manifest `failMode` (`open` default, `closed`); time-bounded; journals `reply_hook {module, outcome}` without reply text; a block journals `reply_blocked`. |
+| 7 | `beforeReply` ctx gains `code`: the engine's final exit code (number; -1 when the executable could not start or ended without an exit code). Additive; manifest contract max is now 7; contract 2 and 6 modules keep loading. |
 | 6 | `ctx.tasks.start(bot, prompt, {workdir, forkedFrom:{task, step}})`: starts a task in a given workdir and records `forked_from {task, step}` on `queue_add` and `task_start`. |
-| 6 | `chooseEngine` takes effect only for a config `engines` entry with a string `bin` and an explicit `turn: true` (owner opt-in): it replaces the turn's engine bin/args (prompt on stdin, as `engines.run`), journals `engine_used {task_id, engine, module}` and sets `HARNESS_ENGINE_CHOSEN`. Trust difference: this engine runs without the harness guard hooks (settings, tool allowlist, protocol, strict MCP) unless its entry has `format: "claude"`, in which case the same guard flags as the default engine are appended and its output is read as stream-json. Any other format takes its trimmed plain stdout as the reply. Anything else keeps the default and journals `engine_choice_ignored {task_id, engine, module, reason}` (`not_configured`, `no_bin` or `not_turn_engine`). A spawn failure (missing executable) journals `engine_error` and `engine_exit`, and the executor lock is released. `beforeReply` sees the complete reply (clipping to 4000 chars comes after). A blocked reply shows the human `(reply withheld by <module>)`; the journal (`reply_hook`, `reply_blocked`) keeps only the module name and a fixed code (`blocked`, `hook_error`, `hook_timeout`), never the reply or a hook's free-text reason. |
+| 6 | `chooseEngine` takes effect only for a config `engines` entry with a string `bin` and an explicit `turn: true` (owner opt-in): it replaces the turn's engine bin/args (prompt on stdin, as `engines.run`), journals `engine_used {task_id, engine, module}` and sets `HARNESS_ENGINE_CHOSEN`. Trust difference: this engine runs without the harness guard hooks (settings, tool allowlist, protocol, strict MCP) unless its entry has `format: "claude"`, in which case the same guard flags as the default engine are appended and its output is read as stream-json. Any other format takes its trimmed plain stdout as the reply. Anything else keeps the default and journals `engine_choice_ignored {task_id, engine, module, reason}` (`not_configured`, `no_bin` or `not_turn_engine`). A spawn failure (missing executable) journals `engine_error` and `engine_exit`, and the executor lock is released. `beforeReply` sees the complete reply (clipping to 4000 chars comes after). A blocked reply shows the human `(reply withheld by <module>)`; the journal (`reply_hook`, `reply_blocked`) keeps only the module name and a fixed code (`blocked`, `hook_error`, `hook_timeout`), never the reply or a hook's free-text reason. When a reply is withheld (or a hook replaces it), its text is removed from the harness's engine output files for that turn (`engine-<task_id>.jsonl` and its `.stdout` or `.stderr` companion; a stream-json engine's stderr goes to `engine-<task_id>.stderr`, so the reply is read from stdout only), and the engine's own session store, if any, is outside the harness; the engine's stdout and stderr are pipes the harness copies into those files and stops copying once the engine has exited, so no descendant can write them afterwards; a process that detaches from the engine's process tree and writes elsewhere is in the engine's trust domain and out of scope. |
 | 6 | Manifest `hookTimeoutMs` (whole number of ms, >= 100; lower is refused at load): a module's own per-hook timeout. The effective timeout is `min(hookTimeoutMs, modules_hook_timeout_ms)` and applies to every per-turn and event hook of that module (not the one-off `migrate` and `uninstall` lifecycle hooks, which keep the 60 s lifecycle timeout) and to the 60 s hook time budget (sum of the beforeTool timeouts, and of the tool.done timeouts, must stay under it). Undeclared keeps the global timeout. Declare it only for hooks that are cheap synchronous checks. |

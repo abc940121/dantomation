@@ -2,7 +2,7 @@
 // A tick lists the rooms; when a group is on screen it also fetches the new messages (?since=) and the status.
 // A 404 or 403 on the list means the module is off or not allowed: the section hides and polling stops.
 import type { AreaApi, SliceDef } from "@/areas/registry";
-import { ApiError } from "@/dantomation/client";
+import { ApiError } from "@/taskmote/client";
 import type { Action } from "@/store";
 import { cursorOf, mergeMessages, pollDelay, roomMessageToWireMessage, roomToWireGroup } from "../../../../adapter/areas/rooms-map.mjs";
 import type { RoomInfo, RoomStatus, RoomsSlice } from "./types";

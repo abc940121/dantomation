@@ -1,5 +1,5 @@
 'use strict';
-// app-ui: a React chat app for the dantomation server (a port of the OpenMausBot UI).
+// app-ui: a React chat app for the taskmote server (a port of the OpenMausBot UI).
 // Off by default. Core serves the built app from ui/ at /m/app-ui/ui/; the routes below are
 // the app's API (snapshot, history, send). Area packages add routes under adapter/areas/.
 const routes = require('./adapter/routes');

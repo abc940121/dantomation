@@ -1,6 +1,6 @@
 // Per-bot drafts: kept in memory and mirrored to localStorage when it works. Our own file (MIT).
 const memory = new Map<string, string>();
-const key = (botId: string) => `dantomation.draft.${botId}`;
+const key = (botId: string) => `taskmote.draft.${botId}`;
 
 export function readDraft(botId: string): string {
   const held = memory.get(botId);

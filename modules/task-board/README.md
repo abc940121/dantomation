@@ -24,7 +24,7 @@ A worker always acts as its own actor id; the owner may force a finish or releas
 
 ## Command
 
-`dantomation taskboard [list [status]|add <title> [--id ID] [--dep ID]...|claim [id]|heartbeat <id>|done <id> [note]|fail <id> [note]|release <id>|retry <id>|remove <id>]`.
+`taskmote taskboard [list [status]|add <title> [--id ID] [--dep ID]...|claim [id]|heartbeat <id>|done <id> [note]|fail <id> [note]|release <id>|retry <id>|remove <id>]`.
 Inside a harness task the owner name is `task:<HARNESS_TASK_ID>` and `add`/`retry`/`remove` refuse.
 
 ## Events and coordination

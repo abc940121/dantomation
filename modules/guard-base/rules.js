@@ -10,7 +10,7 @@ const { SECRET_LITERAL, redact } = require('../../lib/redact');
 const KEY_NAME = /\b[A-Z0-9_]*(API_KEY|AUTH_TOKEN)\b/;
 const SECRET_FILE = /(^|[\s"'\/\\=@<])(\.env(\.[\w.-]+)?|[\w.-]*\.(pem|key|p12|pfx)|id_(rsa|ed25519|ecdsa)|\.credentials\.json|server\.token|credentials(\.json)?|\.npmrc|\.netrc|\.pgpass)(["'\s]|$)/i;
 
-const OWNER_ONLY = /HARNESS_OWNER|(harness|dantomation)(\.(js|cmd))?["']?\s+(restore|undo)\b/i;
+const OWNER_ONLY = /HARNESS_OWNER|(harness|taskmote)(\.(js|cmd))?["']?\s+(restore|undo)\b/i;
 
 function shellRules(cmd, cwd) {
   const c = cmd.replace(/\s+/g, ' ');

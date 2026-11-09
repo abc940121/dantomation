@@ -1,6 +1,6 @@
 # app-ui
 
-Optional dantomation module (off by default). A browser UI served at `/m/app-ui/ui/`, ported from the
+Optional taskmote module (off by default). A browser UI served at `/m/app-ui/ui/`, ported from the
 OpenMausBot React UI (Apache-2.0, see `LICENSE-APACHE`, `NOTICE`, root `PROVENANCE.md`). Server code, auth,
 routing and client glue are MIT.
 

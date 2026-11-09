@@ -100,8 +100,43 @@ function plainReply(file, from = 0) {
   try { return fs.readFileSync(file).subarray(from).toString('utf8').trim(); } catch { return ''; }
 }
 
+// A withheld or hook-replaced reply must not stay in the engine output files: this turn's bytes (from "from") become one marker line.
+// Best effort; earlier turns' bytes are kept.
+function withholdOutput(file, from, plain, taskId) {
+  const hook = () => { if (process.env.HARNESS_TEST_WITHHOLD_FAIL === '1' && process.env.HARNESS_TEST === '1') throw Object.assign(new Error('test'), { code: 'EPERM' }); }; // test seam: simulate an unwritable, undeletable file
+  const marker = plain ? '(reply withheld by a beforeReply hook)\n' : JSON.stringify({ type: 'withheld', reason: 'reply withheld by a beforeReply hook' }) + '\n';
+  // -> expected size after the cleanup (0 when the file was removed); throws when neither overwrite nor removal worked
+  const clean = () => {
+    try {
+      hook();
+      const keep = plain ? Buffer.alloc(0) : fs.readFileSync(file).subarray(0, from), out = Buffer.concat([keep, Buffer.from(marker)]);
+      fs.writeFileSync(file, out);
+      return out.length;
+    } catch { /* try removing the file */ }
+    hook(); fs.rmSync(file, { force: true }); return -1;
+  };
+  // The engine never holds a descriptor to this file (the harness copies its pipes and has stopped copying), so one cleanup is final.
+  try {
+    clean();
+  } catch (e) {
+    const err = String((e && e.code) || 'error');
+    try { J.append({ type: 'output_withhold_failed', task_id: taskId, file: path.basename(file), error: err }); } catch { /* journal unavailable */ }
+    try { process.stderr.write(`harness: could not remove a withheld reply from ${path.basename(file)} (${err})\n`); } catch { /* nothing more to do */ }
+  }
+}
+
+// End the engine's whole process tree. POSIX: the engine is its own process group leader, so the group is killed; Windows: taskkill /T
+// (best effort once the parent is gone). Correctness does not depend on it: descendants cannot write the output files at all.
+function killEngineTree(pid) {
+  if (!Number.isInteger(pid) || pid === process.pid) return;
+  try {
+    if (process.platform === 'win32') execFileSync('taskkill', ['/T', '/F', '/PID', String(pid)], { stdio: 'ignore' });
+    else process.kill(-pid, 'SIGKILL');
+  } catch { /* already gone */ }
+}
+
 async function runEngine(task, nonce) {
-  J.append({ type: 'engine_start', task_id: task.task_id, stripped_env: cleanEnv().stripped, resumed: !!task.resumed });
+  const startRec = J.append({ type: 'engine_start', task_id: task.task_id, stripped_env: cleanEnv().stripped, resumed: !!task.resumed });
   await M.emit(MODS, 'task.start', { task_id: task.task_id, request: task.request, workdir: task.workdir, resumed: !!task.resumed }, { task, config: CONFIG });
   const extra = await M.prepareTurn(MODS, { task_id: task.task_id, request: task.request, workdir: task.workdir, resumed: !!task.resumed });
   const notes = extra.context.map(c => `[${c.module}] ${c.text}`).join('\n');
@@ -133,7 +168,26 @@ async function runEngine(task, nonce) {
   Object.assign(spec.env, swapped ? { HARNESS_ENGINE_CHOSEN: choice.engine } : {}, { HARNESS_TASK_ID: task.task_id, HARNESS_TASK_DIR: task.workdir, HARNESS_STATE_DIR: J.STATE });
   // a plain-text turn engine's stdout (the reply) is kept apart from its stderr noise
   const plainOut = swapped && !claudeFmt, plainFile = logFile + '.stdout', plainFd = plainOut ? fs.openSync(plainFile, 'w') : -1;
-  const child = spawn(spec.bin, spec.args, { cwd: task.workdir, env: spec.env, stdio: [stdin, plainOut ? plainFd : out, out], shell: false, windowsHide: true });
+  // a stream-json engine's stderr gets its own file: reply records are read from stdout only, so stderr can never supply or split one
+  const errFile = path.join(J.STATE, `engine-${task.task_id}.stderr`), errFd = plainOut ? -1 : fs.openSync(errFile, 'w');
+  // The engine's stdout/stderr are pipes: only the harness holds the output file descriptors and copies the pipe data (synchronously,
+  // in order), so a descendant of the engine can never append to a file after the harness has stopped copying.
+  const child = spawn(spec.bin, spec.args, { cwd: task.workdir, env: spec.env, stdio: [stdin, 'pipe', 'pipe'], shell: false, windowsHide: true, detached: process.platform !== 'win32' });
+  let copying = true;
+  const ended = [];
+  const copy = (stream, fd) => {
+    if (!stream) return;
+    stream.on('data', chunk => { if (!copying) return; try { fs.writeSync(fd, chunk); } catch { /* disk write error: the output file stays as written so far */ } });
+    stream.on('error', () => { /* pipe broken */ });
+    ended.push(new Promise(r => { stream.on('close', r); stream.on('end', r); }));
+  };
+  copy(child.stdout, plainOut ? plainFd : out); copy(child.stderr, plainOut ? out : errFd);
+  const stopCopying = async () => { // after the exit: take what is already buffered, then nothing more reaches the files
+    await Promise.race([Promise.all(ended), new Promise(r => setTimeout(r, 250))]);
+    copying = false;
+    for (const s of [child.stdout, child.stderr]) try { s && s.destroy(); } catch { /* already closed */ }
+    for (const fd of [out, plainFd, errFd]) if (fd >= 0) try { fs.closeSync(fd); } catch { /* already closed */ }
+  };
   if (swapped) { child.stdin.on('error', () => { /* engine exited before reading */ }); child.stdin.end(input); }
   J.relock(EXEC_LOCK, { pids: [process.pid, child.pid].filter(Boolean), task_id: task.task_id }, nonce);
   // Exit and a spawn error (missing executable) both end the engine; the lock is held through reply hooks and the engine_exit record, then released exactly once.
@@ -144,20 +198,23 @@ async function runEngine(task, nonce) {
     child.on('error', e => { spawnError = e; finish(-1); });
     child.on('exit', finish);
   });
+  await stopCopying();
   try {
     if (spawnError) J.append({ type: 'engine_error', task_id: task.task_id, error: String(spawnError.code || 'spawn_error') });
     // Claude-format output is stream-json (last result record); any other swapped engine's reply is its trimmed plain stdout.
     const raw = swapped && !claudeFmt ? plainReply(plainFile) : lastReply(logFile, logFrom);
     let reply = M.scrubAll(raw).trim(); // hide every loaded module's secrets and secret patterns; hooks see the complete reply, clipping comes after
     if (reply) {
-      const rh = await M.beforeReply(MODS, reply, { task_id: task.task_id });
+      const rh = await M.beforeReply(MODS, reply, { task_id: task.task_id, code: typeof code === 'number' ? code : -1 }); // a signal kill has no exit code
+      if (rh.blocked || rh.reply !== reply) { killEngineTree(child.pid); withholdOutput(logFile, logFrom, false, task.task_id); withholdOutput(plainOut ? plainFile : errFile, 0, true, task.task_id); } // blocked, or redacted/modified by a hook: the raw text must not stay on disk
       if (rh.blocked) { J.append({ type: 'reply_blocked', task_id: task.task_id, module: rh.module, code: rh.code || 'blocked' }); reply = `(reply withheld by ${rh.module})`; } // never the reply or the hook's reason
       else reply = M.scrubAll(rh.reply).trim().slice(0, 4000);
     }
     if (reply) J.append({ type: 'reply', task_id: task.task_id, text: reply });
     J.append({ type: 'engine_exit', task_id: task.task_id, code });
+    // task.end runs while the executor lock is still held: no other process can resume the task and start a new turn before the hooks have read this turn's records
+    await M.emit(MODS, 'task.end', { task_id: task.task_id, code, workdir: task.workdir, turn_start: startRec && startRec.id }, { task, code, config: CONFIG });
   } finally { if (!J.unlock(EXEC_LOCK, nonce)) J.unlockLater(EXEC_LOCK, nonce, undefined, 'harness exec lock'); } // long-lived worker: do not strand the lock
-  await M.emit(MODS, 'task.end', { task_id: task.task_id, code, workdir: task.workdir }, { task, code, config: CONFIG });
   const open = J.openTask(J.readAll().records);
   const finished = !open || open.task_id !== task.task_id;
   console.log(finished ? `task ${task.task_id} done` : `task ${task.task_id} not finished (exit ${code}); run: harness resume`);

@@ -1,6 +1,6 @@
 // Copyright 2026 Milind Soni and OpenMausBot contributors
 // Licensed under the Apache License, Version 2.0 (see LICENSE-APACHE at the repo root)
-// Modified by dantomation contributors
+// Modified by taskmote contributors
 //
 // The call screen. Derived from the phase display of OpenMausBot's CallView (listening, sending, working, speaking),
 // reduced to a full-screen status view: no provider menu, no composer, no desktop calls. Presentation only; the

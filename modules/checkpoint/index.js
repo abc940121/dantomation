@@ -69,7 +69,7 @@ function undoInfo(J) {
   return t ? { task: t.task_id, count: undoStack(J.readAll().records, t.task_id).length } : { task: null, count: 0 };
 }
 
-// dantomation undo: the person's own command. Agents are kept out twice: it
+// taskmote undo: the person's own command. Agents are kept out twice: it
 // refuses when HARNESS_TASK_ID is set (the engine env), and guard-base blocks
 // agent commands that name the verb. No HARNESS_OWNER needed.
 function undoCmd(args, { J, EXEC_LOCK }) {
@@ -92,7 +92,7 @@ function undoCmd(args, { J, EXEC_LOCK }) {
   } catch (e) { console.error(`undo failed: ${e.message.split(String.fromCharCode(10))[0]}`); process.exitCode = 1; } finally { J.unlock(EXEC_LOCK, l.nonce); }
 }
 
-// dantomation status line.
+// taskmote status line.
 function statusLines(Jn) {
   const u = undoInfo(Jn);
   return [`undo points: ${u.count}${u.task ? ` (task ${u.task})` : ''}`];

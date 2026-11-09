@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 'use strict';
-// Draws the dantomation monogram (a "d": ring plus stem) and writes the PNG icons with only node:zlib.
+// Draws the taskmote monogram (a "d": ring plus stem) and writes the PNG icons with only node:zlib.
 // Deterministic: same bytes every run. Our own art (MIT).
 //   node modules/app-ui/tools/make-icons.js [outDir]     default: modules/app-ui/web/public/icons
 const fs = require('fs');

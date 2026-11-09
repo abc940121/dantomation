@@ -1,0 +1,10 @@
+{
+  "name": "taskmote",
+  "private": true,
+  "description": "Taskmote (formerly dantomation): a local task harness.",
+  "license": "MIT",
+  "bin": {
+    "taskmote": "bin/taskmote.js",
+    "dantomation": "bin/dantomation.js"
+  }
+}

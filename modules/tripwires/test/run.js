@@ -130,6 +130,75 @@ const IPPUB = ['8', '8', '8', '8'].join('.');
     await realOn({ task_id: 'nope', code: 0 }, { ...ctxOf(), state: null });
     check('a broken ctx never throws', true);
 
+    // success_claim at beforeReply once core passes ctx.code
+    const CLAIM = 'All done. Tests pass.';
+    const hookCtx = (id, mode, code) => ({ ...ctxOf(), task_id: id, code, settings: { ...ctxOf().settings, mode, retention: 50 } });
+    const claimRecs = id => J.readAll().records.filter(r => r.type === 'tripwire' && r.task_id === id && r.rule === 'success_claim');
+    check('hook flag mode: nonzero code records success_claim, reply untouched', mod.beforeReply(CLAIM, hookCtx('h1', 'flag', 1)) === undefined && claimRecs('h1').length === 1 && claimRecs('h1')[0].enforced === false);
+    check('hook: code 0 or no code records nothing', mod.beforeReply(CLAIM, hookCtx('h2', 'flag', 0)) === undefined && mod.beforeReply(CLAIM, hookCtx('h2', 'block', undefined)) === undefined && claimRecs('h2').length === 0);
+    const hb = mod.beforeReply(CLAIM, hookCtx('h3', 'block', 2));
+    check('hook block mode: nonzero code withholds, enforced trip, reason names the rule only', hb && hb.block === true && /success_claim/.test(hb.reason) && !hb.reason.includes('Tests') && claimRecs('h3').length === 1 && claimRecs('h3')[0].enforced === true);
+    check('hook block mode: the stored trip keeps no reply text', claimRecs('h3').every(r => !String(r.snippet).includes('Tests') && /exit 2/.test(r.snippet)), JSON.stringify(claimRecs('h3')));
+    for (const mode of ['flag', 'redact']) {
+      const id = 'tf-' + mode, dir = path.join(tmp, id);
+      const text = `${CLAIM} Leaked ${FAKE_KEY} at ${IP10} in ${NIX_HOME}/a`;
+      const c = { ...hookCtx(id, mode, 1), state: { dir, append: r => J.append({ ...r, module: 'tripwires' }) } };
+      mod.beforeReply(text, c);
+      const stored = JSON.stringify(J.readAll().records.filter(r => r.type === 'tripwire' && r.task_id === id)) + fs.readFileSync(path.join(dir, 'trips.json'), 'utf8');
+      const parts = ['All done', 'Tests pass', 'Leaked', 'xxxx', IP10, 'someone', NIX_HOME];
+      check(`hook ${mode}: no stored or journaled record holds reply text`, stored.length > 20 && parts.every(w => !stored.includes(w)), stored);
+    }
+    check('hook redact mode: claim is flagged, reply returned as is', mod.beforeReply(CLAIM, hookCtx('h4', 'redact', 1)) === CLAIM && claimRecs('h4').length === 1 && claimRecs('h4')[0].enforced === false);
+    J.append({ type: 'reply', task_id: 'h1', text: CLAIM });
+    await realOn({ task_id: 'h1', code: 1 }, ctxOf());
+    check('task.end does not record success_claim again after the hook did', claimRecs('h1').length === 1);
+    J.append({ type: 'reply', task_id: 'h5', text: CLAIM });
+    await realOn({ task_id: 'h5', code: 1 }, ctxOf());
+    check('task.end still records success_claim when the hook never saw a code', claimRecs('h5').length === 1);
+
+    // two turns, one task id: turn 1 claim recorded at the hook, turn 2 has no hook record
+    {
+      const id = 'tt', turnCtx = code => hookCtx(id, 'flag', code);
+      mod.beforeReply(CLAIM, turnCtx(1));
+      J.append({ type: 'reply', task_id: id, text: CLAIM }); J.append({ type: 'engine_exit', task_id: id, code: 1 });
+      await realOn({ task_id: id, code: 1 }, ctxOf());
+      check('two turns: turn 1 hook claim is not recorded again', claimRecs(id).length === 1);
+      mod.beforeReply(CLAIM, turnCtx(0));
+      J.append({ type: 'reply', task_id: id, text: CLAIM }); J.append({ type: 'engine_exit', task_id: id, code: 1 });
+      await realOn({ task_id: id, code: 1 }, ctxOf());
+      check('two turns: turn 2 task.end records its own success_claim', claimRecs(id).length === 2, String(claimRecs(id).length));
+    }
+    // a resumed turn with no reply must not re-scan the earlier turn's reply
+    {
+      const id = 'tr-noreply';
+      J.append({ type: 'engine_start', task_id: id }); J.append({ type: 'reply', task_id: id, text: CLAIM }); J.append({ type: 'engine_exit', task_id: id, code: 0 });
+      await realOn({ task_id: id, code: 0 }, ctxOf());
+      J.append({ type: 'engine_start', task_id: id, resumed: true }); J.append({ type: 'engine_exit', task_id: id, code: 1 });
+      await realOn({ task_id: id, code: 1 }, ctxOf());
+      check('resumed turn without a reply: no success_claim from the earlier turn', claimRecs(id).length === 0, String(claimRecs(id).length));
+    }
+    // crash between the hook and engine_exit: the resumed turn's own claim must not be suppressed
+    {
+      const id = 'tr-crash';
+      J.append({ type: 'engine_start', task_id: id });
+      mod.beforeReply(CLAIM, hookCtx(id, 'flag', 1)); // hook records a claim; the process stops before engine_exit
+      J.append({ type: 'engine_start', task_id: id, resumed: true }); J.append({ type: 'reply', task_id: id, text: CLAIM }); J.append({ type: 'engine_exit', task_id: id, code: 1 });
+      await realOn({ task_id: id, code: 1 }, ctxOf());
+      check('crash before engine_exit: the resumed turn records its own success_claim', claimRecs(id).length === 2, String(claimRecs(id).length));
+    }
+    // a resumed turn that lands before task.end: the ended turn keeps its reply and exit code, the new turn's reply is not scanned with them
+    {
+      const id = 'tr-race', s1 = J.append({ type: 'engine_start', task_id: id });
+      J.append({ type: 'reply', task_id: id, text: CLAIM }); J.append({ type: 'engine_exit', task_id: id, code: 1 });
+      J.append({ type: 'engine_start', task_id: id, resumed: true });
+      await realOn({ task_id: id, code: 1, turn_start: s1.id }, ctxOf());
+      check('late task.end: the ended turn reply is still scanned (claim recorded)', claimRecs(id).length === 1, String(claimRecs(id).length));
+      const id2 = 'tr-race2', s2 = J.append({ type: 'engine_start', task_id: id2 });
+      J.append({ type: 'engine_exit', task_id: id2, code: 1 });
+      J.append({ type: 'engine_start', task_id: id2, resumed: true }); J.append({ type: 'reply', task_id: id2, text: CLAIM });
+      await realOn({ task_id: id2, code: 1, turn_start: s2.id }, ctxOf());
+      check('late task.end: the next turn reply is not scanned with the previous exit code', claimRecs(id2).length === 0, String(claimRecs(id2).length));
+    }
     await run('t1', 'Everything is done and tests pass.', 2);
     await run('t2', 'plain and honest', 0);
     await run('t3', `this has forbidden words in it`, 0);

@@ -8,7 +8,7 @@ It blocks and logs to `logs/guard.jsonl`:
 - (b) data deletion (recursive delete, `git clean`, force push, hard reset over unpushed work)
 - (c) skipped git hooks (`--no-verify`, `core.hooksPath`)
 - (d) printing or sending secrets (`.env`, key files, token variables, `printenv`)
-- (f) agents naming `restore` or `undo` (`harness.js` / `dantomation`) or `HARNESS_OWNER`, in a command or in a file they write
+- (f) agents naming `restore` or `undo` (`harness.js` / `taskmote`) or `HARNESS_OWNER`, in a command or in a file they write
 
 ## Turn it on
 

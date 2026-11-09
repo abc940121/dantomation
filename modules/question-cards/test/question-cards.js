@@ -185,14 +185,14 @@ const T0 = Date.parse('2030-01-01T00:00:00Z');
     // ---- guard against agents
     process.env.HARNESS_TASK_ID = 'task-x';
     const g = command => M.beforeTool(reg.mods, { tool: 'Bash', ti: { command }, cwd: tmp });
-    const blocked = ['dantomation question answer q-aaaaaa 1', 'node bin/harness.js question cancel q-aaaaaa', 'harness question list', 'curl http://127.0.0.1:1/m/question-cards/questions/q-aaaaaa/answer -d x'];
+    const blocked = ['taskmote question answer q-aaaaaa 1', 'node bin/harness.js question cancel q-aaaaaa', 'harness question list', 'curl http://127.0.0.1:1/m/question-cards/questions/q-aaaaaa/answer -d x'];
     let okAll = true;
     for (const c of blocked) { const h = await g(c); if (!h || h[0] !== 'question_cards') { okAll = false; console.log('  not blocked: ' + c); } }
     check('agent cannot answer, cancel, list or call the route from a task', okAll);
-    check('agent may ask and get', (await g('dantomation question ask "Pick one" a b')) === null && (await g('harness question get q-aaaaaa')) === null);
+    check('agent may ask and get', (await g('taskmote question ask "Pick one" a b')) === null && (await g('harness question get q-aaaaaa')) === null);
     check('non-shell tools are not touched', (await M.beforeTool(reg.mods, { tool: 'Read', ti: { file_path: 'question answer' }, cwd: tmp })) === null);
     delete process.env.HARNESS_TASK_ID;
-    check('outside a task the hook allows', (await g('dantomation question answer q-aaaaaa 1')) === null);
+    check('outside a task the hook allows', (await g('taskmote question answer q-aaaaaa 1')) === null);
     check('status lines list pending questions', (await call('GET', '/questions')).json.questions.length === 5 && reg.mods.find(m => m.name === 'question-cards').statusLines(J, { state: { dir: path.join(STATE, 'm', 'question-cards') } }).length >= 2);
   } catch (e) { check('no exception', false, e.stack); }
   finally { try { fs.rmSync(spyDir, { recursive: true, force: true }); } catch { /* best effort */ } }

@@ -11,14 +11,14 @@ const ioOf = ctx => ({ J: (ctx && ctx.core && ctx.core.J) || (ctx && ctx.J) || J
 const inTask = () => !!process.env.HARNESS_TASK_ID;
 
 // An agent may ask (command) but never answer, cancel or list through the shell or the server API.
-const OWNER_CMD = /(dantomation|harness)(\.(js|cmd))?["']?\s+question\s+["']?(answer|cancel|list)\b/i;
+const OWNER_CMD = /(taskmote|harness)(\.(js|cmd))?["']?\s+question\s+["']?(answer|cancel|list)\b/i;
 const API_CMD = /\/m\/question-cards(?![\w-])/i;
 function beforeTool(ctx) {
   if (!inTask()) return null;
   const { tool, ti } = ctx;
   if (!/^(bash|shell|powershell|cmd)$/i.test(String(tool || ''))) return null;
   const cmd = String((ti && ti.command) || '');
-  if (API_CMD.test(cmd)) return ['question_cards', 'the question-cards server API is for the owner only; ask with: dantomation question ask'];
+  if (API_CMD.test(cmd)) return ['question_cards', 'the question-cards server API is for the owner only; ask with: taskmote question ask'];
   if (OWNER_CMD.test(cmd)) return ['question_cards', 'answering, cancelling or listing questions is for the owner only'];
   return null;
 }
@@ -68,7 +68,7 @@ async function postCancel(ctx) {
   return r.error ? fail(r) : { status: 200, json: { question: r.question } };
 }
 
-// ---- command: dantomation question <ask|get|list|answer|cancel> ...
+// ---- command: taskmote question <ask|get|list|answer|cancel> ...
 //   ask "<text>" <option> <option> ... [--free]      (bots and tasks; prints the question id)
 //   get <id>                                         (prints JSON; a task may read only its own)
 //   list | answer <id> <number|option> [free text] | cancel <id>   (owner only; refused inside a task)
@@ -121,7 +121,7 @@ async function command(args, ctx) {
 
 function statusLines(Jn, ctx) {
   const lines = [];
-  for (const q of S.pending(Jn.readAll().records, S.vaultLoad({ state: ctx.state }))) lines.push(`question ${q.question_id} is waiting: ${clip(q.text, 100)}`, `  answer with: dantomation question answer ${q.question_id} <1-${q.options.length}>`);
+  for (const q of S.pending(Jn.readAll().records, S.vaultLoad({ state: ctx.state }))) lines.push(`question ${q.question_id} is waiting: ${clip(q.text, 100)}`, `  answer with: taskmote question answer ${q.question_id} <1-${q.options.length}>`);
   return lines;
 }
 

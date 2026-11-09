@@ -1,6 +1,6 @@
 // Copyright 2026 Milind Soni and OpenMausBot contributors
 // Licensed under the Apache License, Version 2.0 (see LICENSE-APACHE at the repo root)
-// Modified by dantomation contributors
+// Modified by taskmote contributors
 // Derived subset of OpenMausBot's wire types: the bot, message and frame shapes this app
 // uses. Frames are made in the browser by adapter/frames.mjs from the core event stream.
 

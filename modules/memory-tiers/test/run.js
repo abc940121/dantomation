@@ -307,21 +307,21 @@ const L = { core_chars: 100, recall_max: 3, recall_days: 14, archive_max: 4 };
     // ---- guard
     const guard = (tool, command, env) => { const old = process.env.HARNESS_TASK_ID; if (env) process.env.HARNESS_TASK_ID = 't1'; else delete process.env.HARNESS_TASK_ID; return M.beforeTool(reg.mods, { tool, ti: { command }, input: {} }).finally(() => { if (old === undefined) delete process.env.HARNESS_TASK_ID; else process.env.HARNESS_TASK_ID = old; }); };
     check('guard: agent pin blocked', !!(await guard('Bash', 'node bin/harness.js memory pin "x"', true)));
-    check('guard: agent forget blocked', !!(await guard('Bash', 'dantomation memory forget m-aaaaaaaaaaaa', true)));
-    check('guard: agent restore blocked', !!(await guard('Bash', 'dantomation memory restore m-aaaaaaaaaaaa', true)));
+    check('guard: agent forget blocked', !!(await guard('Bash', 'taskmote memory forget m-aaaaaaaaaaaa', true)));
+    check('guard: agent restore blocked', !!(await guard('Bash', 'taskmote memory restore m-aaaaaaaaaaaa', true)));
     check('guard: agent server call blocked', !!(await guard('Bash', 'curl -X POST http://127.0.0.1:1/m/memory-tiers/core', true)));
-    check('guard: agent memory search allowed', (await guard('Bash', 'dantomation memory search login', true)) === null);
+    check('guard: agent memory search allowed', (await guard('Bash', 'taskmote memory search login', true)) === null);
     check('guard: node require of the store blocked', !!(await guard('Bash', 'node -e "require(\'./modules/memory-tiers/store\').update()"', true)));
     check('guard: paths to the data dir and secrets file blocked', !!(await guard('Bash', 'echo x > state/m/memory-tiers/data.json', true)) && !!(await guard('PowerShell', 'Get-Content state\\secrets\\memory-tiers.json', true)));
     check('guard: bare memory write verbs blocked without the binary name', !!(await guard('Bash', 'node bin/x.js memory pin "y"', true)) && !!(await guard('Bash', 'memory sweep', true)));
-    check('guard: memory list stays allowed', (await guard('Bash', 'dantomation memory list', true)) === null);
+    check('guard: memory list stays allowed', (await guard('Bash', 'taskmote memory list', true)) === null);
     process.env.HARNESS_TASK_ID = 'agent-task';
     const wr = direct.beforeTool({ tool: 'Write', ti: { file_path: 'state/m/memory-tiers/data.json' } });
     const wr2 = direct.beforeTool({ tool: 'Write', ti: { file_path: 'notes/todo.txt' } });
     const rd = direct.beforeTool({ tool: 'Read', ti: { file_path: 'state/m/memory-tiers/data.json' } });
     delete process.env.HARNESS_TASK_ID;
     check('guard: file-write tool aimed at the store blocked; other writes and reads pass', !!wr && wr2 === null && rd === null);
-    check('guard: owner (no task) allowed', (await guard('Bash', 'dantomation memory pin "x"', false)) === null);
+    check('guard: owner (no task) allowed', (await guard('Bash', 'taskmote memory pin "x"', false)) === null);
 
     // ---- commands in real processes
     const cfgFile = path.join(tmp, 'cfg.json');

@@ -76,9 +76,10 @@ const PUB = j('abc', '940121');
 const PUB_ID = `${PUB} <55071314+${PUB}@users.noreply.github.com>`;
 const PUB_LINES = [`author ${PUB_ID}`, `committer ${PUB_ID}`, `Copyright (c) 2026 ${PUB}`, `+Copyright (c) 2026 ${PUB}`];
 // The project name and its repo URL are allowed too (the URL holds the handle).
-const NAME = j('dan', 'tomation');
-const URL_OK = new RegExp(`(https?://)?github\\.com/${PUB}/${NAME}`, 'gi');
-const NAME_OK = new RegExp(NAME, 'gi');
+const NAME = j('task', 'mote');
+const OLD_NAME = j('dan', 'tomation'); // the former name: still in history, in the alias shims and in provenance lines
+const URL_OK = new RegExp(`(https?://)?github\\.com/${PUB}/(${NAME}|${OLD_NAME})`, 'gi');
+const NAME_OK = new RegExp(`${NAME}|${OLD_NAME}`, 'gi');
 const strip = text => text.split('\n').filter(l => !PUB_LINES.includes(l.replace(/\r$/, ''))).join('\n').replace(URL_OK, '').replace(NAME_OK, '');
 const hits = [];
 const scan = (where, text) => { text = strip(text); for (const [name, re] of FORBID) if (re.test(text)) hits.push(`${where}: ${name}`); };
@@ -88,7 +89,7 @@ const scan = (where, text) => { text = strip(text); for (const [name, re] of FOR
   const hit = t => { const n = hits.length; scan('control', t); const r = hits.length > n; hits.length = n; return r; };
   const ctl = {
     'control: the bare first name still hits': hit(`hello ${j('D', 'an')} there`),
-    'control: the project name does not hit': !hit(NAME) && !hit(NAME[0].toUpperCase() + NAME.slice(1)),
+    'control: the project name does not hit': !hit(NAME) && !hit(NAME[0].toUpperCase() + NAME.slice(1)) && !hit(OLD_NAME),
     'control: the project URL does not hit': !hit(`github.com/${PUB}/${NAME}`) && !hit(`https://github.com/${PUB}/${NAME}`),
     'control: the old handle still hits': hit(j('dan', '0203')),
     'control: the handle alone still hits': hit(`user ${PUB}`) && hit(`github.com/${PUB}/other`),

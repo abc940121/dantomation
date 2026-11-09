@@ -21,14 +21,14 @@ In your config: `"modules": { "goals": true }`. Optional section `goals`:
 
 ## Commands (owner only, refused inside a task, except `goal show` and `goal interview`)
 
-    dantomation goal set "<your words>" [--done "<text>"] [--out "<text>"]
-    dantomation goal interview          questions still open on the card
-    dantomation goal edit [--done ".."] [--out ".."]   (clears the confirmation)
-    dantomation goal confirm            needs done and out of scope
-    dantomation goal [show] | done | drop
-    dantomation lesson add "<what went wrong>" --missed "<which check missed it>" --fix "<fix>"
-    dantomation lesson repeat <id>
-    dantomation lesson list             status (new | kept | stale) and weekly counts
+    taskmote goal set "<your words>" [--done "<text>"] [--out "<text>"]
+    taskmote goal interview          questions still open on the card
+    taskmote goal edit [--done ".."] [--out ".."]   (clears the confirmation)
+    taskmote goal confirm            needs done and out of scope
+    taskmote goal [show] | done | drop
+    taskmote lesson add "<what went wrong>" --missed "<which check missed it>" --fix "<fix>"
+    taskmote lesson repeat <id>
+    taskmote lesson list             status (new | kept | stale) and weekly counts
 
 ## Routes (owner access, under `/m/goals/`)
 

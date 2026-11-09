@@ -42,7 +42,7 @@ function req(port, method, p, body, token) {
 
 async function main() {
   const res = {}, note = (k, v, extra) => { res[k] = !!v; if (!v) console.log(`  FAIL ${k}${extra ? ': ' + extra : ''}`); };
-  const srv = spawn(process.execPath, [path.join(ROOT, 'bin', 'dantomation.js'), 'serve'], { env, cwd: work, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+  const srv = spawn(process.execPath, [path.join(ROOT, 'bin', 'taskmote.js'), 'serve'], { env, cwd: work, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
   let out = ''; srv.stdout.on('data', d => { out += d; }); srv.stderr.on('data', d => { out += d; });
   try {
     const info = await waitFor(() => { const i = readJson(path.join(state, 'server.json')); return i && i.pid === srv.pid && i.port ? i : null; }, 20000);

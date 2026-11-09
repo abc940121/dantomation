@@ -1,6 +1,6 @@
 // Copyright 2026 Milind Soni and OpenMausBot contributors
 // Licensed under the Apache License, Version 2.0 (see LICENSE-APACHE at the repo root)
-// Modified by dantomation contributors
+// Modified by taskmote contributors
 import { useEffect, useRef, type RefObject } from "react";
 
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]';

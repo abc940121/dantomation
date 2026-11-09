@@ -1,7 +1,7 @@
 // Notification preferences, read state and the browser notification. Our own file (MIT).
 // Everything in localStorage sits in try/catch: the page works without it.
-const PREFS_KEY = "dantomation.cards.prefs";
-const READ_KEY = "dantomation.cards.read";
+const PREFS_KEY = "taskmote.cards.prefs";
+const READ_KEY = "taskmote.cards.read";
 const READ_CAP = 300;
 
 export interface Prefs {

@@ -1,6 +1,6 @@
 // Copyright 2026 Milind Soni and OpenMausBot contributors
 // Licensed under the Apache License, Version 2.0 (see LICENSE-APACHE at the repo root)
-// Modified by dantomation contributors
+// Modified by taskmote contributors
 //
 // Microphone capture and voice-activity detection for the hands-free call. Derived from the mic and endpointer parts
 // of OpenMausBot's fish-speech.ts (RMS level, 3 loud frames = speech start). No audio ever leaves the page here: the

@@ -1,5 +1,5 @@
 'use strict';
-// Minimal client for the dantomation server API v0 (node:http only, no dependencies).
+// Minimal client for the taskmote server API v0 (node:http only, no dependencies).
 //   json(method, path, body)  -> {status, body}
 //   sse(path, onEvent, onOpen, onError) -> {close()}; onEvent({type, data})
 const http = require('http');

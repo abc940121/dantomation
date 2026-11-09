@@ -29,7 +29,7 @@ The protocol (`config/protocol.md`, rule 8) asks the agent to add one citation t
 - Tool results in the engine stream log `state/engine-<task>.jsonl`, read at task end. The agent's own text is never evidence.
 - The journal gets one `claim_audit` record: counts, a short sha256 of the outputs, and up to 20 unverified sentences with the reason. Outputs themselves are not copied.
 
-`node bin/dantomation.js status` shows `claims: N checked, M unverified` and one line per unverified sentence.
+`node bin/taskmote.js status` shows `claims: N checked, M unverified` and one line per unverified sentence.
 
 `auditReport(reportText, evidence)` in `audit.js` is a pure function and is exported.
 
@@ -53,7 +53,7 @@ Set `reviewer_engine` to a model from a different family than the worker. When a
 
 Status values: `pending_engine` (questions stored, no reviewer client yet), `answered`, `refused` (same or unknown family), `engine_error`.
 
-Engine call (contract 6): set `engine_name` to an entry of config `engines` (owner-listed `bin`/`args`); the module then runs it through `ctx.engines.run` with the questions on stdin (timeout `reviewer_timeout_ms`, capped at config `modules_hook_timeout_ms` minus 500 ms because the call runs inside the `task.end` hook, default 5000, so raise that config value for a slow reviewer; core also caps it at `engines_max_timeout_ms`) and expects a JSON array of answers or numbered lines. With less than 600 ms of hook budget no call is made and the questions stay pending. Every word of `engine_name` and its `engines` entry (`bin`, `args`) is classified: at least one must name `reviewer_engine`'s family and none may name another, else the interrogation is refused (name the family in the engine name if its `bin` does not show it, e.g. `gpt-reviewer`). Only the questions are sent, never journal records or command outputs; the reviewer's citations are checked against the real evidence, so invented ones are stored as unsupported. With `engine_name` empty nothing is sent: questions are stored, a client from `ctx.api('claim-audit').setReviewerClient(fn)` is used when present, or read them with `node bin/harness.js claim-questions <task_id>` and record answers from an outside run with `node bin/harness.js claim-answer <task_id> "<answer 1>" "<answer 2>" "<answer 3>"`.
+Engine call (contract 6): set `engine_name` to an entry of config `engines` (owner-listed `bin`/`args`); the module then runs it through `ctx.engines.run` with the questions on stdin (timeout `reviewer_timeout_ms`, capped at config `modules_hook_timeout_ms` minus 500 ms because the call runs inside the `task.end` hook, default 5000, so raise that config value for a slow reviewer; core also caps it at `engines_max_timeout_ms`) and expects a JSON array of answers or numbered lines. With less than 600 ms of hook budget no call is made and the questions stay pending. The reviewer's family is never guessed on this path: it comes only from `engines.<engine_name>.family`, a string you write (for example `anthropic`, `openai`, `google`, `deepseek`; compared lowercased and trimmed). The worker's family is the `worker_family` setting (default `anthropic`). The two must differ. The engine name, `bin` and `args` are not read. It fails closed: a missing entry, or a `family` that is missing, empty or not a string, or an empty `worker_family`, refuses the interrogation (`engines.<name>.family not set`) and no questions leave the module. Example: `"engines": { "gpt-rev": { "bin": "codex", "args": ["exec"], "family": "openai" } }`. Only the questions are sent, never journal records or command outputs; the reviewer's citations are checked against the real evidence, so invented ones are stored as unsupported. With `engine_name` set, a client registered with `setReviewerClient` is never used: if `ctx.engines.run` is unavailable the questions stay `pending_engine` and nothing is sent. With `engine_name` empty no engine is run (this legacy path never reads `engines`; its family check is the name check of `reviewer_engine` against `worker_model`): questions are stored and, after that name check passes, handed to a client registered with `ctx.api('claim-audit').setReviewerClient(fn)` if there is one; otherwise read them with `node bin/harness.js claim-questions <task_id>` and record answers from an outside run with `node bin/harness.js claim-answer <task_id> "<answer 1>" "<answer 2>" "<answer 3>"`.
 
 ### Settings (config section `claim_audit`)
 | Key | Default | Meaning |
@@ -62,10 +62,12 @@ Engine call (contract 6): set `engine_name` to an entry of config `engines` (own
 | `reviewer_engine` | "" | reviewer model name; empty = interrogation off |
 | `engine_name` | "" | config `engines` entry used for the reviewer call; empty = no engine call |
 | `reviewer_timeout_ms` | 60000 | reviewer call time limit |
-| `worker_model` | "claude" | worker model name; reviewer family must differ |
+| `worker_family` | "anthropic" | owner-written worker family; must differ from `engines.<engine_name>.family` |
+| `worker_model` | "claude" | worker model name; used only by the name check when `engine_name` is empty |
 | `high_stakes_words` | deploy, production, migrat, delete, security, payment, release, push, merge, ... | words that make a verified claim also questioned |
 
 ### Turn it on
     "modules": { "claim-audit": true }
-    "claim_audit": { "reviewer_engine": "gpt-5", "worker_model": "claude-sonnet" }
+    "claim_audit": { "reviewer_engine": "gpt-5", "engine_name": "gpt-rev", "worker_family": "anthropic" }
+    "engines": { "gpt-rev": { "bin": "codex", "args": ["exec"], "family": "openai" } }
 The second line is optional. Off by default.

@@ -93,7 +93,7 @@ function fake() {
     t.eng.say('dev', 'hi @Example');
     await waitFor(() => fk.reqs.length === 1); await sleep(50);
     const q = sent();
-    check('session id is <prefix><roomId> (default prefix)', q.body.session_id === 'dantomation:dev' && q.body.user === 'dantomation:dev' && q.headers['x-session-id'] === 'dantomation:dev', q.body);
+    check('session id is <prefix><roomId> (default prefix)', q.body.session_id === 'taskmote:dev' && q.body.user === 'taskmote:dev' && q.headers['x-session-id'] === 'taskmote:dev', q.body);
     check('member_id is sent', q.body.member_id === 'example-bot');
     check('bearer token is sent as a header only', q.headers.authorization === 'Bearer ' + TOKEN && !q.raw.includes(TOKEN));
     check('posts to /v1/chat/completions', q.url === '/v1/chat/completions');
@@ -346,7 +346,7 @@ function fake() {
     const p2 = t.eng.say('dev', 'actually never mind @Bob');
     await waitFor(() => fk.reqs.some(r => r.body && r.body.abort === true));
     const ab = fk.reqs.find(r => r.body && r.body.abort === true);
-    check('owner speech: the endpoint gets {abort:true} for the session', ab && ab.body.session_id === 'dantomation:dev' && ab.headers.authorization === 'Bearer ' + TOKEN, ab && ab.body);
+    check('owner speech: the endpoint gets {abort:true} for the session', ab && ab.body.session_id === 'taskmote:dev' && ab.headers.authorization === 'Bearer ' + TOKEN, ab && ab.body);
     await p; await p2; await sleep(30);
     check('owner speech: the aborted reply is cancelled locally (nothing posted by the bot)', !t.store.all().some(r => r.speaker === 'ex'));
   }
@@ -444,7 +444,7 @@ function fake() {
     await t.eng.say('dev', '@Example hello there'); await waitFor(() => fk.reqs.length > n);
     const b = sent().body;
     check('body: every top-level field present', ['messages', 'session_id', 'chat_id', 'room_id', 'from', 'text', 'mentions', 'is_host', 'prev_turns', 'hop'].every(k => k in b), Object.keys(b));
-    check('body: chat_id is the session id, room_id the room', b.chat_id === 'dantomation:dev' && b.chat_id === b.session_id && b.room_id === 'dev');
+    check('body: chat_id is the session id, room_id the room', b.chat_id === 'taskmote:dev' && b.chat_id === b.session_id && b.room_id === 'dev');
     check('body: human trigger is hop 0, host, from the human', b.hop === 0 && b.is_host === true && b.from.id === 'human' && b.from.is_bot === false && b.text === '@Example hello there');
     check('body: mentions list the addressed member ids', JSON.stringify(b.mentions) === JSON.stringify(['ex']), b.mentions);
     check('body: prev_turns are {id, from, text, hop}, oldest first, at most 6', Array.isArray(b.prev_turns) && b.prev_turns.length <= 6 && b.prev_turns.every(x => x.id && x.from && 'name' in x.from && 'is_bot' in x.from && typeof x.text === 'string' && x.hop === 0) && b.prev_turns[0].text === 'plain earlier line');

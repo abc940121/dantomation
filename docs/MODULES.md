@@ -100,7 +100,7 @@ Runs in the guard before every tool call, in load order, with ctx `{input, tool,
 `beforeTool({ tool, ti, settings }) { return ti.command === settings.block_word ? ['hello_stub', 'blocked'] : null; }`
 
 ### `statusLines(J, ctx) -> [string]`
-Adds lines to `dantomation status`, in load order. It must only read. A throw becomes one line saying so.
+Adds lines to `taskmote status`, in load order. It must only read. A throw becomes one line saying so.
 `statusLines: J => ['undo points: 3']`
 
 ### `prepareTurn(ctx) -> null | { context: [string] }`
@@ -116,7 +116,7 @@ Extra event prefixes this module may emit besides its own name. A module emits t
 `emits: ['card']`
 
 ### `commands`: `{ <verb>: fn(args, ctx) }`
-Adds `harness.js <verb>` and `dantomation <verb>`, with ctx `{J, EXEC_LOCK, settings, state, api, emit, config}`. The first module in load order to claim a verb wins. A command may print and may exit with a code. It runs as the person at the keyboard, so a command for owners only must refuse when `HARNESS_TASK_ID` is set.
+Adds `harness.js <verb>` and `taskmote <verb>`, with ctx `{J, EXEC_LOCK, settings, state, api, emit, config}`. The first module in load order to claim a verb wins. A command may print and may exit with a code. It runs as the person at the keyboard, so a command for owners only must refuse when `HARNESS_TASK_ID` is set.
 `commands: { hello(args, ctx) { console.log(ctx.settings.greeting); } }`
 
 ### `routes`: `[{ method, path, handler, description?, access? }]`
@@ -177,7 +177,7 @@ What this module contributes for others to pick up, each a list of `{id, descrip
 `provides: { tools: [{ id: 'hello', description: 'says hello' }] }`
 
 ### `stateVersion`: integer >= 1, and `migrate(fromVersion, ctx)`, optional
-The layout version of the module's files in `state/m/<name>/`. Core keeps the stored version in `state/m/<name>/state-version.json` (none = 0). On load (`harness start`, `resume` and the dantomation verbs, through `registry.migrate()` / `migrate(mods)`), when the stored version is below `stateVersion`, `migrate(from, ctx)` runs once, timed (60 s), and the new version is written; a `module_migrated` record follows when `from` was above 0. A failure, or a stored version above the module's, is an error and `start`/`resume` exit 2. `migrate` requires `stateVersion`. The guard does not run migrations.
+The layout version of the module's files in `state/m/<name>/`. Core keeps the stored version in `state/m/<name>/state-version.json` (none = 0). On load (`harness start`, `resume` and the taskmote verbs, through `registry.migrate()` / `migrate(mods)`), when the stored version is below `stateVersion`, `migrate(from, ctx)` runs once, timed (60 s), and the new version is written; a `module_migrated` record follows when `from` was above 0. A failure, or a stored version above the module's, is an error and `start`/`resume` exit 2. `migrate` requires `stateVersion`. The guard does not run migrations.
 `stateVersion: 2, async migrate(from, { state }) { if (from === 1) {/* rewrite files in state.dir */} }`
 
 ### `uninstall(ctx)`, optional
@@ -239,10 +239,10 @@ Handlers in the same process see each other's emits; a nested emit deeper than 8
 
 It serves no HTTP. The server (S1) and UI (S2) are built on it.
 
-## From a skill: dantomation new-module
+## From a skill: taskmote new-module
 
 ```
-dantomation new-module <name> [--from-skill <dir>] [--force]
+taskmote new-module <name> [--from-skill <dir>] [--force]
 ```
 
 Turns a skill folder (`SKILL.md` with YAML frontmatter `name` and `description`,

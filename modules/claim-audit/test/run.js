@@ -59,7 +59,7 @@ const { checkCitations } = require('../audit');
   // ---- task.end in-process
   const events = [];
   const mkCtx = settings => ({
-    settings: { ask_to_cite: true, reviewer_engine: '', worker_model: 'claude', high_stakes_words: I.DEFAULT_STAKES, ...settings },
+    settings: { ask_to_cite: true, reviewer_engine: '', worker_model: 'claude', worker_family: 'anthropic', high_stakes_words: I.DEFAULT_STAKES, ...settings },
     state: { dir: path.join(tmp, 'mstate'), append: r => J.append({ ...r, module: 'claim-audit' }) },
     emit: async (e, p) => { events.push([e, p]); },
   });
@@ -129,9 +129,18 @@ const { checkCitations } = require('../audit');
   check('engine failure: engine_error, task end still returns', lastQ('t-err').status === 'engine_error');
   mod.api.setReviewerClient(null);
 
+  // engine_name set but no runner: a registered client must not be used
+  let cliCalls = 0;
+  mod.api.setReviewerClient(async () => { cliCalls++; return ['a', 'b', 'c']; });
+  seed('t-norun', rep);
+  await mod.on['task.end']({ task_id: 't-norun' }, { ...mkCtx({ reviewer_engine: 'gpt-5', engine_name: 'gpt-rev' }), config: { engines: { 'gpt-rev': { bin: 'runner', family: 'openai' } } } });
+  check('engine_name set, no engines.run: client not called, pending_engine', cliCalls === 0 && lastQ('t-norun').status === 'pending_engine');
+  mod.api.setReviewerClient(null);
+
   // ctx.engines.run path (contract 6)
   const calls = [];
-  const withEngines = (settings, fn) => ({ ...mkCtx(settings), engines: { run: fn } });
+  const ENG = fam => ({ 'gpt-rev': { bin: 'runner', family: fam }, rev: { bin: 'runner', family: fam } });
+  const withEngines = (settings, fn) => ({ ...mkCtx(settings), engines: { run: fn }, config: { engines: ENG(' OpenAI ') } });
   seed('t-eng', rep);
   await mod.on['task.end']({ task_id: 't-eng' }, withEngines({ reviewer_engine: 'gpt-5', engine_name: 'gpt-rev' }, async (name, input, o) => { calls.push({ name, input, o }); return { output: 'ok: ' + JSON.stringify(['[t:"Tests: 5/5 passed"]', 'no idea', '[j:s1-write]']), code: 0 }; }));
   check('engines.run called with name, prompt, timeout', calls.length === 1 && calls[0].name === 'gpt-rev' && /Which line shows/.test(calls[0].input) && calls[0].o.timeoutMs === 4500);
@@ -144,35 +153,34 @@ const { checkCitations } = require('../audit');
   check('engines.run rejection: engine_error', lastQ('t-eng3').status === 'engine_error');
   seed('t-eng6', rep);
   let seenMs = 0;
-  await mod.on['task.end']({ task_id: 't-eng6' }, { ...withEngines({ reviewer_engine: 'gpt-5', engine_name: 'gpt-rev' }, async (n, i, o) => { seenMs = o.timeoutMs; return { output: '[]', code: 0 }; }), config: { modules_hook_timeout_ms: 90000 } });
+  await mod.on['task.end']({ task_id: 't-eng6' }, { ...withEngines({ reviewer_engine: 'gpt-5', engine_name: 'gpt-rev' }, async (n, i, o) => { seenMs = o.timeoutMs; return { output: '[]', code: 0 }; }), config: { modules_hook_timeout_ms: 90000, engines: ENG('openai') } });
   check('reviewer timeout: setting wins when the hook budget is larger', seenMs === 60000);
   seed('t-eng7', rep);
   let n7 = 0;
-  await mod.on['task.end']({ task_id: 't-eng7' }, { ...withEngines({ reviewer_engine: 'gpt-5', engine_name: 'gpt-rev' }, async () => { n7++; return { output: '[]', code: 0 }; }), config: { modules_hook_timeout_ms: 500 } });
+  await mod.on['task.end']({ task_id: 't-eng7' }, { ...withEngines({ reviewer_engine: 'gpt-5', engine_name: 'gpt-rev' }, async () => { n7++; return { output: '[]', code: 0 }; }), config: { modules_hook_timeout_ms: 500, engines: ENG('openai') } });
   check('hook budget too small: no engine call, stays pending_engine', n7 === 0 && lastQ('t-eng7').status === 'pending_engine');
-  seed('t-eng8', rep);
-  let n8 = 0;
-  await mod.on['task.end']({ task_id: 't-eng8' }, { ...withEngines({ reviewer_engine: 'gpt-5', engine_name: 'gpt-rev' }, async () => { n8++; return { output: '[]', code: 0 }; }), config: { engines: { 'gpt-rev': { bin: 'claude', args: ['-p'] } } } });
-  check('engine_name runs the worker family: refused, no call', n8 === 0 && lastQ('t-eng8').status === 'refused');
-  seed('t-eng9', rep);
-  let n9 = 0;
-  await mod.on['task.end']({ task_id: 't-eng9' }, { ...withEngines({ reviewer_engine: 'gpt-5', engine_name: 'gpt-rev' }, async () => { n9++; return { output: '[]', code: 0 }; }), config: { engines: { 'gpt-rev': { bin: 'codex', args: ['exec'] } } } });
-  check('engine_name runs the labelled family: called', n9 === 1);
-  seed('t-eng11', rep);
-  let n11 = 0;
-  await mod.on['task.end']({ task_id: 't-eng11' }, { ...withEngines({ reviewer_engine: 'gpt-5', engine_name: 'rev' }, async () => { n11++; return { output: '[]', code: 0 }; }), config: { engines: { rev: { bin: 'runner', args: ['--fast'] } } } });
-  check('engine nothing identifies: refused as unknown, no call', n11 === 0 && lastQ('t-eng11').status === 'refused');
-  seed('t-eng12', rep);
-  let n12 = 0;
-  await mod.on['task.end']({ task_id: 't-eng12' }, { ...withEngines({ reviewer_engine: 'gpt-5', engine_name: 'rev' }, async () => { n12++; return { output: '[]', code: 0 }; }), config: { engines: { rev: { bin: 'runner', args: ['--model gpt-5 claude-opus'] } } } });
-  check('two families inside one arg string: refused, no call', n12 === 0 && lastQ('t-eng12').status === 'refused');
-  for (const [lbl, spec] of [['bin', { bin: 'claude', args: ['-p'] }], ['model arg', { bin: 'runner', args: ['--model', 'claude-opus'] }]]) {
-    const tid = 't-eng10-' + lbl.replace(' ', '');
+  const runWith = async (tid, cfgEngines, settings = {}) => {
     seed(tid, rep);
-    let n10 = 0;
-    await mod.on['task.end']({ task_id: tid }, { ...withEngines({ reviewer_engine: 'gpt-5', engine_name: 'gpt-reviewer' }, async () => { n10++; return { output: '[]', code: 0 }; }), config: { engines: { 'gpt-reviewer': { ...spec } } } });
-    check('reviewer-looking name hiding a worker-family ' + lbl + ': refused, no call', n10 === 0 && lastQ(tid).status === 'refused');
+    let n = 0;
+    await mod.on['task.end']({ task_id: tid }, { ...withEngines({ reviewer_engine: 'gpt-5', engine_name: 'gpt-rev', ...settings }, async () => { n++; return { output: '[]', code: 0 }; }), config: { engines: cfgEngines } });
+    return n;
+  };
+  check('family set and different: questions sent', await runWith('t-fam1', { 'gpt-rev': { bin: 'runner', family: 'openai' } }) === 1 && lastQ('t-fam1').status !== 'refused');
+  check('family compared lowercased and trimmed', await runWith('t-fam2', { 'gpt-rev': { family: '  Google ' } }) === 1);
+  check('same family as worker_family: refused, no call', await runWith('t-fam3', { 'gpt-rev': { family: 'Anthropic' } }) === 0 && lastQ('t-fam3').status === 'refused');
+  check('same family against a custom worker_family: refused', await runWith('t-fam3b', { 'gpt-rev': { family: 'openai' } }, { worker_family: 'OpenAI' }) === 0 && lastQ('t-fam3b').status === 'refused');
+  check('missing engines entry: refused, no call', await runWith('t-fam4', {}) === 0 && lastQ('t-fam4').status === 'refused');
+  check('refusal reason is engines.<name>.family not set', mod.statusLines(J).some(l => /interrogation: refused \(engines\.gpt-rev\.family not set\)/.test(l)) || (lastQ('t-fam4').reason === 'engines.gpt-rev.family not set'));
+  for (const [lbl, fv] of [['missing', undefined], ['empty', ''], ['blank', '   '], ['number', 5], ['array', ['openai']], ['null', null]]) {
+    const tid = 't-fam5-' + lbl;
+    const spec = { bin: 'codex', args: ['exec'] };
+    if (fv !== undefined) spec.family = fv;
+    check(lbl + ' family: refused, no call', await runWith(tid, { 'gpt-rev': spec }) === 0 && lastQ(tid).status === 'refused');
   }
+  check('empty worker_family: refused, no call', await runWith('t-fam6', { 'gpt-rev': { family: 'openai' } }, { worker_family: '' }) === 0 && lastQ('t-fam6').status === 'refused');
+  check('name/bin/args that look like the worker family no longer matter', await runWith('t-fam7', { 'gpt-rev': { bin: 'claude', args: ['--model', 'claude-opus'], family: 'openai' } }) === 1);
+  check('a worker-looking engine name does not matter either', await runWith('t-fam8', { 'claude-opus': { bin: 'claude', family: 'openai' } }, { engine_name: 'claude-opus' }) === 1);
+  check('a reviewer-looking name cannot stand in for family', await runWith('t-fam9', { 'gpt-rev': { bin: 'codex', args: ['exec'] } }) === 0);
   seed('t-eng5', rep);
   await mod.on['task.end']({ task_id: 't-eng5' }, withEngines({ reviewer_engine: 'gpt-5', engine_name: 'gpt-rev' }, async () => ({ output: '1. [j:s1-write]', code: 1 })));
   check('engines.run non-zero exit: engine_error, not answered', lastQ('t-eng5').status === 'engine_error');
@@ -181,7 +189,7 @@ const { checkCitations } = require('../audit');
   await mod.on['task.end']({ task_id: 't-eng4' }, withEngines({ reviewer_engine: 'gpt-5' }, async () => { calls.push({}); return { output: '[]' }; }));
   check('engine_name empty: engines.run not used, stays pending_engine', calls.length === before && lastQ('t-eng4').status === 'pending_engine');
   seed('t-eng5', rep);
-  await mod.on['task.end']({ task_id: 't-eng5' }, withEngines({ reviewer_engine: 'claude-opus', engine_name: 'gpt-rev' }, async () => { calls.push({}); return { output: '[]' }; }));
+  await mod.on['task.end']({ task_id: 't-eng5' }, { ...withEngines({ reviewer_engine: 'gpt-5', engine_name: 'gpt-rev' }, async () => { calls.push({}); return { output: '[]' }; }), config: { engines: ENG('anthropic') } });
   check('same family: refused before any engine call', calls.length === before && lastQ('t-eng5').status === 'refused');
 
   seed('t-clean', 'Tests pass [t:"Tests: 5/5 passed"].');
@@ -213,7 +221,7 @@ const { checkCitations } = require('../audit');
     const env = { ...process.env, HARNESS_CONFIG: cfg, HARNESS_STATE_DIR: path.join(dir, 'state'), HARNESS_LOG_DIR: path.join(dir, 'logs'),
       HARNESS_WORK_DIR: path.join(dir, 'work'), HARNESS_ENGINE_SCRIPT: path.join(ROOT, 'test', 'fake-engine.js'), HARNESS_FAKE_DELAY_MS: '0', HARNESS_FAKE_STREAM: stream };
     delete env.HARNESS_OWNER; delete env.HARNESS_TASK_ID; delete env.HARNESS_TASK_DIR; delete env.HARNESS_FAKE_GUARD;
-    const run = a => spawnSync(process.execPath, [path.join(ROOT, 'bin', /^claim-/.test(a[0]) ? 'harness.js' : 'dantomation.js'), ...a], { env, encoding: 'utf8', timeout: 60000 });
+    const run = a => spawnSync(process.execPath, [path.join(ROOT, 'bin', /^claim-/.test(a[0]) ? 'harness.js' : 'taskmote.js'), ...a], { env, encoding: 'utf8', timeout: 60000 });
     const s = run(['do', 'evidence task']);
     const st = run(['status']);
     let recs = [];

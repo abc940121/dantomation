@@ -6,7 +6,7 @@
   const S = D.create();
   const RM = window.DantoRooms;
   const rooms = { list: [], msgs: [], busy: false }; // stays empty (and invisible) while the rooms module is off
-  const TOKEN_KEY = 'dantomation.token';
+  const TOKEN_KEY = 'taskmote.token';
   const ui = { view: null, all: false, targets: new Set(), openChips: new Set(), confirmUndo: null, cardMsg: {}, busyCards: new Set(), conn: 'connecting', needAuth: false, room: RM.roomFromSearch(location.search) };
   const $ = id => document.getElementById(id);
 

@@ -54,10 +54,10 @@ function classify(tool, ti, settings, dir, cwd) {
 }
 
 // An agent spelling of the owner's answer verb is refused outright.
-const ANSWER_CMD = /(dantomation|harness)(\.(js|cmd))?["']?\s+(do|answer)\s+["']?\s*(yes|y|no|n|ok|okay|approve|deny|stop|cancel|card-|是|好|可以|確定|同意|不)/i;
+const ANSWER_CMD = /(taskmote|harness)(\.(js|cmd))?["']?\s+(do|answer)\s+["']?\s*(yes|y|no|n|ok|okay|approve|deny|stop|cancel|card-|是|好|可以|確定|同意|不)/i;
 
 // The server API answers cards, stops and undoes too: an agent may not call it either.
-const API_CMD = /\/api\/(cards|chat|tasks(\/[^\s\/]+\/(undo|stop|resume))?)(?![\w-])|dantomation(\.js)?["']?\s+(serve|token)/i;
+const API_CMD = /\/api\/(cards|chat|tasks(\/[^\s\/]+\/(undo|stop|resume))?)(?![\w-])|taskmote(\.js)?["']?\s+(serve|token)/i;
 
 // io for cards.js: journal reads, this module's state (writes) and emit.
 const ioOf = ctx => ({ J: (ctx && ctx.core && ctx.core.J) || (ctx && ctx.J) || J, state: ctx.state, emit: ctx.emit });
@@ -72,7 +72,7 @@ async function decide(ctx) {
   const { tool, ti, cwd, settings } = ctx;
   const task = process.env.HARNESS_TASK_ID;
   if (!task) return null;
-  if (isShell(tool) && API_CMD.test(String((ti && ti.command) || ''))) return ['approval_cards', 'the dantomation server API is for the owner only'];
+  if (isShell(tool) && API_CMD.test(String((ti && ti.command) || ''))) return ['approval_cards', 'the taskmote server API is for the owner only'];
   if (isShell(tool) && ANSWER_CMD.test(String((ti && ti.command) || ''))) return ['approval_cards', 'answering an approval card is for the owner only'];
   const rule = classify(tool, ti || {}, settings, process.env.HARNESS_TASK_DIR, cwd);
   if (!rule) return null;
@@ -109,7 +109,7 @@ async function record(io, card, text, src) {
   return a;
 }
 
-// dantomation do <yes|no> [card-id]: the owner's answer. Returns {handled, resume, code}.
+// taskmote do <yes|no> [card-id]: the owner's answer. Returns {handled, resume, code}.
 async function answer(args, ctx) {
   const io = ioOf(ctx), j = io.J;
   await K.sweep(io);
@@ -124,15 +124,15 @@ async function answer(args, ctx) {
     card = open.find(c => c.card_id === idm[0].toLowerCase());
     if (!card) { console.log(`no pending card ${idm[0]}. Pending: ${open.map(c => c.card_id).join(', ')}`); return { handled: true, resume: false, code: 3 }; }
   } else if (open.length > 1) {
-    console.log(`${open.length} cards are pending (${open.map(c => c.card_id).join(', ')}); answer one: dantomation do "yes <card id>" or "no <card id>"`);
+    console.log(`${open.length} cards are pending (${open.map(c => c.card_id).join(', ')}); answer one: taskmote do "yes <card id>" or "no <card id>"`);
     return { handled: true, resume: false, code: 3 };
   }
   const show = `card ${card.card_id}: ${card.summary}`;
-  if (!rest) { console.log(`waiting for your answer on ${show}\nanswer with: dantomation do yes   |   dantomation do no`); return { handled: true, resume: false, code: 3 }; }
+  if (!rest) { console.log(`waiting for your answer on ${show}\nanswer with: taskmote do yes   |   taskmote do no`); return { handled: true, resume: false, code: 3 }; }
   const a = await record(io, card, rest, K.source({ where: 'cli' }));
   if (a === 'timeout') { console.log(`${show} had already expired; it was denied (timeout)`); return { handled: true, resume: true, code: 0 }; }
   if (a === 'unclear') {
-    console.log(`Your answer was unclear, so nothing was approved. Still waiting on ${show}\nanswer with: dantomation do yes   |   dantomation do no`);
+    console.log(`Your answer was unclear, so nothing was approved. Still waiting on ${show}\nanswer with: taskmote do yes   |   taskmote do no`);
     return { handled: true, resume: false, code: 3 };
   }
   console.log(`${a === 'yes' ? 'approved' : 'denied'} ${show}; resuming the task`);
@@ -144,10 +144,10 @@ function statusLines(Jn) {
   const lines = [];
   for (const c of K.fold(Jn.readAll().records).values()) {
     if (c.state !== 'pending') continue;
-    if (K.isExpired(c)) { lines.push(`card ${c.card_id}: expired, counts as no (${c.summary}); resume with: dantomation do`); continue; }
+    if (K.isExpired(c)) { lines.push(`card ${c.card_id}: expired, counts as no (${c.summary}); resume with: taskmote do`); continue; }
     lines.push(`approval card ${c.card_id} is waiting: ${c.summary}`, `  expires: ${c.expires_at}`);
     if (c.unclear) lines.push(`  last answer was unclear (${c.unclear}x); nothing is approved`);
-    lines.push('  answer with: dantomation do yes   |   dantomation do no');
+    lines.push('  answer with: taskmote do yes   |   taskmote do no');
   }
   return lines;
 }

@@ -245,12 +245,12 @@ const STAGES = [
         try { return await M.beforeTool(reg.mods, { tool, ti: { command }, input: {} }); }
         finally { if (old === undefined) delete process.env.HARNESS_TASK_ID; else process.env.HARNESS_TASK_ID = old; }
       };
-      check('guard: agent define blocked', !!(await guard('Bash', 'dantomation sop define x --stage "a::b"', true)));
+      check('guard: agent define blocked', !!(await guard('Bash', 'taskmote sop define x --stage "a::b"', true)));
       check('guard: agent run blocked', !!(await guard('Bash', 'harness sop run flow', true)));
-      check('guard: agent cancel and remove blocked', !!(await guard('Bash', 'dantomation sop cancel r-1', true)) && !!(await guard('PowerShell', 'dantomation.cmd sop remove flow', true)));
+      check('guard: agent cancel and remove blocked', !!(await guard('Bash', 'taskmote sop cancel r-1', true)) && !!(await guard('PowerShell', 'taskmote.cmd sop remove flow', true)));
       check('guard: agent server call blocked (any verb)', !!(await guard('Bash', 'curl http://127.0.0.1:1/m/sop-pipeline/sops/flow/run -X POST', true)) && !!(await guard('Bash', 'curl http://127.0.0.1:1/m/sop-pipeline/runs', true)));
-      check('guard: agent may read (sop list/status)', !(await guard('Bash', 'dantomation sop list', true)) && !(await guard('Bash', 'dantomation sop status', true)));
-      check('guard: the owner is not blocked', !(await guard('Bash', 'dantomation sop run flow', false)));
+      check('guard: agent may read (sop list/status)', !(await guard('Bash', 'taskmote sop list', true)) && !(await guard('Bash', 'taskmote sop status', true)));
+      check('guard: the owner is not blocked', !(await guard('Bash', 'taskmote sop run flow', false)));
       check('guard: unrelated agent command not blocked', !(await guard('Bash', 'npm test', true)));
     }
 

@@ -1,6 +1,6 @@
 // Copyright 2026 Milind Soni and OpenMausBot contributors
 // Licensed under the Apache License, Version 2.0 (see LICENSE-APACHE at the repo root)
-// Modified by dantomation contributors
+// Modified by taskmote contributors
 // The per-bot settings dialog: display name, color, description, hidden in the sidebar. Derived from OMB
 // BotSettingsDialog.tsx and bot-settings/IdentitySection.tsx; the avatar generator, engine and cloud sections are gone.
 // Saves go to the module (overrides), then the snapshot is reloaded so the sidebar shows the change.

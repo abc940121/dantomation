@@ -2,7 +2,7 @@
 'use strict';
 // claim-audit: auditReport rules, 20 seeded reports (10 honest, 10 fake) against a
 // realistic fake evidence set, module-off behaviour, and an end-to-end fake-engine
-// task whose audit shows up in `dantomation status`. Needs the claim-audit module
+// task whose audit shows up in `taskmote status`. Needs the claim-audit module
 // enabled (SKIP otherwise). Runs real processes in temp dirs only.
 const fs = require('fs');
 const os = require('os');
@@ -113,8 +113,8 @@ function run(on) {
   const env = { ...process.env, HARNESS_CONFIG: cfg, HARNESS_STATE_DIR: path.join(dir, 'state'), HARNESS_LOG_DIR: path.join(dir, 'logs'),
     HARNESS_WORK_DIR: path.join(dir, 'work'), HARNESS_ENGINE_SCRIPT: path.join(ROOT, 'test', 'fake-engine.js'), HARNESS_FAKE_DELAY_MS: '0', HARNESS_FAKE_STREAM: stream };
   delete env.HARNESS_OWNER; delete env.HARNESS_TASK_ID; delete env.HARNESS_TASK_DIR; delete env.HARNESS_FAKE_GUARD;
-  const s = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'dantomation.js'), 'do', 'claim audit task'], { env, encoding: 'utf8', timeout: 60000 });
-  const st = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'dantomation.js'), 'status'], { env, encoding: 'utf8', timeout: 60000 });
+  const s = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'taskmote.js'), 'do', 'claim audit task'], { env, encoding: 'utf8', timeout: 60000 });
+  const st = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'taskmote.js'), 'status'], { env, encoding: 'utf8', timeout: 60000 });
   let recs = [];
   try { recs = fs.readFileSync(path.join(dir, 'state', 'journal.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l)); } catch { /* none */ }
   return { s, status: st.stdout, recs, types: recs.map(r => r.type) };

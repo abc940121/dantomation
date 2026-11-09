@@ -1,6 +1,6 @@
 // Copyright 2026 Milind Soni and OpenMausBot contributors
 // Licensed under the Apache License, Version 2.0 (see LICENSE-APACHE at the repo root)
-// Modified by dantomation contributors
+// Modified by taskmote contributors
 // The settings modal: a left nav of every registered 'settings-page' view, the page on the right, a search box.
 // Derived from OMB SettingsModal.tsx (frame, nav, search, focus trap); the store, cloud pages and glass look are gone.
 import { useMemo, useRef, useState } from "react";

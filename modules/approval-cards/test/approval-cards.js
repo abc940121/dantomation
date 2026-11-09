@@ -4,7 +4,7 @@
 // approves exactly that input once, a changed input needs a new card, no and timeout
 // deny, a crash before the answer keeps the one pending card, guard-base hard blocks
 // stay hard blocks. Needs the approval-cards module enabled (SKIP otherwise).
-// The guard hook and the dantomation verbs run as real processes; HARNESS_NOW is the clock seam.
+// The guard hook and the taskmote verbs run as real processes; HARNESS_NOW is the clock seam.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -12,7 +12,7 @@ const { spawnSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..', '..', '..');
 const GUARD = path.join(ROOT, 'guards', 'guard.js');
-const DANT = path.join(ROOT, 'bin', 'dantomation.js');
+const DANT = path.join(ROOT, 'bin', 'taskmote.js');
 const cur = require(path.join(ROOT, 'lib', 'config')).load();
 const { parseAnswer } = require('../parse');
 const results = [];
@@ -138,7 +138,7 @@ check('a paid API call by URL asks (shell and fetch tool)', blocked('curl https:
 check('a rule added in config (deploy-site) asks', blocked('deploy-site --prod'));
 check('rm inside the task folder passes; rm outside asks', hook('rm notes.txt', 't5').status === 0 && hook('rm ../elsewhere/notes.txt', 't5').status === 2 && hook('rm /etc/hosts', 't5').status === 2);
 check('ordinary commands (ls, node script, git commit) pass', ['ls', 'node build.js', 'git commit -m x', 'npm test'].every(c => hook(c, 't5').status === 0));
-check('an agent cannot answer a card (guard blocks the spelling)', ['node bin/dantomation.js do yes', 'dantomation do "yes card-abc123"', 'node bin/harness.js answer yes'].every(c => { const r = hook(c, 't5'); return r.status === 2; }));
+check('an agent cannot answer a card (guard blocks the spelling)', ['node bin/taskmote.js do yes', 'taskmote do "yes card-abc123"', 'node bin/harness.js answer yes'].every(c => { const r = hook(c, 't5'); return r.status === 2; }));
 const selfAnswer = dant(['do', 'yes'], { HARNESS_TASK_ID: 't5' });
 check('the answer verb refuses inside an engine (HARNESS_TASK_ID set)', selfAnswer.status === 6 && /not by agents/.test(selfAnswer.stderr));
 check('outside an engine (no HARNESS_TASK_ID) the hook does not ask', spawnSync(process.execPath, [GUARD], { input: JSON.stringify({ session_id: 's', tool_name: 'Bash', tool_input: { command: CMD }, cwd: work }), env: base, encoding: 'utf8' }).status === 0);

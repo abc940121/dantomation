@@ -101,7 +101,7 @@ const types = effects => effects.map(e => e.type);
   // manifest
   const manifest = JSON.parse(fs.readFileSync(path.join(PUB, 'manifest.webmanifest'), 'utf8'));
   check('manifest: start_url and scope are relative', manifest.start_url === './' && manifest.scope === './' && manifest.display === 'standalone');
-  check('manifest: name is dantomation', manifest.name === 'dantomation' && manifest.short_name === 'dantomation');
+  check('manifest: name is taskmote', manifest.name === 'taskmote' && manifest.short_name === 'taskmote');
   const srcs = (manifest.icons || []).map(i => i.src);
   check('manifest: icons are relative and exist', srcs.length >= 2 && srcs.every(s => !/^(\/|[a-z]+:)/i.test(s) && fs.existsSync(path.join(PUB, s))), srcs.join());
   check('manifest: has 192 and 512 png icons', ['192x192', '512x512'].every(sz => manifest.icons.some(i => i.sizes === sz && i.type === 'image/png')));

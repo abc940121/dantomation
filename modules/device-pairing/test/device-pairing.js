@@ -131,7 +131,7 @@ const req = (port, method, p, body, token, extra) => new Promise((res, rej) => {
   fs.writeFileSync(path.join(state2, 'server.token'), ownerTok, { mode: 0o600 });
   fs.writeFileSync(path.join(state2, 'secrets', 'voice-chat.json'), JSON.stringify({ token: ownerTok }), { mode: 0o600 });
   fs.writeFileSync(cfgFile, JSON.stringify({ owner_name: 'Tester', modules: { 'device-pairing': true, 'approval-cards': true, 'chat-ui': true, 'voice-chat': true }, server: { port: port0, tick_ms: 50 }, voice_chat: { api_base: `http://127.0.0.1:${port0}` } }));
-  const srv = spawn(process.execPath, [path.join(ROOT, 'bin', 'dantomation.js'), 'serve'], { env, cwd: base, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+  const srv = spawn(process.execPath, [path.join(ROOT, 'bin', 'taskmote.js'), 'serve'], { env, cwd: base, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
   let out = ''; srv.stdout.on('data', d => { out += d; }); srv.stderr.on('data', d => { out += d; });
   const info = await waitFor(() => { try { const i = JSON.parse(fs.readFileSync(path.join(state2, 'server.json'), 'utf8')); return i.pid === srv.pid && i.port ? i : null; } catch { return null; } });
   if (!info) { console.log('FAIL server did not start: ' + out); process.exit(1); }

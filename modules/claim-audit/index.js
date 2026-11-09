@@ -7,7 +7,7 @@
 const J = require('../../lib/journal');
 const { auditReport, checkCitations } = require('./audit');
 const { collect } = require('./evidence');
-const { checkDifferent, familyOf } = require('./family');
+const { checkDifferent } = require('./family');
 const I = require('./interrogate');
 
 const clip = (s, n) => { s = String(s || '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 3) + '...' : s; };
@@ -53,25 +53,28 @@ function parseAnswers(out, n) {
   return Array.from({ length: Math.min(n, Math.max(res.length, 0)) }, (_, i) => res[i] || '');
 }
 
+// Owner-written family string: lowercased and trimmed; anything else is '' (not set).
+const ownerFamily = v => (typeof v === 'string' ? v.trim().toLowerCase() : '');
+
 async function interrogate({ task_id, claims, evidence, settings, state, engines, config }) {
   const engineName = String(settings.engine_name || '').trim();
   const engine = String(settings.reviewer_engine || '').trim() || engineName;
   if (!engine) return null;
   const questions = I.makeQuestions(claims, settings.high_stakes_words);
   if (!questions.length) return null;
-  let fam = checkDifferent(engine, settings.worker_model);
-  // The family check must cover the engine that really runs: every word of engine_name and its config
-  // entry (bin, args) is classified on its own. Any known family other than the reviewer's refuses, so a
-  // reviewer-looking name cannot hide a worker-family bin or model argument, and at least one word must
-  // name the reviewer's family, so an engine nothing identifies is refused as unknown.
-  if (fam.ok && engineName) {
+  // Through a configured engine the family is ONLY what the owner wrote in config engines.<name>.family
+  // (and settings.worker_family for the worker). Nothing is guessed from names, bin or args. Missing or
+  // empty means refused. Without engine_name (stored questions / outside client) the older name check stays.
+  let fam;
+  if (engineName) {
     const spec = config && config.engines && typeof config.engines === 'object' && Object.prototype.hasOwnProperty.call(config.engines, engineName) ? config.engines[engineName] : null;
-    const words = [engineName, spec && spec.bin, ...(spec && Array.isArray(spec.args) ? spec.args : [])].filter(x => typeof x === 'string').join(' ').split(/\s+/).filter(Boolean);
-    const fams = new Set(words.map(familyOf));
-    const other = [...fams].find(f => f !== 'unknown' && f !== fam.reviewer);
-    if (other) fam = { ...fam, ok: false, reason: `engine_name runs a ${other} engine, not ${fam.reviewer}` };
-    else if (!fams.has(fam.reviewer)) fam = { ...fam, ok: false, reason: 'engine_name family unknown (name its family in the engine name, bin or args)' };
-  }
+    const reviewerFam = spec && typeof spec === 'object' ? ownerFamily(spec.family) : '';
+    const workerFam = ownerFamily(settings.worker_family);
+    if (!reviewerFam) fam = { ok: false, reason: `engines.${engineName}.family not set`, reviewer: 'unknown', worker: workerFam || 'unknown' };
+    else if (!workerFam) fam = { ok: false, reason: 'worker_family not set', reviewer: reviewerFam, worker: 'unknown' };
+    else if (reviewerFam === workerFam) fam = { ok: false, reason: `reviewer and worker are both ${reviewerFam}`, reviewer: reviewerFam, worker: workerFam };
+    else fam = { ok: true, reason: '', reviewer: reviewerFam, worker: workerFam };
+  } else fam = checkDifferent(engine, settings.worker_model);
   const base = { task_id, ts: new Date().toISOString(), reviewer: engine, reviewer_family: fam.reviewer, worker_family: fam.worker, questions };
   if (!fam.ok) {
     // Same or unknown family: no questions leave this module. Kept only as a refusal line.
@@ -82,7 +85,8 @@ async function interrogate({ task_id, claims, evidence, settings, state, engines
   I.save(state.dir, { ...base, status: 'pending_engine', answers: [] });
   state.append({ type: 'claim_interrogation', task_id, status: 'pending_engine', questions: questions.length, reviewer_family: fam.reviewer });
   const viaEngines = !!(engineName && engines && typeof engines.run === 'function');
-  if (!viaEngines && !reviewerClient) return I.load(state.dir, task_id);
+  // With engine_name set, the family check covered the configured engine, not a client: never use the client.
+  if (!viaEngines && (engineName || !reviewerClient)) return I.load(state.dir, task_id);
   const timeoutMs = reviewerTimeout(settings, config);
   if (viaEngines && !timeoutMs) return I.load(state.dir, task_id); // hook budget too small for a call: stays pending_engine
   let answers;
@@ -182,9 +186,10 @@ module.exports = {
   settings: {
     ask_to_cite: { type: 'boolean', default: true, description: 'add a short "cite your evidence" line to the engine prompt (and a reminder on resume after a flagged report)' },
     reviewer_engine: { type: 'string', default: '', description: 'engine/model name of a reviewer from a DIFFERENT model family; empty turns interrogation off' },
-    engine_name: { type: 'string', default: '', description: 'name of an entry in config "engines" that runs the reviewer through ctx.engines.run; empty = no engine call (questions stay stored)' },
+    engine_name: { type: 'string', default: '', description: 'name of an entry in config "engines" that runs the reviewer through ctx.engines.run; that entry must carry a family string; empty = no engine call (questions stay stored)' },
     reviewer_timeout_ms: { type: 'integer', default: 60000, min: 1000, max: 600000, description: 'time limit for the reviewer engine call; capped at config modules_hook_timeout_ms minus 500 (it runs inside the task.end hook) and by core at engines_max_timeout_ms' },
-    worker_model: { type: 'string', default: 'claude', description: 'model name of the engine that does the work; the reviewer family must differ from it' },
+    worker_family: { type: 'string', default: 'anthropic', description: 'family of the model that does the work, written by the owner (e.g. anthropic); compared with config engines.<engine_name>.family, which must differ' },
+    worker_model: { type: 'string', default: 'claude', description: 'model name of the worker; used only for the name check when engine_name is empty (no engine call)' },
     high_stakes_words: { type: 'array', items: 'string', default: I.DEFAULT_STAKES, description: 'words that make a verified claim high-stakes, so it is also questioned' },
   },
   api: { auditReport, checkCitations, makeQuestions: I.makeQuestions, setReviewerClient },

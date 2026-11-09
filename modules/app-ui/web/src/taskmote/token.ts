@@ -1,7 +1,7 @@
 // Device token handling. Our own file (MIT). Never logs the token.
 //   #t=<token>  from a link: kept in localStorage, the hash is removed from the address bar
 //   #p=<code>   a pairing code: POSTed to /m/device-pairing/redeem, the token that comes back is kept
-export const TOKEN_KEY = "dantomation.token";
+export const TOKEN_KEY = "taskmote.token";
 
 let memoryToken: string | null = null;
 

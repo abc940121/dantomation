@@ -223,7 +223,7 @@ async function answer(io, id, input, src) {
     io.state.append({ type: 'question_answer', question_id: q.question_id, task_id: q.task_id, choice: v.value.choice, free_len: v.value.free_text === null ? null : v.value.free_text.length, ...src });
     ev.push(['question.answered', { question_id: q.question_id, task_id: q.task_id, choice: v.value.choice, option: v.value.option, free_text: v.value.free_text, who: src.who, where: src.where }]);
     const said = [v.value.choice !== null && `option ${v.value.choice}`, v.value.free_text !== null && `free text (${v.value.free_text.length} characters)`].filter(Boolean).join(' and ');
-    note(io, q.task_id, `question ${q.question_id} was answered by the owner: ${said}. Read the answer with: dantomation question get ${q.question_id}. Continue with that answer.`);
+    note(io, q.task_id, `question ${q.question_id} was answered by the owner: ${said}. Read the answer with: taskmote question get ${q.question_id}. Continue with that answer.`);
     return { res: { question: view(find(io, q.question_id)) } };
   });
 }

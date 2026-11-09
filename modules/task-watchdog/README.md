@@ -25,7 +25,7 @@ and, only if `cancel_enabled`, `ctx.tasks.cancel(task_id)` (a failure is recorde
 
 ## Command
 
-`dantomation watchdog [stalled|list|dismiss <task_id>]` (`dismiss` refuses inside a task).
+`taskmote watchdog [stalled|list|dismiss <task_id>]` (`dismiss` refuses inside a task).
 
 ## Settings (`task_watchdog`)
 

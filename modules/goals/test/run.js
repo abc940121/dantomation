@@ -173,10 +173,10 @@ const T0 = Date.parse('2030-01-07T12:00:00Z'); // a Monday
     // ---- guard
     const guard = (tool, command, env) => { const old = process.env.HARNESS_TASK_ID; if (env) process.env.HARNESS_TASK_ID = 't1'; else delete process.env.HARNESS_TASK_ID; return M.beforeTool(reg.mods, { tool, ti: { command }, input: {} }).finally(() => { if (old === undefined) delete process.env.HARNESS_TASK_ID; else process.env.HARNESS_TASK_ID = old; }); };
     check('guard: agent confirm blocked', !!(await guard('Bash', 'node bin/harness.js goal confirm', true)));
-    check('guard: agent lesson add blocked', !!(await guard('Bash', 'dantomation lesson add "x" --missed y --fix z', true)));
+    check('guard: agent lesson add blocked', !!(await guard('Bash', 'taskmote lesson add "x" --missed y --fix z', true)));
     check('guard: agent server call blocked', !!(await guard('Bash', 'curl http://127.0.0.1:1/m/goals/goal', true)));
-    check('guard: agent goal show allowed', (await guard('Bash', 'dantomation goal show', true)) === null);
-    check('guard: owner (no task) allowed', (await guard('Bash', 'dantomation goal confirm', false)) === null);
+    check('guard: agent goal show allowed', (await guard('Bash', 'taskmote goal show', true)) === null);
+    check('guard: owner (no task) allowed', (await guard('Bash', 'taskmote goal confirm', false)) === null);
 
     // ---- commands in real processes
     const cfgFile = path.join(tmp, 'cfg.json');

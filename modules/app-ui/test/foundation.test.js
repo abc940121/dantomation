@@ -128,7 +128,7 @@ const route = (method, p) => mod.routes.find(r => r.method === method && r.path 
   check('provenance --check passes', pv.status === 0, pv.stderr);
   const P = require(path.join(APP, 'tools', 'provenance.js'));
   const rows = P.rows();
-  const HEADER = ['Copyright 2026 Milind Soni and OpenMausBot contributors', 'Licensed under the Apache License, Version 2.0 (see LICENSE-APACHE at the repo root)', 'Modified by dantomation contributors'];
+  const HEADER = ['Copyright 2026 Milind Soni and OpenMausBot contributors', 'Licensed under the Apache License, Version 2.0 (see LICENSE-APACHE at the repo root)', 'Modified by taskmote contributors'];
   const commentable = /\.(ts|tsx|js|mjs|css)$/;
   const missing = [], extra = [];
   for (const [file] of rows) {

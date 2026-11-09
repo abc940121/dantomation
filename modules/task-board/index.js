@@ -166,7 +166,7 @@ const routes = [
     handler: ctx => guard(async () => { const id = idOf(ctx); if (!id) return BAD_ID; await ops.remove(ctx, id); return { status: 200, json: { removed: id } }; }) },
 ];
 
-// ---- commands: `dantomation taskboard <sub>` ----
+// ---- commands: `taskmote taskboard <sub>` ----
 const USAGE = 'usage: taskboard [list [status]|add <title> [--id ID] [--dep ID]...|claim [id]|heartbeat <id>|done <id> [note]|fail <id> [note]|release <id>|retry <id>|remove <id>]';
 const inTask = () => process.env.HARNESS_TASK_ID || null;
 const me = () => (inTask() ? `task:${inTask()}` : 'owner');

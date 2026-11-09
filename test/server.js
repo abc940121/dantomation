@@ -15,7 +15,7 @@ const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
-const DANT = path.join(ROOT, 'bin', 'dantomation.js');
+const DANT = path.join(ROOT, 'bin', 'taskmote.js');
 const base = fs.mkdtempSync(path.join(os.tmpdir(), 'srv-'));
 const state = path.join(base, 'state'), work = path.join(base, 'work');
 fs.mkdirSync(work, { recursive: true });

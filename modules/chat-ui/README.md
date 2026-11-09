@@ -1,6 +1,6 @@
 # chat-ui
 
-A phone-first web chat for the dantomation server. Plain HTML, CSS and JS: no framework, no CDN, no build step. Off by default.
+A phone-first web chat for the taskmote server. Plain HTML, CSS and JS: no framework, no CDN, no build step. Off by default.
 
 Turn it on with `"chat-ui": true` under `modules` in the config. The module only declares its panel (`index.js`, module contract 1; entry `ui/panel.js`); core serves `ui/` as static files under `/m/chat-ui/ui/` through the registry (GET and HEAD only). Static files are public (they hold no data); every `/api` call still needs the token.
 
@@ -26,9 +26,9 @@ Every `/api` call sends `Authorization: Bearer <token>`. Open the page once as `
 
 The server listens on 127.0.0.1 only by default. To reach it from a phone:
 
-1. Set `server.host` to the machine's LAN address (or `0.0.0.0`) and choose `server.port` in the config, then restart `dantomation serve`. This is opt-in, and the server requires the token for any non-loopback caller.
+1. Set `server.host` to the machine's LAN address (or `0.0.0.0`) and choose `server.port` in the config, then restart `taskmote serve`. This is opt-in, and the server requires the token for any non-loopback caller.
 2. Put the phone and the machine on one private network. The simplest safe way is a VPN such as Tailscale: install it on both, and use the machine's VPN address. Setting this up is the owner's job; the module does not do it.
-3. Make a token with `dantomation token new`, then open `http://<machine address>:<port>/m/chat-ui/ui/#t=<token>` on the phone. Add it to the home screen if you like.
+3. Make a token with `taskmote token new`, then open `http://<machine address>:<port>/m/chat-ui/ui/#t=<token>` on the phone. Add it to the home screen if you like.
 
 Do not expose the port to the public internet. The page is served over plain HTTP; the VPN is what encrypts it.
 

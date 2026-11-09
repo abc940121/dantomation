@@ -51,14 +51,17 @@ const ENGINES = { echo: { bin: process.execPath, args: [echoJs] }, slow: { bin: 
 (async () => {
   try {
     // ---- contract number
-    check('trunk supports contract 6', M.CONTRACT === 6, M.CONTRACT);
+    check('trunk supports contract 7', M.CONTRACT === 7, M.CONTRACT);
     const c2 = mod(N('c2'), `{ contract: 2, name: '${N('c2')}' }`);
     const c6 = mod(N('c6'), `{ contract: 6, name: '${N('c6')}' }`);
     const c7 = mod(N('c7'), `{ contract: 7, name: '${N('c7')}' }`);
+    const c8 = mod(N('c8'), `{ contract: 8, name: '${N('c8')}' }`);
     let r = M.load({ modules: { [c2]: true, [c6]: true } });
     check('contract 2 and 6 modules load', r.errors.length === 0 && r.mods.length === 2, r.errors.join(' | '));
     r = M.load({ modules: { [c7]: true } });
-    check('contract 7 is refused', r.errors.some(e => /needs module contract 7; this core supports up to 6/.test(e)), r.errors.join(' | '));
+    check('contract 7 module loads', r.errors.length === 0 && r.mods.length === 1, r.errors.join(' | '));
+    r = M.load({ modules: { [c8]: true } });
+    check('contract 8 is refused', r.errors.some(e => /needs module contract 8; this core supports up to 7/.test(e)), r.errors.join(' | '));
 
     // ---- no-op without users
     r = M.load({ modules: { [c2]: true } });
@@ -203,17 +206,17 @@ const ENGINES = { echo: { bin: process.execPath, args: [echoJs] }, slow: { bin: 
     fs.writeFileSync(swapJs, "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>process.stdout.write('SWAPPED:'+s.length+' REPLYBODY-"+tag+"'));");
     fs.writeFileSync(defJs, `process.stdout.write(JSON.stringify({type:'result',result:'DEFAULT REPLYBODY-${tag}'})+String.fromCharCode(10));`);
     let runN = 0;
-    const turn = (cfgExtra, req = 'do a thing') => {
+    const turn = (cfgExtra, req = 'do a thing', engineJs = defJs) => {
       const base = path.join(tmp, 'run' + (++runN)), work = path.join(base, 'work');
       fs.mkdirSync(work, { recursive: true });
       execFileSync('git', ['init', '-q'], { cwd: work });
       const cfg = path.join(base, 'config.json');
       fs.writeFileSync(cfg, JSON.stringify({ owner_name: 'Tester', ...cfgExtra }));
-      const env = { ...process.env, HARNESS_STATE_DIR: path.join(base, 'state'), HARNESS_LOG_DIR: path.join(base, 'logs'), HARNESS_CONFIG: cfg, HARNESS_ENGINE_SCRIPT: defJs, HARNESS_NO_SERVER: '1' };
+      const env = { ...process.env, HARNESS_STATE_DIR: path.join(base, 'state'), HARNESS_LOG_DIR: path.join(base, 'logs'), HARNESS_CONFIG: cfg, HARNESS_ENGINE_SCRIPT: engineJs, HARNESS_NO_SERVER: '1' };
       delete env.HARNESS_TASK_ID;
       const p = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'harness.js'), 'start', req, '--workdir', work], { env, encoding: 'utf8', timeout: 60000 });
       let recs = []; try { recs = fs.readFileSync(path.join(base, 'state', 'journal.jsonl'), 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)); } catch { /* none */ }
-      return { p, recs, ofType: t => recs.filter(x => x.type === t) };
+      return { p, recs, state: path.join(base, 'state'), ofType: t => recs.filter(x => x.type === t) };
     };
     const chooser = (s, nm) => mod(N(s), `{ contract: 6, name: '${N(s)}', chooseEngine: () => '${nm}' }`);
     const cSwap = chooser('cs', 'fakeswap'), cNone = chooser('cn', 'ghost'), cNoBin = chooser('cb', 'nobin');
@@ -227,12 +230,58 @@ const ENGINES = { echo: { bin: process.execPath, args: [echoJs] }, slow: { bin: 
     t = turn({ modules: { [cNoBin]: true }, engines: { nobin: { args: [swapJs], turn: true } } });
     check('chooseEngine configured without a string bin: default runs, reason no_bin', /^DEFAULT /.test((t.ofType('reply')[0] || {}).text || '') && t.ofType('engine_choice_ignored').some(x => x.reason === 'no_bin'), t.recs.map(x => x.type));
 
+    // task.end hooks run while the executor lock is still held
+    {
+      const wLock = mod(N('wl'), `{ contract: 6, name: '${N('wl')}', on: { 'task.end': (p) => { const st = process.env.HARNESS_STATE_DIR, fs = require('fs'), path = require('path'); fs.writeFileSync(path.join(st, 'lockseen.txt'), (fs.existsSync(path.join(st, 'executor.lock')) ? 'held' : 'free') + ':' + String(p.turn_start)); } } }`);
+      t = turn({ modules: { [wLock]: true } });
+      const seen = (() => { try { return fs.readFileSync(path.join(t.state, 'lockseen.txt'), 'utf8'); } catch { return 'none'; } })();
+      const st = t.ofType('engine_start')[0];
+      check('task.end runs while the executor lock is held, with this turn engine_start id', !!st && seen === 'held:' + st.id, seen);
+    }
+
+    // beforeReply ctx carries the final engine exit code (zero and non-zero)
+    const exitJs = n => { const f = path.join(tmp, 'exit' + n + '.js'); fs.writeFileSync(f, `process.stdout.write(JSON.stringify({type:'result',result:'EXITREPLY'})+String.fromCharCode(10));process.exitCode=${n};`); return f; };
+    const wCode = br('wk', `(reply, ctx) => reply + ' CODE=' + typeof ctx.code + ':' + ctx.code`);
+    for (const n of [0, 3]) {
+      t = turn({ modules: { [wCode]: true } }, 'do a thing', exitJs(n));
+      check(`beforeReply ctx.code is the numeric engine exit code (${n})`, t.ofType('reply').length === 1 && t.ofType('reply')[0].text === `EXITREPLY CODE=number:${n}` && t.ofType('engine_exit').some(x => x.code === n), { rep: t.ofType('reply'), ex: t.ofType('engine_exit') });
+    }
+
     const wBlock = br('wb', `() => ({ block: true, reason: 'SECRETREASON-${tag}' })`), wClosed = br('wc', `() => { throw new Error('boom'); }`, 'closed');
     for (const [label, name] of [['block', wBlock], ['fail-closed error', wClosed]]) {
       t = turn({ modules: { [name]: true } });
       rep = t.ofType('reply');
       const line = `(reply withheld by ${name})`;
       check(`beforeReply ${label}: the reply record is exactly the withheld line, nothing of the original or the reason`, rep.length === 1 && rep[0].text === line && !JSON.stringify(rep).includes('REPLYBODY') && !JSON.stringify(rep).includes('SECRETREASON') && t.ofType('reply_blocked').length === 1, { rep, types: t.recs.map(x => x.type) });
+    }
+    {
+      const wMod = br('wm', `(reply) => reply.replace('REPLYBODY', 'REDACTED')`);
+      for (const [label, name] of [['block', wBlock], ['fail-closed error', wClosed], ['modifying hook', wMod]]) {
+        t = turn({ modules: { [name]: true } });
+        const files = fs.readdirSync(t.state).filter(f => f.startsWith('engine-'));
+        const all = files.map(f => fs.readFileSync(path.join(t.state, f), 'utf8')).join('\n');
+        check(`beforeReply ${label}: no raw reply text stays in the engine output files`, files.length > 0 && !all.includes('REPLYBODY') && all.includes('withheld'), { files, all: all.slice(0, 200) });
+      }
+      // a descendant that outlives the engine and appends to the inherited stdout after the cleanup
+      {
+        const lateJs = path.join(tmp, 'late.js');
+        fs.writeFileSync(lateJs, "const {spawn}=require('child_process');spawn(process.execPath,['-e',\"setTimeout(()=>process.stdout.write('LATE-REPLYBODY-" + tag + "'),1500)\"],{stdio:['ignore',1,2]}).unref();process.stdout.write(JSON.stringify({type:'result',result:'DEFAULT REPLYBODY-" + tag + "'})+String.fromCharCode(10));");
+        t = turn({ modules: { [wBlock]: true } }, 'do a thing', lateJs);
+        await new Promise(r => setTimeout(r, 2500));
+        const lf = fs.readdirSync(t.state).filter(f => f.startsWith('engine-')).map(f => fs.readFileSync(path.join(t.state, f), 'utf8')).join(String.fromCharCode(10));
+        check('beforeReply block: a descendant writing 1500 ms after the engine exit never reaches the output file', !lf.includes('REPLYBODY') && lf.includes('withheld') && t.ofType('output_withhold_failed').length === 0, lf.slice(0, 200));
+      }
+      // cleanup failure: recorded in the journal and warned on stderr, never silent
+      process.env.HARNESS_TEST_WITHHOLD_FAIL = '1'; process.env.HARNESS_TEST = '1';
+      try {
+        t = turn({ modules: { [wBlock]: true } });
+        const wf = t.ofType('output_withhold_failed');
+        check('beforeReply block: a failed output cleanup journals output_withhold_failed (basename, code) and warns', wf.length >= 1 && wf.every(x => /^engine-.*.(jsonl|stderr)$/.test(x.file) && x.error === 'EPERM' && x.task_id) && /could not remove a withheld reply/.test(t.p.stderr), { wf, err: t.p.stderr.slice(0, 200) });
+      } finally { delete process.env.HARNESS_TEST_WITHHOLD_FAIL; delete process.env.HARNESS_TEST; }
+      // a plain-text turn engine's .stdout companion is cleaned too
+      t = turn({ modules: { [wBlock]: true, [cSwap]: true }, engines: { fakeswap: { bin: process.execPath, args: [swapJs], turn: true } } });
+      const so = fs.readdirSync(t.state).filter(f => f.startsWith('engine-')).map(f => fs.readFileSync(path.join(t.state, f), 'utf8')).join('\n');
+      check('beforeReply block: the plain-text engine .stdout file holds no reply text', fs.readdirSync(t.state).some(f => f.endsWith('.stdout')) && !so.includes('REPLYBODY'), so.slice(0, 200));
     }
     res = await quiet(() => M.beforeReply(M.load({ modules: { [wBlock]: true } }).mods, REPLY, { task_id: 'TB' }));
     check('beforeReply returns the blocking module name as a field', res.blocked && res.module === wBlock, res);
@@ -265,6 +314,13 @@ const ENGINES = { echo: { bin: process.execPath, args: [echoJs] }, slow: { bin: 
     t = turn({ modules: { [cSwap]: true }, engines: { fakeswap: { bin: process.execPath, args: [plainJs], turn: true } } });
     rep = t.ofType('reply');
     check('plain-text turn engine: trimmed stdout is the reply (stderr excluded)', rep.length === 1 && rep[0].text === 'plain answer', rep);
+
+    // stderr without a trailing newline, copied before a complete stdout result line, must not corrupt the JSONL record
+    const mixJs = path.join(tmp, 'mix.js');
+    fs.writeFileSync(mixJs, "process.stderr.write('PARTIAL-NOISE');setTimeout(()=>{process.stdout.write(JSON.stringify({type:'result',result:'MIXED OK'})+String.fromCharCode(10));setTimeout(()=>process.stderr.write(String.fromCharCode(10)+JSON.stringify({type:'result',result:'FAKE FROM STDERR'})),50);},100);");
+    t = turn({}, 'do a thing', mixJs);
+    rep = t.ofType('reply');
+    check('stdout and stderr interleaved: stderr can neither split the stdout result record nor supply a reply', rep.length === 1 && rep[0].text === 'MIXED OK', { rep, err: t.p.stderr.slice(0, 200) });
 
     // ---- Codex re-review fixes
     const wThrow = br('wt', `(reply) => { throw new Error(reply); }`), wInvalid = br('wi', `(reply) => ({ leaked: reply })`);

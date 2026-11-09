@@ -13,10 +13,10 @@ Off by default. It works alone and together with every other module. It only act
 ## How it works
 
 1. The agent makes a risky call. The guard writes a card (id, task, tool, the exact input, its sha256, a one-line summary, created_at, expires_at) to the journal (records carry `module: "approval-cards"`) and the mirror `state/m/approval-cards/<id>.json`, and blocks the call with `waiting for approval card <id>; stop and end your turn`.
-2. You see it in `node bin/dantomation.js status` (it lists the pending card and how to answer). You answer with the existing `do` verb:
+2. You see it in `node bin/taskmote.js status` (it lists the pending card and how to answer). You answer with the existing `do` verb:
 
-        node bin/dantomation.js do yes        # or: do no
-        node bin/dantomation.js do "yes card-3fa9c2"    # when more than one card is pending
+        node bin/taskmote.js do yes        # or: do no
+        node bin/taskmote.js do "yes card-3fa9c2"    # when more than one card is pending
 
    `do` with no answer while a card is pending does not resume; it tells you the card is waiting.
 3. A yes approves exactly that input hash, once. The task resumes, the agent is told the card was approved, and the identical call passes once; the card is then marked used. A second identical call, or any changed input, needs a new card.
@@ -67,7 +67,7 @@ Who may call the routes (the owner only) is the server's job.
 ## Known limits
 
 - **A pattern list, not a sandbox.** A risky action spelled in a way the patterns do not match (a script that pushes, a renamed tool, a variable holding the command) is not held. The cards are a convenience for honest agents, not containment.
-- **Answering is protected by convention.** The answer verb refuses when `HARNESS_TASK_ID` is set and the module blocks agent commands that name `dantomation`/`harness` followed by `do yes`, `do no` or `answer`. An agent that bypasses the guard (guard-base off, or an obfuscated command) could answer its own card.
+- **Answering is protected by convention.** The answer verb refuses when `HARNESS_TASK_ID` is set and the module blocks agent commands that name `taskmote`/`harness` followed by `do yes`, `do no` or `answer`. An agent that bypasses the guard (guard-base off, or an obfuscated command) could answer its own card.
 - Delete detection resolves path arguments textually. Wildcards and paths held in variables count as outside (it asks); a symlink inside the task folder that points outside is not seen.
 - Only calls that reach the guard are covered, and only inside an engine run. Calls made by you in your own shell are never asked about.
 - The agent must end its turn for the card to be answered; a task waiting on a card stays open. The window is measured from card creation, not from when you first look.

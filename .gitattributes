@@ -1,2 +1,4 @@
+bin/taskmote text eol=lf
+bin/taskmote.cmd text eol=crlf
 bin/dantomation text eol=lf
 bin/dantomation.cmd text eol=crlf

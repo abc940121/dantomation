@@ -32,13 +32,13 @@ into core if it fits the budget. `unpin` moves core back to recall. `restore` mo
 
 ## Commands (writes owner only, refused inside a task with exit 6)
 
-    dantomation memory [list]
-    dantomation memory search <words> [--all|--core|--recall]     (default tier: archive)
-    dantomation memory pin "<fact>" | <id>
-    dantomation memory unpin <id>
-    dantomation memory restore <id>
-    dantomation memory forget <id>
-    dantomation memory sweep                                       (apply age and count rules now)
+    taskmote memory [list]
+    taskmote memory search <words> [--all|--core|--recall]     (default tier: archive)
+    taskmote memory pin "<fact>" | <id>
+    taskmote memory unpin <id>
+    taskmote memory restore <id>
+    taskmote memory forget <id>
+    taskmote memory sweep                                       (apply age and count rules now)
 
 ## Routes (`/m/memory-tiers/`, all owner access)
 

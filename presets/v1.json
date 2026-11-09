@@ -1,0 +1,24 @@
+{
+  "_comment": "v1 base profile. Apply by adding \"preset\": \"v1\" to the config (node bin/taskmote.js preset v1 only shows it). Loopback only, no secrets; every setting stays at its module default.",
+  "modules": {
+    "guard-base": true,
+    "guard-private-rules": true,
+    "tripwires": true,
+    "checkpoint": true,
+    "approval-cards": true,
+    "question-cards": true,
+    "task-watchdog": true,
+    "task-board": true,
+    "memory-tiers": true,
+    "trace": true,
+    "notifications": true,
+    "chat-ui": true,
+    "app-ui": true,
+    "device-pairing": true,
+    "voice": true,
+    "voice-chat": true,
+    "worker": true,
+    "chat-endpoint": true,
+    "rooms": true
+  }
+}

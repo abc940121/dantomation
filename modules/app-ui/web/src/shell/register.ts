@@ -1,8 +1,8 @@
 // The foundation registers itself as an area, so its defaults sit in the same slots areas use.
 // Priority 0 everywhere: any area view with a higher priority replaces a single-winner default.
 import { registerArea } from "@/areas/registry";
-import { PairGate } from "@/dantomation/PairScreen";
-import { en, zhTw } from "@/dantomation/strings";
+import { PairGate } from "@/taskmote/PairScreen";
+import { en, zhTw } from "@/taskmote/strings";
 import { BasicComposer } from "./BasicComposer";
 import { BasicThread } from "./BasicThread";
 import { BotView } from "./BotView";

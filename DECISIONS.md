@@ -4,9 +4,9 @@ Trunk decisions only (core, contract, server, security rounds). One line per dec
 
 Layout: each module keeps its own log in `modules/<name>/DECISIONS.md` and `modules/<name>/PROVENANCE.md`, so a module branch never edits a root file (docs/module-contract.md). Early rows that were not clearly attributable to one module stay here.
 
-- M1: one CLI, `dantomation`, with three verbs (`do`, `status`, `undo`). Fewer verbs means nothing to memorise; the agent picks its working method inside.
+- M1: one CLI, `taskmote`, with three verbs (`do`, `status`, `undo`). Fewer verbs means nothing to memorise; the agent picks its working method inside.
 - M1: `do "<request>"` starts, `do` alone resumes, `do "<request>"` while a task is open refuses and says how to resume. One open task at a time matches the journal and the executor lock.
-- M1: `dantomation do` runs `bin/harness.js start|resume` as a child process. The engine logic stays in one place; `harness.js` stays the low-level command.
+- M1: `taskmote do` runs `bin/harness.js start|resume` as a child process. The engine logic stays in one place; `harness.js` stays the low-level command.
 - M1: `status` is its own summary (open task, last finished task, undo points, modules, warnings) and never prints the raw prompt, which `harness.js status` still does.
 - M1: task method list (bug, change, review, unclear) goes in `config/protocol.md` as four short lines, because that file is always-on context. Written from scratch; no text taken from another project.
 - M1: `unclear` means list the questions and stop, so an ambiguous request costs one message, not a wrong big change.
@@ -62,7 +62,7 @@ Layout: each module keeps its own log in `modules/<name>/DECISIONS.md` and `modu
 - S1-4 merge: module contract v1.2 wins every conflict; S1-S4 code adapted to it, none of lib/modules.js or the docs changed to fit them.
 - S1-4 merge: the server loads modules through registry(cfg, {role, tasks}); routes under /m/<name>/ go through findRoute and callRoute with ctx.actor, and listModuleRoutes/listModuleUi are gone.
 - S1-4 merge: panels are served at /m/<name>/ui/ from registry.uiFile (GET/HEAD only, symlink and path-escape checks kept); they are public static assets because a navigation cannot send a token and the files hold no data. chat-ui declares a panel with mount(el, {base, fetch}).
-- S1-4 merge: the owner token maps to actor {kind:'owner'}; an optional state/worker.token (node bin/dantomation.js token new --worker) maps to {kind:'worker'} and may only call /api/worker/ and routes marked access: worker; a loopback GET with local_no_auth is anonymous. Everything state-changing still needs a token.
+- S1-4 merge: the owner token maps to actor {kind:'owner'}; an optional state/worker.token (node bin/taskmote.js token new --worker) maps to {kind:'worker'} and may only call /api/worker/ and routes marked access: worker; a loopback GET with local_no_auth is anonymous. Everything state-changing still needs a token.
 - S1-4 merge: ctx.tasks {enqueue, get, cancel} is filled by the server with the same code as the HTTP API; the registry reads it by reference, so it is a mutable object filled after the server's task functions exist.
 - S1-4 merge: GET/PATCH /api/settings/<module> (owner only) returns the schema and values and saves through registry.updateSettings with an atomic config write (temp file, rename); secrets still go only through the secret verb.
 - S1-4 merge: tool.done now really fires: bin/harness.js settingsFile() adds a PostToolUse hook running guard.js --after (the user's own Claude settings are never touched), and the guard journals a tool_done record (ok, durationMs, tool_use_id) before emitting the event; tested with the fake engine, which can run the generated hooks (HARNESS_FAKE_HOOKS=1).

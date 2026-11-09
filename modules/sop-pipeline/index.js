@@ -38,7 +38,7 @@ const copy = x => JSON.parse(JSON.stringify(x));
 
 // ---- agent guard: an agent never defines, runs, removes or cancels SOPs, nor calls the routes
 const inTask = () => !!process.env.HARNESS_TASK_ID;
-const OWNER_CMD = /(dantomation|harness)(\.(js|cmd))?["']?\s+sop\s+["']?(define|run|cancel|remove)\b/i;
+const OWNER_CMD = /(taskmote|harness)(\.(js|cmd))?["']?\s+sop\s+["']?(define|run|cancel|remove)\b/i;
 const API_CMD = /\/m\/sop-pipeline(?![\w-])/i;
 function beforeTool(ctx) {
   if (!inTask()) return null;
@@ -262,7 +262,7 @@ const routes = [
   own('POST', '/advance', 'advance every active run one step now', async ctx => reply(200, { advanced: await tick(ctx) })),
 ];
 
-// ---- commands: `dantomation sop <sub>`
+// ---- commands: `taskmote sop <sub>`
 const USAGE = 'usage: sop [list|show <name>|define <name> --stage "role::instruction::expected output" [--stage ...] [--bot BOT] [--desc TEXT]|remove <name>|run <name> [input...]|status [run-id]|cancel <run-id>]';
 const line = r => `${r.id}\t${r.status}\t${r.sop}\tstage ${Math.min(r.stage + 1, r.total)}/${r.total}${r.reason ? '\t' + r.reason : ''}`;
 async function sop(args, ctx) {

@@ -20,7 +20,7 @@ Example private config (the per-bot block lives on the rooms member, so there is
           "mode": "shadow",
           "url": "http://127.0.0.1:<port>",
           "token_secret": "example-token",
-          "session_prefix": "dantomation:",
+          "session_prefix": "taskmote:",
           "member_id": "example-bot",
           "sees": "addressed",
           "context_lines": 6,

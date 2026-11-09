@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 'use strict';
-// Dependency-free mock of the dantomation server API v0, for trying the chat UI
+// Dependency-free mock of the taskmote server API v0, for trying the chat UI
 // and for tests. `node modules/chat-ui/mock-server.js` serves the UI and the API
 // on 127.0.0.1:7421 (PORT / HOST / MOCK_TOKEN / MOCK_DELAY_MS override).
 // Scripted behaviour: any chat runs a short task with tool calls and an undo
@@ -197,7 +197,7 @@ function createMock(opts = {}) {
 if (require.main === module) {
   const port = Number(process.env.PORT) || 7421, host = process.env.HOST || '127.0.0.1';
   const mock = createMock({ token: process.env.MOCK_TOKEN || '', delayMs: process.env.MOCK_DELAY_MS ? Number(process.env.MOCK_DELAY_MS) : 700 });
-  mock.server.listen(port, host, () => console.log(`mock dantomation server on http://${host}:${port}${MOUNT}  (try a message containing "risky" or "fail")`));
+  mock.server.listen(port, host, () => console.log(`mock taskmote server on http://${host}:${port}${MOUNT}  (try a message containing "risky" or "fail")`));
 }
 
 module.exports = { createMock, MOUNT };

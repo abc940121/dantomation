@@ -1,6 +1,6 @@
 // Copyright 2026 Milind Soni and OpenMausBot contributors
 // Licensed under the Apache License, Version 2.0 (see LICENSE-APACHE at the repo root)
-// Modified by dantomation contributors
+// Modified by taskmote contributors
 // The day and time line between a conversation's days (ChatView.tsx).
 import { cn } from "@/lib/cn";
 import { dayLabel, formatTime } from "../lib/day";

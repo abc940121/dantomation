@@ -4,7 +4,7 @@ A phone gets its own revocable token instead of the owner token. Off by default 
 
 ## Flow
 
-1. The owner runs `dantomation pair` (or `POST /m/device-pairing/mint` with the owner token). It prints a six-digit code and a long code for a QR or link.
+1. The owner runs `node bin/harness.js pair` (or `POST /m/device-pairing/mint` with the owner token). It prints a six-digit code and a long code for a QR or link.
 2. On the phone open `http://<server address>/m/chat-ui/ui/#p=<long code>` (QR), or open the page and type the six digits. The page POSTs the code to `/m/device-pairing/redeem` (no token needed) and gets a per-device token. The fragment is stripped from the address bar at once.
 3. The phone keeps that token in localStorage and sends it as a bearer token. The owner token never reaches the phone.
 
@@ -16,7 +16,7 @@ Transport is the owner's job: Tailscale or another private network. This module 
 - Five wrong guesses (counted across all callers) wipe every pending code and refuse redeem for 30 seconds (429). Minting a new code resets the guess counter.
 - A device token is `dvt_<id>.<secret>`. Only its SHA-256 and a record are stored: label, created, last seen, revoked. All comparisons are constant time.
 - A device unused for 30 days must pair again; each use renews that (sliding).
-- `dantomation devices` lists devices, `dantomation revoke <id>` (or `POST /m/device-pairing/devices/:id/revoke`) revokes one. Revocation takes effect on the next request.
+- `node bin/harness.js devices` lists devices, `node bin/harness.js revoke <id>` (or `POST /m/device-pairing/devices/:id/revoke`) revokes one. Revocation takes effect on the next request.
 - Every state-changing call by a device is journaled as `device_action` with the device id, label, method and path. Reads are not.
 
 ## What a device may call (deny by default)

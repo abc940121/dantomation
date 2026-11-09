@@ -1,6 +1,6 @@
 // Copyright 2026 Milind Soni and OpenMausBot contributors
 // Licensed under the Apache License, Version 2.0 (see LICENSE-APACHE at the repo root)
-// Modified by dantomation contributors
+// Modified by taskmote contributors
 // Rendered Markdown kept per message text: a message drawn again (a conversation switched back to, rows scrolled back
 // into the window, a bubble that re-renders) reuses the React elements it already produced instead of parsing again.
 // An entry is only reused while everything the plugins read still matches (`variant`: mention names, thread links,

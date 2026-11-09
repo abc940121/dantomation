@@ -46,6 +46,8 @@ const CORE_SUITES = [
   ['trunk-diff', 'test/trunk-diff.js', []],
   ['trunk-diff-test', 'test/trunk-diff.test.js', []],
   ['scaffold', 'test/scaffold.test.js', []],
+  ['alias', 'test/alias.test.js', []],
+  ['combo-v1', 'test/combo-v1.js', [], true],
 ];
 const LAST_SUITES = [['public-boundary', 'test/public-boundary.js', ['guard-base'], true]];
 
@@ -96,7 +98,8 @@ async function runSuite([label, file, needs], enabled, env) {
   const lines = out.trim().split('\n');
   let status = r.status === 0 ? 'PASS' : 'FAIL';
   if (r.status === 0 && /^SKIP:/m.test(out)) status = 'SKIP';
-  let note = (lines.filter(l => /^(result|owner checks|PASS|FAIL)/.test(l)).pop() || lines[lines.length - 1] || '').slice(0, 110);
+  let note = (lines.filter(l => /^(result|owner checks|PASS|FAIL)/.test(l)).pop() || lines[lines.length - 1] || '').slice(0, status === 'FAIL' ? 400 : 110);
+  if (status === 'FAIL' && !note.trim()) note = `(no output; exit ${r.status === null ? 'killed by runner timeout' : r.status})`;
   if (label === 'public-boundary' && status === 'FAIL') {
     const bad = lines.filter(l => /^FAIL /.test(l));
     if (bad.length === 1 && /history of HEAD/.test(bad[0])) { status = 'KNOWN'; note = 'only the history-of-HEAD check fails (by design on master); tree check passes'; }

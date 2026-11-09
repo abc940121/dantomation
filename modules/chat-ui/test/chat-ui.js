@@ -283,14 +283,14 @@ function hashTests() {
     return { store, handlers, location, ctx };
   };
   const a = run('#t=first-token');
-  check('token in the hash at load: stored and stripped', a.store.get('dantomation.token') === 'first-token' && a.location.hash === '' && a.ctx.replaced === '/m/chat-ui/ui/index.html');
+  check('token in the hash at load: stored and stripped', a.store.get('taskmote.token') === 'first-token' && a.location.hash === '' && a.ctx.replaced === '/m/chat-ui/ui/index.html');
   check('hashchange handler is registered', typeof a.handlers.hashchange === 'function');
   a.location.hash = '#t=second%2Btoken';
   a.handlers.hashchange();
-  check('hashchange with #t=: new token stored and stripped', a.store.get('dantomation.token') === 'second+token' && a.location.hash === '');
+  check('hashchange with #t=: new token stored and stripped', a.store.get('taskmote.token') === 'second+token' && a.location.hash === '');
   a.location.hash = '#other';
   a.handlers.hashchange();
-  check('hashchange without a token changes nothing', a.store.get('dantomation.token') === 'second+token' && a.location.hash === '#other');
+  check('hashchange without a token changes nothing', a.store.get('taskmote.token') === 'second+token' && a.location.hash === '#other');
 }
 
 (async () => {

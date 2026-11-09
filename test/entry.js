@@ -75,7 +75,7 @@ const again = run(doL, env);
 res['do "<request>" starts a new task once the last is done'] = again.status === 0;
 fs.appendFileSync(path.join(d, 'state', 'journal.jsonl'), JSON.stringify({ id: 'x', ts: new Date().toISOString(), type: 'task_start', task_id: 'tOPEN', request: 'half done thing', workdir: path.join(d, 'work', 'tOPEN') }) + '\n');
 const refuse = run(doL, env);
-res['do "<request>" with an open task refuses and says how to resume'] = refuse.status !== 0 && /still open/.test(refuse.out) && /dantomation do/.test(refuse.out);
+res['do "<request>" with an open task refuses and says how to resume'] = refuse.status !== 0 && /still open/.test(refuse.out) && /taskmote do/.test(refuse.out);
 const so = run(statusL, env);
 res['status shows the open task (request, steps done, last step)'] = /open task: tOPEN/.test(so.out) && /half done thing/.test(so.out) && /steps done: 0/.test(so.out) && /last step: none yet/.test(so.out);
 
@@ -84,9 +84,9 @@ const inEngine = run(undoL, env, { HARNESS_TASK_ID: 'tX' });
 res['undo refuses with HARNESS_TASK_ID set (exit 6)'] = inEngine.status === 6 && /not for agents/.test(inEngine.out);
 const GUARD = path.join(ROOT, 'guards', 'guard.js');
 const hook = command => spawnSync(process.execPath, [GUARD], { cwd: ROOT, env, input: JSON.stringify({ session_id: 's', tool_name: 'Bash', tool_input: { command }, cwd: ROOT }), encoding: 'utf8' });
-const verbCmds = ['node bin/dantomation.js undo', 'bin/dantomation undo', 'dantomation.cmd undo', 'node "bin/dantomation.js"   undo', 'node bin/harness.js undo'];
+const verbCmds = ['node bin/taskmote.js undo', 'bin/taskmote undo', 'taskmote.cmd undo', 'node "bin/taskmote.js"   undo', 'node bin/harness.js undo'];
 res['guard blocks an agent Bash call to the undo verb (5 spellings)'] = verbCmds.every(c => { const r = hook(c); return r.status === 2 && /owner_only/.test(r.stderr); });
-res['guard still allows do and status for agents'] = ['node bin/dantomation.js status', 'node bin/dantomation.js do "x"'].every(c => hook(c).status === 0);
+res['guard still allows do and status for agents'] = ['node bin/taskmote.js status', 'node bin/taskmote.js do "x"'].every(c => hook(c).status === 0);
 
 // ---- checkpoint off
 const off = mkEnv('off', false);

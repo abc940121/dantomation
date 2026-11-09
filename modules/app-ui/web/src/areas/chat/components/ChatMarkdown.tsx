@@ -1,6 +1,6 @@
 // Copyright 2026 Milind Soni and OpenMausBot contributors
 // Licensed under the Apache License, Version 2.0 (see LICENSE-APACHE at the repo root)
-// Modified by dantomation contributors
+// Modified by taskmote contributors
 // Chat markdown: GFM, math (KaTeX, loaded on first use), highlighted code, tables. Raw HTML is never rendered.
 // Cut from the original: mentions, thread links, file/image previews, spoilers, mermaid, GitHub refs.
 import { memo, useEffect, useState, type ComponentProps, type ReactNode } from "react";

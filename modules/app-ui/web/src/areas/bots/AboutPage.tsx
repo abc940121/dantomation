@@ -8,7 +8,7 @@ export function AboutPage() {
   return (
     <div className="space-y-4">
       <h3 className="text-lg font-semibold">{t("bots.page.about")}</h3>
-      <Card title="dantomation app-ui" subtitle={t("bots.about.version", { version: pkg.version })}>
+      <Card title="taskmote app-ui" subtitle={t("bots.about.version", { version: pkg.version })}>
         <p className="text-sm leading-relaxed">{t("bots.about.license")}</p>
         <p className="mt-3 text-sm leading-relaxed text-ink-secondary">{t("bots.about.notice")}</p>
         <p className="mt-3 text-xs leading-relaxed text-ink-secondary">{t("bots.about.attribution")}</p>

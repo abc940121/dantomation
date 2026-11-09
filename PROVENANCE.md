@@ -1,5 +1,7 @@
 # Provenance
 
+Formerly dantomation (renamed to taskmote; history before the rename uses the old name).
+
 Trunk provenance only. Each module keeps its own in `modules/<name>/PROVENANCE.md` (written-new files and ideas referenced), so a module branch never edits this file (docs/module-contract.md).
 
 ## Copied code

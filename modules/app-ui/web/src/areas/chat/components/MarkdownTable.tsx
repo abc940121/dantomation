@@ -1,6 +1,6 @@
 // Copyright 2026 Milind Soni and OpenMausBot contributors
 // Licensed under the Apache License, Version 2.0 (see LICENSE-APACHE at the repo root)
-// Modified by dantomation contributors
+// Modified by taskmote contributors
 // A markdown table: scrolls sideways instead of widening the bubble, with a copy button (tab-separated text).
 // Security: keeps react-markdown's already-sanitized cell children; never renders model-authored raw HTML.
 import { Children, isValidElement, useMemo, type ReactElement, type ReactNode } from "react";

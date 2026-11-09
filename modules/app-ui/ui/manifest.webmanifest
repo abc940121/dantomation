@@ -1,7 +1,7 @@
 {
   "id": "./",
-  "name": "dantomation",
-  "short_name": "dantomation",
+  "name": "taskmote",
+  "short_name": "taskmote",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

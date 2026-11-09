@@ -26,5 +26,7 @@ depends on `mode` (default `flag`, which leaves the reply alone, so behaviour is
 
 What `redact` masks or `block` withholds is recorded at that moment (`enforced: true`), because the
 after-the-fact `task.end` check (journal record, event, list; runs in every mode) only sees the cleaned reply.
-`success_claim` needs the exit code, which core does not pass to `beforeReply`, so it is a `task.end` (flag)
-check in every mode.
+`success_claim` uses `ctx.code`, the engine exit code core passes to `beforeReply`. When it is a nonzero
+number the rule runs at the hook in every mode: `flag` (default) and `redact` record the trip and leave the reply alone,
+`block` withholds the reply. The hook records it, and `task.end` then skips `success_claim` for that task so the trip is
+journaled once. With no numeric code it remains a `task.end` (flag) check.

@@ -4,9 +4,9 @@ import "./styles.css";
 import "./shell/register";
 import "./areas";
 import { App } from "./App";
-import { consumeHash } from "./dantomation/token";
-import { auth } from "./dantomation/client";
-import { getToken } from "./dantomation/token";
+import { consumeHash } from "./taskmote/token";
+import { auth } from "./taskmote/client";
+import { getToken } from "./taskmote/token";
 import { browserLocale, loadLocale } from "./lib/i18n";
 
 async function start() {

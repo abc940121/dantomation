@@ -6,7 +6,7 @@ A second machine runs tool jobs for the main server. The worker pulls: it makes 
 
 | Machine | Runs | Needs |
 |---|---|---|
-| Main (server) | `dantomation serve`, the approval cards, the roster, the job queue | inbound TCP 7420 allowed from the worker machine |
+| Main (server) | `taskmote serve`, the approval cards, the roster, the job queue | inbound TCP 7420 allowed from the worker machine |
 | Worker | `node modules/worker/worker.js` (loop: hello, claim, run, progress, result) | outbound HTTP to the server, Node 22, Git Bash or PowerShell 5.1 for shell jobs |
 
 The server-side approval card still comes first. The worker then checks every job again itself, before running anything.

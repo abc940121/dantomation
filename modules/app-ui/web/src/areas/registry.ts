@@ -18,7 +18,7 @@
 //     'gate'            {}         called as a function by the host; returning non-null shows it
 //                                  instead of the app (the pairing screen is one)
 import { createContext, useContext, type ComponentType } from "react";
-import type { Client } from "@/dantomation/client";
+import type { Client } from "@/taskmote/client";
 import { registerStrings } from "@/lib/i18n";
 import type { Action, State } from "@/store";
 

@@ -13,7 +13,7 @@ const win = ctx => ctx.settings.stale_window_weeks;
 const ret = ctx => ({ max_replaced_goals: ctx.settings.max_replaced_goals, max_lessons: ctx.settings.max_lessons, max_repeats_per_lesson: ctx.settings.max_repeats_per_lesson });
 
 // An agent may read the card (goal show) but never set, edit, confirm or close goals, nor write lessons.
-const OWNER_CMD = /(dantomation|harness)(\.(js|cmd))?["']?\s+(goal\s+["']?(set|edit|confirm|done|drop)|lesson\s+["']?(add|repeat))\b/i;
+const OWNER_CMD = /(taskmote|harness)(\.(js|cmd))?["']?\s+(goal\s+["']?(set|edit|confirm|done|drop)|lesson\s+["']?(add|repeat))\b/i;
 const API_CMD = /\/m\/goals(?![\w-])/i;
 function beforeTool(ctx) {
   if (!inTask()) return null;
@@ -69,7 +69,7 @@ const lessonRepeat = ctx => {
   return r.error ? fail(r) : { status: 200, json: { lesson: S.lessonView(r.lesson, win(ctx)) } };
 };
 
-// ---- commands: dantomation goal ..., dantomation lesson ...
+// ---- commands: taskmote goal ..., taskmote lesson ...
 const GOAL_USAGE = 'usage: goal [show] | goal interview | goal set "<your words>" [--done "<text>"] [--out "<text>"] | goal edit [--done "<text>"] [--out "<text>"] | goal confirm | goal done | goal drop';
 const LESSON_USAGE = 'usage: lesson list | lesson add "<what went wrong>" --missed "<which check missed it>" --fix "<fix>" | lesson repeat <id>';
 function bad(msg, code) { console.error(msg); process.exitCode = code || 2; return { ok: false }; }
@@ -161,7 +161,7 @@ function statusLines(J, ctx) {
   const data = S.load(dirOf(ctx));
   const lines = [];
   const g = S.activeGoal(data);
-  if (g) lines.push(`goal: ${clip(g.verbatim, 80)} (${g.confirmed ? 'confirmed' : 'NOT confirmed: dantomation goal confirm'})`);
+  if (g) lines.push(`goal: ${clip(g.verbatim, 80)} (${g.confirmed ? 'confirmed' : 'NOT confirmed: taskmote goal confirm'})`);
   const t = S.now();
   const stale = data.lessons.filter(l => S.status(l, win(ctx), t) === 'stale').length;
   if (data.lessons.length) lines.push(`lessons: ${data.lessons.length}${stale ? `, ${stale} stale (repeats did not drop)` : ''}`);

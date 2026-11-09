@@ -1,6 +1,6 @@
 // Copyright 2026 Milind Soni and OpenMausBot contributors
 // Licensed under the Apache License, Version 2.0 (see LICENSE-APACHE at the repo root)
-// Modified by dantomation contributors
+// Modified by taskmote contributors
 // Derived from the original: only the framed layout (language, wrap, save, copy) is kept; the hover plate, its
 // popover menu and the advanced-mode switch are cut. Highlighting stays lazy and uses the JS regex engine (no wasm).
 // Security: Shiki's output is generator-escaped; nothing else reaches the DOM as HTML.

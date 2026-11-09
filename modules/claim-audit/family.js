@@ -1,5 +1,6 @@
 'use strict';
-// Model family from an engine/model name. Used only to check that the reviewer is
+// Model family from an engine/model name. Used only for the no-engine path (engine_name empty); a
+// configured engine uses the owner-written engines.<name>.family instead. Used only to check that the reviewer is
 // not the same family as the model that wrote the report. A name we cannot place
 // is "unknown" and is refused as a reviewer: a wrong guess would defeat the point.
 const FAMILIES = [

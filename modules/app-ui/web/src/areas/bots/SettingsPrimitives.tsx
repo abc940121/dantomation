@@ -1,6 +1,6 @@
 // Copyright 2026 Milind Soni and OpenMausBot contributors
 // Licensed under the Apache License, Version 2.0 (see LICENSE-APACHE at the repo root)
-// Modified by dantomation contributors
+// Modified by taskmote contributors
 // Settings building blocks: Switch, Card, SettingRow. Derived from OMB SettingsPrimitives.tsx, trimmed to
 // the pieces this area uses (no icon library, no copy-to-clipboard, no "simple look" variants).
 import { useId, type ComponentProps, type ReactNode } from "react";

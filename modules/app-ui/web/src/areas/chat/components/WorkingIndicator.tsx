@@ -1,6 +1,6 @@
 // Copyright 2026 Milind Soni and OpenMausBot contributors
 // Licensed under the Apache License, Version 2.0 (see LICENSE-APACHE at the repo root)
-// Modified by dantomation contributors
+// Modified by taskmote contributors
 // Duty-cycled: a spinner repaints every vsync, so these dots hold opacity steps and the timer writes its own text node
 // once a second instead of committing through React.
 import { useEffect, useRef } from "react";

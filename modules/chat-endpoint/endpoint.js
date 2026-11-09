@@ -126,7 +126,7 @@ function makeDeliver(ctx, deps = {}) {
       'Your memory: do not store these room lines as memory; only your own exchanges with the human count.',
     ].filter(Boolean).join('\n');
 
-    const session = String(e.session_prefix === undefined ? 'dantomation:' : e.session_prefix) + room;
+    const session = String(e.session_prefix === undefined ? 'taskmote:' : e.session_prefix) + room;
     const memberId = String(e.member_id || member.id);
     const headers = { 'content-type': 'application/json', authorization: 'Bearer ' + token, 'x-session-id': session };
     const post = (obj, sig) => doFetch(url, { method: 'POST', headers, body: JSON.stringify(obj), redirect: 'manual', signal: sig });

@@ -55,7 +55,7 @@ function cmdToken(args) {
   if (given) console.log('This is the token you supplied; it is not printed again.');
   else console.log(`\nYour worker token (shown ONCE; it is not printed again):\n\n    ${token}\n\nCopy it to the main server now. Whoever has it can send jobs to this machine's worker, so do not paste it in chat or a URL.`);
   console.log(`\nNext steps:
-  1. Put the token on the main server (S1): "dantomation token new" makes the server's token; if the server
+  1. Put the token on the main server (S1): "taskmote token new" makes the server's token; if the server
      has one already, run  node modules/worker/setup.js token --force --set <server token>  here instead.
   2. In this machine's config (${require('../../lib/config').file()}) add:
        "modules": { "worker": true },
@@ -96,12 +96,12 @@ async function cmdCheck(args) {
   if (!token) { console.error(`The token file ${file} is empty. Run:  node modules/worker/setup.js token --force`); return 1; }
   const r = await get(url, token);
   if (r.error) {
-    console.error(`CANNOT REACH ${url.origin} (${r.error}).\n  - Is the server running (node bin/dantomation.js serve)?\n  - Is it set to listen on the LAN (config server.host), not only 127.0.0.1?\n  - Does the server's firewall allow inbound TCP ${url.port || 80} from this machine?`);
+    console.error(`CANNOT REACH ${url.origin} (${r.error}).\n  - Is the server running (node bin/taskmote.js serve)?\n  - Is it set to listen on the LAN (config server.host), not only 127.0.0.1?\n  - Does the server's firewall allow inbound TCP ${url.port || 80} from this machine?`);
     return 1;
   }
   if (r.status === 401 || r.status === 403) { console.error(`The server at ${url.origin} answered but REFUSED the token (HTTP ${r.status}). The token here and on the server differ; see the "token" step.`); return 1; }
   if (r.status >= 200 && r.status < 300) { console.log(`OK: ${url.origin} is reachable and accepted the token.`); return 0; }
-  console.error(`The server answered HTTP ${r.status}, which was not expected. Is that really the dantomation server?`);
+  console.error(`The server answered HTTP ${r.status}, which was not expected. Is that really the taskmote server?`);
   return 1;
 }
 
