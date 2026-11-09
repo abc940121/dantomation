@@ -30,7 +30,7 @@ The topic is a secret: set it with `node bin/harness.js secret ntfy topic`; it i
 - `app_url` string, default empty
 - `include_title` boolean, default false
 - `kind_task_finished`, `kind_task_blocked`, `kind_approval_waiting` booleans, default true
-- `max_per_minute` integer 1..600, default 20; over the cap, extra finished pings are held and sent as one summary ("N pings held, latest: finished <id>"); blocked and approval pings are never held
+- `max_per_minute` integer 1..600, default 20; over the cap, extra finished pings are held and sent as one summary ("N pings held, latest: finished <id>"); blocked and approval pings are never held, and a failed one stays in `status` until one of its kind succeeds; held pings still pending when the process exits normally are sent then (a hard `process.exit` skips this)
 - `timeout_ms` integer 500..4500, default 4000
 
 A failed send never stops a task. `taskmote status` shows one ntfy line: no topic (silent), the last ping sent, or the last failure and which setting to fix. Events reach this module only inside the process that emits them (no cross-process transport yet), so a card created in another process does not ping.

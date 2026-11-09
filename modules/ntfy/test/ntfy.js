@@ -122,6 +122,26 @@ const TOPIC = 'zq-secret-topic-91x';
     await M.emit(reg.mods, 'task.end', { task_id: 'f7', code: 0, workdir: '/w' });
     await settle();
     check('counter reset after the summary', hits[hits.length - 1].body === 'Task finished: f7', hits[hits.length - 1].body);
+    // exit with a backlog: beforeExit sends it past the cap (the flush timer is unref'd and would never fire)
+    for (let i = 8; i <= 9; i++) await M.emit(reg.mods, 'task.end', { task_id: 'f' + i, code: 0, workdir: '/w' });
+    await settle();
+    b = hits.length;
+    check('beforeExit flush is registered', process.listeners('beforeExit').includes(reg.api('ntfy').flushHeld));
+    await reg.api('ntfy').flushHeld();
+    check('exit flush sends the held backlog despite the cap', hits.length - b === 1 && hits[hits.length - 1].body === '2 pings held, latest: finished f9', hits.length - b + ' ' + (hits[hits.length - 1] || {}).body);
+    // a failed approval ping stays in status after a later finished ping succeeds
+    sentReset();
+    mode = 'err';
+    await M.emit(reg.mods, 'card.created', { card_id: 'cx', task_id: 'ax', summary: 's' });
+    await settle();
+    mode = 'ok';
+    await M.emit(reg.mods, 'task.end', { task_id: 'fx', code: 0, workdir: '/w' });
+    await settle();
+    const st5 = await status(reg);
+    check('failed approval ping still shown after a later success', /last ping sent .*\(task_finished\); last approval_waiting ping FAILED .*HTTP 500/.test(st5), st5);
+    await M.emit(reg.mods, 'card.created', { card_id: 'cy', task_id: 'ay', summary: 's' });
+    await settle();
+    check('cleared once an approval ping succeeds', !/FAILED/.test(await status(reg)));
     check('no message or header ever holds the topic', hits.every(h => !h.body.includes(TOPIC) && !JSON.stringify(h.headers).includes(TOPIC)));
 
     reg = mk({ server: 'ftp://x.example' });

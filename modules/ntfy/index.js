@@ -46,7 +46,7 @@ async function ping(ctx, kind, taskId, extra, flush) {
   const now = Date.now();
   while (sent.length && now - sent[0] > WINDOW_MS) sent.shift();
   const capped = sent.length >= s.max_per_minute;
-  if (capped && (flush || !PRIORITY_KINDS.has(kind))) {
+  if (capped && flush !== 'exit' && (flush || !PRIORITY_KINDS.has(kind))) {
     if (!flush) { held.count++; held.kind = kind; held.id = id; held.ctx = ctx; }
     scheduleFlush(sent[0] + WINDOW_MS - now + 50);
     if (!flush) record(ctx, kind, id, false, 0, 'rate_limited');
@@ -82,6 +82,14 @@ async function ping(ctx, kind, taskId, extra, flush) {
 
 const summary = b => `${b.n} pings held, latest: ${b.kind}${b.id ? ' ' + b.id : ''}`;
 
+// The process is about to exit with a backlog (the flush timer is unref'd): send it now, past the cap.
+function flushHeld() {
+  if (!held.count || !held.ctx) return Promise.resolve();
+  if (held.timer) { clearTimeout(held.timer); held.timer = null; }
+  return ping(held.ctx, held.kind, held.id, null, 'exit').catch(() => { /* a flush never throws */ });
+}
+process.on('beforeExit', flushHeld); // held.count is 0 after the send, so this does not loop
+
 // A held backlog must not wait forever: when the minute window frees, send one coalesced message.
 function scheduleFlush(ms) {
   if (held.timer) return;
@@ -106,9 +114,9 @@ const WHY = {
   timeout: 'the server did not answer within "timeout_ms"',
   network: 'could not reach the server (check "server" and the network)',
 };
-function lastSend(J) {
+function lastSend(J, pick = () => true) {
   const recs = (J && J.readAll ? J.readAll().records : []);
-  for (let i = recs.length - 1; i >= 0; i--) if (recs[i].type === 'ntfy_sent' && recs[i].module === 'ntfy') return recs[i];
+  for (let i = recs.length - 1; i >= 0; i--) if (recs[i].type === 'ntfy_sent' && recs[i].module === 'ntfy' && pick(recs[i])) return recs[i];
   return null;
 }
 function statusLine(J, ctx) {
@@ -119,7 +127,12 @@ function statusLine(J, ctx) {
   const r = lastSend(J);
   if (!r) return 'ntfy: topic set; no ping sent yet';
   const when = String(r.ts || '').slice(0, 16).replace('T', ' ');
-  if (r.ok) return `ntfy: topic set; last ping sent ${when} (${r.kind})`;
+  if (r.ok) {
+    // a failed blocked/approval ping stays visible after later pings succeed, until one of its kind succeeds
+    const p = lastSend(J, x => x.kind !== KINDS.finished);
+    const pw = p && !p.ok ? `; last ${p.kind} ping FAILED ${String(p.ts || '').slice(0, 16).replace('T', ' ')}: ${WHY[p.why] || (p.status ? `the server answered HTTP ${p.status}` : 'unknown error')}` : '';
+    return `ntfy: topic set; last ping sent ${when} (${r.kind})${pw}`;
+  }
   const why = WHY[r.why] || (r.status ? `the server answered HTTP ${r.status}` : 'unknown error');
   return `ntfy: topic set; last ping FAILED ${when} (${r.kind}): ${why}`;
 }
@@ -160,5 +173,5 @@ module.exports = {
     'card.created': safely(({ task_id }, ctx) => ping(ctx, 'approval', task_id)),
   },
   statusLines: (J, ctx) => { try { return [statusLine(J, ctx)]; } catch { return ['ntfy: status unreadable']; } },
-  api: { serverUrl, topicOk, reset(windowOnly) { sent.length = 0; if (windowOnly) return; held.count = 0; held.kind = held.id = null; if (held.timer) { clearTimeout(held.timer); held.timer = null; } } }, // reset: tests only
+  api: { serverUrl, topicOk, flushHeld, reset(windowOnly) { sent.length = 0; if (windowOnly) return; held.count = 0; held.kind = held.id = null; if (held.timer) { clearTimeout(held.timer); held.timer = null; } } }, // reset: tests only
 };
