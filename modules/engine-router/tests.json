@@ -1,0 +1,5 @@
+{
+  "suites": [
+    { "label": "engine-router", "file": "test/run.js", "needs": ["engine-router"] }
+  ]
+}

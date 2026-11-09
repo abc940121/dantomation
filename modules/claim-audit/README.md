@@ -41,3 +41,29 @@ The protocol (`config/protocol.md`, rule 8) asks the agent to add one citation t
 - Only the final message (the engine's `result`, or the last assistant text) is audited, and only when the engine log has it. A task that ends without one records "no final message found".
 - Quotes are matched after collapsing whitespace; tool results that the engine truncated cannot be cited past the truncation.
 - Sentence splitting is simple (punctuation and line breaks); a file name or version followed by a space and a period may split a sentence.
+
+## Evidence additions
+
+### Flag event and reminder
+- A report with unverified claims emits `claim-audit.flagged {task_id, checked, unverified}` after the `claim_audit` record (other modules can listen).
+- `prepareTurn` adds one line asking the agent to cite, and on a resume after a flagged report it says how many claims were flagged. Turn off with `ask_to_cite: false`.
+
+### Interrogate review (optional)
+Set `reviewer_engine` to a model from a different family than the worker. When a report has a flagged claim, or a verified claim that mentions a high-stakes word, the module writes up to 3 short questions ("Which line shows that ...?") and stores them. Answers are checked like any citation and stored as supported or unsupported. `status` shows `interrogation: <status> (N questions ...)`.
+
+Status values: `pending_engine` (questions stored, no reviewer client yet), `answered`, `refused` (same or unknown family), `engine_error`.
+
+Limit: core has no call that lets a module run another engine, so nothing is sent today. Questions are stored; a client registered with `ctx.api('claim-audit').setReviewerClient(async ({engine, task_id, questions}) => [answers])` is used when present. Without one you can read them with `node bin/harness.js claim-questions <task_id>` and record answers from an outside run with `node bin/harness.js claim-answer <task_id> "<answer 1>" "<answer 2>" "<answer 3>"`.
+
+### Settings (config section `claim_audit`)
+| Key | Default | Meaning |
+|---|---|---|
+| `ask_to_cite` | true | cite-your-evidence line in the engine prompt |
+| `reviewer_engine` | "" | reviewer model name; empty = interrogation off |
+| `worker_model` | "claude" | worker model name; reviewer family must differ |
+| `high_stakes_words` | deploy, production, migrat, delete, security, payment, release, push, merge, ... | words that make a verified claim also questioned |
+
+### Turn it on
+    "modules": { "claim-audit": true }
+    "claim_audit": { "reviewer_engine": "gpt-5", "worker_model": "claude-sonnet" }
+The second line is optional. Off by default.

@@ -1,11 +1,6 @@
 {
   "suites": [
-    {
-      "label": "claim-audit",
-      "file": "test/claim-audit.js",
-      "needs": [
-        "claim-audit"
-      ]
-    }
+    { "label": "claim-audit", "file": "test/claim-audit.js", "needs": ["claim-audit"] },
+    { "label": "claim-audit", "file": "test/run.js", "needs": ["claim-audit"] }
   ]
 }

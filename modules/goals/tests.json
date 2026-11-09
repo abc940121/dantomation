@@ -1,0 +1,9 @@
+{
+  "suites": [
+    {
+      "label": "goals",
+      "file": "test/run.js",
+      "needs": ["goals"]
+    }
+  ]
+}

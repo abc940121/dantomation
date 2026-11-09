@@ -1,0 +1,9 @@
+{
+  "suites": [
+    {
+      "label": "task-board",
+      "file": "test/run.js",
+      "needs": ["task-board"]
+    }
+  ]
+}

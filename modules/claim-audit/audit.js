@@ -128,3 +128,19 @@ function auditReport(reportText, evidence) {
 }
 
 module.exports = { auditReport, splitSentences, isClaim };
+
+// Do the citations inside a piece of text (a reviewer answer) point at real evidence?
+// -> { cited, ok, reasons }. ok needs at least one citation and no bad one.
+function checkCitations(text, evidence) {
+  const ev = evidence || {};
+  const s = String(text == null ? '' : text);
+  const refs = [...s.matchAll(CITE_J)].map(m => ['j', m[1]]).concat([...s.matchAll(CITE_T)].map(m => ['t', m[1]]));
+  const reasons = [];
+  for (const [kind, v] of refs) {
+    const r = kind === 'j' ? resolveJournal(v, ev) : checkQuote(v, '', ev);
+    if (!r.ok) reasons.push(r.reason);
+  }
+  return { cited: refs.length, ok: refs.length > 0 && !reasons.length, reasons };
+}
+module.exports.checkCitations = checkCitations;
+module.exports.CITE_ANY = CITE_ANY;
