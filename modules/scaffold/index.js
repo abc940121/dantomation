@@ -1,5 +1,5 @@
 'use strict';
-// scaffold: `taskmote new-module <name> [--from-skill <dir>] [--force]` writes a new
+// scaffold: `taskmote dev new-module <name> [--from-skill <dir>] [--force]` writes a new
 // module folder under modules/ (see docs/MODULES.md, "From a skill"). It was a
 // trunk verb; it is now this module's command. Turning the module off removes only the verb.
 const { cli } = require('./scaffold');

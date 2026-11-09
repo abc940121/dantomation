@@ -174,7 +174,7 @@ async function undoDirect(args) {
 
 // Any other verb: a command of an enabled module. If none claims it, look for a module folder
 // that offers it, so a verb whose module is off says what to turn on.
-async function moduleVerb(args) {
+async function moduleVerb(args, verb = process.argv[2]) {
   const mods = await loadModules();
   const claimers = M.verbClaimers(mods, verb);
   if (claimers.length > 1) fail(`taskmote: "${verb}" is offered by more than one enabled module (${claimers.join(', ')}); turn all but one off.`, 2);
@@ -187,8 +187,14 @@ async function moduleVerb(args) {
 }
 
 const [verb, ...rest] = process.argv.slice(2);
+// Builder and debugging verbs live under `taskmote dev <verb>` so a new user sees fewer commands.
+// The old top-level spelling still runs and says the new one.
+const DEV = ['hello', 'new-module', 'engine-router', 'repo-map', 'trace', 'watchdog'];
+const DEV_USAGE = `usage: taskmote dev <${DEV.join('|')}> ...`;
+const devVerb = async args => { const [v, ...a] = args; if (!DEV.includes(v)) fail(DEV_USAGE, 2); return moduleVerb(a, v); };
 // Trunk verbs are looked up first (own keys only), so a module can never shadow them.
 const TRUNK = { do: doVerb, status: statusVerb, undo: undoVerb,
+  dev: devVerb,
   serve: async () => { const w = C.warn(); if (w) console.error(w); await require('../lib/server').serve(); },
   token: async () => {
     if (rest[0] !== 'new') fail(USAGE, 2);
@@ -196,5 +202,6 @@ const TRUNK = { do: doVerb, status: statusVerb, undo: undoVerb,
     console.log(`${worker ? 'worker ' : ''}token written to ${require('../lib/server').tokenNew(worker ? 'worker' : undefined)} (owner-only); send it as: Authorization: Bearer <token>${worker ? ' (it may only call /api/worker/ and module routes marked access: worker)' : ''}`);
   } };
 const run = Object.prototype.hasOwnProperty.call(TRUNK, verb) ? TRUNK[verb] : (verb && moduleVerb);
+if (DEV.includes(verb)) console.error(`note: "taskmote ${verb}" is now "taskmote dev ${verb}"; the old spelling still works for now.`);
 if (!run) fail(USAGE, 2);
 else run(rest).catch(e => fail(`taskmote: ${e && e.stack || e}`, 1));

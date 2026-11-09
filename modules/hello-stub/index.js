@@ -24,7 +24,7 @@ module.exports = {
     return ['hello_stub', `the word "${w}" is blocked by hello-stub`];
   },
 
-  // Command: `harness hello [name]` / `taskmote hello [name]`.
+  // Command: `taskmote dev hello [name]`.
   commands: {
     // ctx.state.append writes a journal record tagged module: "hello-stub".
     async hello(args, ctx) {

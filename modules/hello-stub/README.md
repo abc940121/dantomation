@@ -6,7 +6,7 @@ The template module. It uses every part of module contract 1 once (see
 | Part | Here |
 |---|---|
 | hook | `beforeTool` blocks a shell command containing `block_word` (empty = off) |
-| command | `harness hello [name]` prints the greeting |
+| command | `taskmote dev hello [name]` prints the greeting |
 | route | `GET /m/hello-stub/hello?name=x` returns `{greeting}` |
 | panel | `ui/hello.js`, mounted in the sidebar |
 | job | `tick`, every 60 s, counts ticks (`api.ticks()`) |

@@ -22,9 +22,9 @@ Off by default.
 
 ## Use
 
-    taskmote trace predict <task_id> <minutes> [expected result]   (line owner from env HARNESS_LINE_OWNER, else owner)
-    taskmote trace list
-    taskmote trace show <task_id>
+    taskmote dev trace predict <task_id> <minutes> [expected result]   (line owner from env HARNESS_LINE_OWNER, else owner)
+    taskmote dev trace list
+    taskmote dev trace show <task_id>
 
 Routes under `/m/trace/`: `GET /tasks`, `GET /tasks/:id` (timeline), `GET /overruns?line_owner=x`, `POST /tasks/:id/predict` `{minutes|duration_ms, result?, line_owner?}` and `POST /tasks/:id/result` `{result}` (both open to a worker). Panel "Task trace" lists tasks and shows a timeline on click.
 

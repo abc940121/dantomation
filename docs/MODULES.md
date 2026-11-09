@@ -240,12 +240,12 @@ Handlers in the same process see each other's emits; a nested emit deeper than 8
 
 It serves no HTTP. The server (S1) and UI (S2) are built on it.
 
-## From a skill: taskmote new-module
+## From a skill: taskmote dev new-module
 
 This verb belongs to the `scaffold` module (on by default). With it off, the verb prints "turn on the scaffold module".
 
 ```
-taskmote new-module <name> [--from-skill <dir>] [--force]
+taskmote dev new-module <name> [--from-skill <dir>] [--force]
 ```
 
 Turns a skill folder (`SKILL.md` with YAML frontmatter `name` and `description`,

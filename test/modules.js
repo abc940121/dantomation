@@ -49,6 +49,15 @@ for (const rel of ['lib/config.js', 'lib/modules.js', 'lib/preset.js', 'presets/
   res['taskmote constructor: usage, exit 2 (no prototype lookup)'] = proto.status === 2 && /usage:/.test(proto.stderr);
   const sc = tm(cfgFile('scaffold-off', { modules: { ...OFF, scaffold: false } }), 'new-module', 'zz');
   res['taskmote new-module with scaffold off names the module, exit 2'] = sc.status === 2 && /needs the scaffold module/.test(sc.stderr);
+  res['old top-level new-module names the new spelling'] = /is now "taskmote dev new-module"/.test(sc.stderr);
+  const dsc = tm(cfgFile('scaffold-off-dev', { modules: { ...OFF, scaffold: false } }), 'dev', 'new-module', 'zz');
+  res['taskmote dev new-module with scaffold off names the module, no old-spelling note'] = dsc.status === 2 && /needs the scaffold module/.test(dsc.stderr) && !/is now/.test(dsc.stderr);
+  const dv = tm(off, 'dev', 'nope');
+  res['taskmote dev <unknown>: dev usage, exit 2'] = dv.status === 2 && /usage: taskmote dev </.test(dv.stderr);
+  const hon = cfgFile('hello-on', { modules: { ...OFF, 'hello-stub': true } });
+  const dh = tm(hon, 'dev', 'hello', 'zz'), oh = tm(hon, 'hello', 'zz');
+  res['taskmote dev hello runs the module verb'] = dh.status === 0 && !/is now/.test(dh.stderr);
+  res['taskmote hello (old spelling) still runs and names the new one'] = oh.status === 0 && /is now "taskmote dev hello"/.test(oh.stderr);
   const src = fs.readFileSync(path.join(ROOT, 'bin', 'taskmote.js'), 'utf8');
   res['taskmote looks up trunk verbs before module verbs'] = src.includes('Object.prototype.hasOwnProperty.call(TRUNK, verb) ? TRUNK[verb] : (verb && moduleVerb)');
 }

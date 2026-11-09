@@ -6,7 +6,7 @@ cut to a character budget. JS/TS, Python, Go, Rust, Java, C# and Markdown headin
 Enable with `"modules": { "repo-map": true }`. Add `"repo_map": { "inject": true }` to put the map
 in each turn prompt (default false).
 
-- Command: `repo-map [path]` prints the map of a folder (default: the configured root or the current folder).
+- Command: `taskmote dev repo-map [path]` prints the map of a folder (default: the configured root or the current folder).
 - Route (owner): `GET /m/repo-map/map[?path=sub/folder]`.
 - Settings: `inject`, `root`, `max_chars`, `max_files`, `max_bytes_total`, `max_file_bytes`,
   `max_symbols_per_file`, `cache_entries`, `use_git`.

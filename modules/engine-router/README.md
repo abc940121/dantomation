@@ -26,7 +26,7 @@ not run.
 - `pickEngine(role, engines, failed)`: first engine of the role not yet failed; roles run out into the other role, then `exhausted`.
 - Failure counter per task step, fed by `tool.done` (ok false) and a nonzero `task.end`.
 - Half-done check: successful mutating tool calls since the last engine start, with no reply after.
-- Output: a `router_switch` journal record, a "Context from modules" line, `GET /m/engine-router/decide?task_id=&step=`, and `harness engine-router <task_id> [step]` (owner only).
+- Output: a `router_switch` journal record, a "Context from modules" line, `GET /m/engine-router/decide?task_id=&step=`, and `taskmote dev engine-router <task_id> [step]` (owner only).
 
 ## Settings (config section `engine_router`)
 
