@@ -1,6 +1,6 @@
 [English](README.md) | **繁體中文**
 
-> 以英文版為準；本翻譯同步至英文版 README.md（git blob `2467967`，可用 `git hash-object README.md` 核對）。
+> 以英文版為準；本翻譯同步至英文版 README.md（git blob `7fd16be`，可用 `git hash-object README.md` 核對）。
 
 # Taskmote
 
@@ -13,6 +13,12 @@
 > **配對過的手機擁有你的權限。** 預設（`engine.profile: "full"`）每個 bot 都是一個持續存在的 Claude Code 工作階段，使用你自己的 Claude 設定、工具與 MCP 伺服器。任何拿著已配對裝置的人，都能讓它做你坐在這台電腦前能做的事；只有紅線動作會被防護擋下，或等你在卡片上同意。請把配對當成交出一台已登入的筆電：只配對你自己的裝置，用 `node bin/harness.js devices` 列出，用 `node bin/harness.js revoke <id>` 移除。若要回到舊的窄工具白名單，把 `engine.profile` 設為 `"locked"`。
 
 Taskmote 在 2026 年 11 月前叫做 *dantomation*。舊指令名稱 `dantomation` 仍可作為別名使用。
+
+## Try it in 60 seconds
+
+`node bin/taskmote.js demo` 不需任何設定，也不會碰你自己的設定：在用完即丟的沙盒裡，一個腳本代理走過真正的防護、審核卡片與日誌。
+你會看到：先存檢查點的修改、永遠擋下的紅線、當機後續跑、在瀏覽器回覆的審核卡片，以及復原。
+設定 `TASKMOTE_DEMO_AUTO=yes`（或 `no`）可不用瀏覽器自動回覆卡片。
 
 ## Why
 

@@ -8,6 +8,7 @@
 //   taskmote token new        write a fresh owner-only API token
 // Any other verb is a module command (docs/MODULES.md, "commands"); a verb whose module is off
 // prints a one-line hint naming the module that offers it.
+//   taskmote demo             a 60-second tour in a throwaway sandbox (modules/demo)
 // If a server is running for this state dir, do/status/undo talk to it; otherwise
 // (or with HARNESS_NO_SERVER=1) they behave exactly as before.
 // It reuses bin/harness.js (do) and the checkpoint module's `undo` command; the
@@ -22,6 +23,32 @@ const M = require('../lib/modules');
 const HARNESS = path.join(__dirname, 'harness.js');
 const USAGE = 'usage: taskmote do "<request>" | do | status | undo | serve | token new [--worker] | <module verb>';
 const fail = (msg, code = 1) => { console.error(msg); process.exit(code); };
+
+// demo also runs before the config is read: it must not need, read or touch the owner's config or state.
+// It makes a throwaway sandbox (a temp config that turns on only the demo module, temp state, work and
+// log folders), re-runs this command inside it, and removes the sandbox when that exits (Ctrl-C too).
+if (process.argv[2] === 'demo' && !process.env.TASKMOTE_DEMO_SANDBOX) {
+  const fs = require('fs'), os = require('os');
+  // Sandboxes a killed earlier run could not remove (older than a day) are swept first.
+  try { for (const n of fs.readdirSync(os.tmpdir())) if (n.startsWith('taskmote-demo-')) { const p = path.join(os.tmpdir(), n); if (Date.now() - fs.statSync(p).mtimeMs > 864e5) fs.rmSync(p, { recursive: true, force: true }); } } catch { /* best effort */ }
+  const sb = fs.mkdtempSync(path.join(os.tmpdir(), 'taskmote-demo-'));
+  fs.writeFileSync(path.join(sb, 'config.json'), JSON.stringify({ owner_name: 'you', modules: { demo: true } }));
+  const env = { ...process.env, TASKMOTE_DEMO_SANDBOX: sb, HARNESS_CONFIG: path.join(sb, 'config.json'), HARNESS_STATE_DIR: path.join(sb, 'state'), HARNESS_WORK_DIR: path.join(sb, 'work'), HARNESS_LOG_DIR: path.join(sb, 'logs') };
+  for (const k of ['HARNESS_OWNER', 'HARNESS_TASK_ID', 'HARNESS_TASK_DIR', 'HARNESS_NO_SERVER', 'HARNESS_ENGINE_SCRIPT']) delete env[k];
+  // The demo agent is scripted and makes no model or network call; model keys are removed anyway, so nothing in it can spend money.
+  for (const k of Object.keys(env)) if (/^(ANTHROPIC|OPENAI|OPENROUTER|GEMINI|GOOGLE_API|DEEPSEEK|AZURE_OPENAI|MISTRAL|GROQ|XAI)_|_API_KEY$|_AUTH_TOKEN$/i.test(k)) delete env[k];
+  const child = require('child_process').spawn(process.execPath, process.argv.slice(1), { env, stdio: 'inherit' });
+  const clean = () => { try { fs.rmSync(sb, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); } catch (e) { console.error(`taskmote: could not remove the demo sandbox ${sb}: ${e.message}`); } };
+  process.on('SIGINT', () => {}); // Ctrl-C reaches the child too (same console / process group); it stops its own processes first
+  for (const sig of ['SIGTERM', 'SIGHUP']) process.on(sig, () => { try { child.kill(); } catch { /* gone */ } });
+  child.on('exit', (code, signal) => { clean(); process.exit(code === null ? (signal ? 1 : 0) : code); });
+  return;
+}
+// Inside the sandbox the guard must match the config this run was given, so a stray TASKMOTE_DEMO_SANDBOX
+// in the environment can never make `demo` run against the owner's own config and state.
+if (process.argv[2] === 'demo' && process.env.HARNESS_CONFIG !== path.join(process.env.TASKMOTE_DEMO_SANDBOX, 'config.json')) {
+  fail('taskmote: TASKMOTE_DEMO_SANDBOX is set but this is not a demo sandbox; unset it and run taskmote demo again', 2);
+}
 
 let CONFIG;
 try { CONFIG = C.load(); } catch (e) { fail(`taskmote: ${e.message}; fix or remove it (HARNESS_CONFIG / ~/.harness/config.json)`, 2); }

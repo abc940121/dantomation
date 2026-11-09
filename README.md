@@ -41,6 +41,12 @@ Phone approval cards need the `v1` preset: see [Try the v1 base](#try-the-v1-bas
 
 Taskmote was called *dantomation* until November 2026. The old command name `dantomation` still works as an alias.
 
+## Try it in 60 seconds
+
+`node bin/taskmote.js demo` needs no setup and never touches your own config: in a throwaway sandbox a scripted agent goes through the real guard, approval card and journal.
+You see an edit with its checkpoint, a red line blocked for good, a crash and resume, an approval card you answer in the browser, and an undo.
+Set `TASKMOTE_DEMO_AUTO=yes` (or `no`) to answer the card without the browser.
+
 ## Why
 
 Coding agents are good at doing things, but they are less good at stopping cleanly when your laptop sleeps, telling you honestly whether a test passed, or waiting for you before they `git push`. Taskmote is a small wrapper around Claude Code that handles those parts: it keeps a crash-safe journal, gives one task one executor, takes a checkpoint before every change, and stops risky actions until you say yes.
