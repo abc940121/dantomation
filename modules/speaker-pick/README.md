@@ -30,6 +30,8 @@ single recipient. Until then the module is advisory via its route.
 
 ## Model mode
 
-No module-reachable engine call exists today. `api.setModelFn(fn)` takes an injected
-`fn({prompt, names, signal}) -> Promise<string>`. Contract v6 `ctx.engines.run` (pending)
-will supply it; without a function, `model` mode falls back to keyword, then round robin.
+Uses the contract 6 seam (manifest stays `contract: 2`, which trunk currently requires). Set `speaker_pick.model_engine` to the name of an engine listed in config
+`engines`; model mode then calls `ctx.engines.run(engine, prompt, {timeoutMs: model_timeout_ms})`
+(prompt on stdin; trimmed stdout must equal one listed bot id). Default `""` (unset): no
+engine call, and `api.setModelFn(fn)` (if injected) is used, else model mode falls back to
+keyword, then round robin. A timeout, error, non-zero exit or unlisted engine falls back the same way.

@@ -38,7 +38,7 @@ The protocol (`config/protocol.md`, rule 8) asks the agent to add one citation t
 - It reads words, not meaning. A claim phrased without any of the keywords is not seen; an odd phrasing may be taken as a claim or missed. The filter prefers missing a claim to flagging a plan.
 - A verified claim means the cited evidence exists and does not contradict the sentence, not that the sentence is true. A real passing line cited for an unrelated claim ("deploy works [t:"Tests: 39/39 passed"]") is not caught, apart from the file-name and fraction checks.
 - Evidence comes from the engine log in `state/`. An agent with write access to that folder could forge it; this is a guard against honest mistakes and invented citations, not against a hostile agent.
-- Only the final message (the engine's `result`, or the last assistant text) is audited, and only when the engine log has it. A task that ends without one records "no final message found".
+- Only the final message is audited: the reply core journaled for the latest turn (any engine format, including a routed plain-text engine). Journals with no `engine_exit` fall back to the engine stream log's `result` or last assistant text. A turn that ends without a reply records "no final message found".
 - Quotes are matched after collapsing whitespace; tool results that the engine truncated cannot be cited past the truncation.
 - Sentence splitting is simple (punctuation and line breaks); a file name or version followed by a space and a period may split a sentence.
 
@@ -53,13 +53,15 @@ Set `reviewer_engine` to a model from a different family than the worker. When a
 
 Status values: `pending_engine` (questions stored, no reviewer client yet), `answered`, `refused` (same or unknown family), `engine_error`.
 
-Limit: core has no call that lets a module run another engine, so nothing is sent today. Questions are stored; a client registered with `ctx.api('claim-audit').setReviewerClient(async ({engine, task_id, questions}) => [answers])` is used when present. Without one you can read them with `node bin/harness.js claim-questions <task_id>` and record answers from an outside run with `node bin/harness.js claim-answer <task_id> "<answer 1>" "<answer 2>" "<answer 3>"`.
+Engine call (contract 6): set `engine_name` to an entry of config `engines` (owner-listed `bin`/`args`); the module then runs it through `ctx.engines.run` with the questions on stdin (timeout `reviewer_timeout_ms`, capped at config `modules_hook_timeout_ms` minus 500 ms because the call runs inside the `task.end` hook, default 5000, so raise that config value for a slow reviewer; core also caps it at `engines_max_timeout_ms`) and expects a JSON array of answers or numbered lines. With less than 600 ms of hook budget no call is made and the questions stay pending. Every word of `engine_name` and its `engines` entry (`bin`, `args`) is classified: at least one must name `reviewer_engine`'s family and none may name another, else the interrogation is refused (name the family in the engine name if its `bin` does not show it, e.g. `gpt-reviewer`). Only the questions are sent, never journal records or command outputs; the reviewer's citations are checked against the real evidence, so invented ones are stored as unsupported. With `engine_name` empty nothing is sent: questions are stored, a client from `ctx.api('claim-audit').setReviewerClient(fn)` is used when present, or read them with `node bin/harness.js claim-questions <task_id>` and record answers from an outside run with `node bin/harness.js claim-answer <task_id> "<answer 1>" "<answer 2>" "<answer 3>"`.
 
 ### Settings (config section `claim_audit`)
 | Key | Default | Meaning |
 |---|---|---|
 | `ask_to_cite` | true | cite-your-evidence line in the engine prompt |
 | `reviewer_engine` | "" | reviewer model name; empty = interrogation off |
+| `engine_name` | "" | config `engines` entry used for the reviewer call; empty = no engine call |
+| `reviewer_timeout_ms` | 60000 | reviewer call time limit |
 | `worker_model` | "claude" | worker model name; reviewer family must differ |
 | `high_stakes_words` | deploy, production, migrat, delete, security, payment, release, push, merge, ... | words that make a verified claim also questioned |
 

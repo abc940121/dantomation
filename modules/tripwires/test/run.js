@@ -66,8 +66,8 @@ const IPPUB = ['8', '8', '8', '8'].join('.');
     check('off by default: nothing registered', off.settingsFor('tripwires') === null);
     const reg = M.registry({ modules: { tripwires: true }, tripwires: { banned_phrases: ['forbidden words'], retention: 3 } });
     check('on: loads with no errors', reg.errors.length === 0, reg.errors.join(' | '));
-    check('contract 2', reg.modules().find(m => m.name === 'tripwires').contract === 2);
-    check('bad setting rejected', M.registry({ modules: { tripwires: true }, tripwires: { mode: 'block' } }).errors.length > 0);
+    check('contract 2, failMode closed', (() => { const m = reg.modules().find(x => x.name === 'tripwires'); const raw = require('../index'); return m.contract === 2 && raw.failMode === 'closed' && raw.hookTimeoutMs === 1000; })());
+    check('bad setting rejected', M.registry({ modules: { tripwires: true }, tripwires: { mode: 'nope' } }).errors.length > 0);
 
     // ---- task.end flow
     const events = [];
@@ -79,6 +79,37 @@ const IPPUB = ['8', '8', '8', '8'].join('.');
       const cut = !api.beforeReply({ settings: { mode: 'redact', rule_secrets: true } }, `x ${FAKE_KEY}`).includes(FAKE_KEY);
       return keep && cut;
     })());
+    {
+      const mk = (mode, extra) => M.registry({ modules: { tripwires: true }, tripwires: { mode, ...extra } });
+      const hook = async (r, text) => M.beforeReply(r.mods, text, { task_id: 'br1' });
+      const flag = await hook(mk('flag'), `x ${FAKE_KEY}`);
+      check('beforeReply flag: reply unchanged', !flag.blocked && flag.reply === `x ${FAKE_KEY}`);
+      const red = await hook(mk('redact'), `x ${FAKE_KEY} at ${IP10}`);
+      check('beforeReply redact: masked', !red.blocked && !red.reply.includes(FAKE_KEY) && !red.reply.includes(IP10), red.reply);
+      const blk = await hook(mk('block'), `x ${FAKE_KEY}`);
+      check('beforeReply block: blocked, reason has no secret', blk.blocked && blk.code === 'blocked' && /secrets/.test(blk.reason) && !blk.reason.includes('xxxx'), blk.reason);
+      const ok = await hook(mk('block'), 'plain reply, nothing to see');
+      check('beforeReply block: clean reply passes', !ok.blocked && ok.reply === 'plain reply, nothing to see');
+      const bn = await hook(mk('block', { banned_phrases: ['secret sauce'] }), 'the Secret Sauce is here');
+      check('beforeReply block: banned phrase, reason hides it', bn.blocked && !/sauce/i.test(bn.reason), bn.reason);
+      const rl = await hook(mk('block', { rule_secrets: false }), `x ${FAKE_KEY}`);
+      check('beforeReply block: rule toggle honored', !rl.blocked);
+      const hk = mk('block').mods.find(m => m.name === 'tripwires').beforeReply;
+      check('beforeReply tolerates non-string', hk(null, { settings: { mode: 'block' } }) === undefined);
+      const tw = tid => J.readAll().records.filter(r => r.type === 'tripwire' && r.task_id === tid);
+      const rr = mk('redact');
+      await M.beforeReply(rr.mods, `x ${FAKE_KEY}`, { task_id: 'enf-r' });
+      check('redact: masked trip recorded at the hook (enforced)', tw('enf-r').length === 1 && tw('enf-r')[0].rule === 'secrets' && tw('enf-r')[0].enforced === true && !JSON.stringify(tw('enf-r')).includes(FAKE_KEY));
+      const rb = mk('block');
+      const bb = await M.beforeReply(rb.mods, `x ${FAKE_KEY}`, { task_id: 'enf-b' });
+      check('block: withheld trip recorded at the hook (enforced)', bb.blocked && tw('enf-b').length === 1 && tw('enf-b')[0].enforced === true);
+      J.append({ type: 'reply', task_id: 'enf-b', text: '(reply withheld by tripwires)' });
+      await M.emit(rb.mods, 'task.end', { task_id: 'enf-b', code: 0, workdir: tmp });
+      check('block: task.end after a block does not double-record', tw('enf-b').length === 1);
+      await M.beforeReply(rr.mods, 'plain reply', { task_id: 'enf-c' });
+      check('redact: clean reply records nothing', tw('enf-c').length === 0);
+      fs.rmSync(path.join(J.STATE, 'm', 'tripwires', 'trips.json'), { force: true }); // later route checks start from an empty list
+    }
     const run = async (tid, reply, code) => {
       if (reply != null) J.append({ type: 'reply', task_id: tid, text: reply });
       await M.emit(rec.mods, 'task.end', { task_id: tid, code, workdir: tmp });

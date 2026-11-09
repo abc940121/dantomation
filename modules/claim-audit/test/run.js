@@ -81,6 +81,26 @@ const { checkCitations } = require('../audit');
   check('flagged report: audit record and claim-audit.flagged event', audit && audit.unverified === 2 && events.some(([e, p]) => e === 'claim-audit.flagged' && p.unverified === 2 && p.task_id === 't-off'));
   check('no reviewer set: no interrogation', !lastQ('t-off'));
   check('status shows the flagged lines', mod.statusLines(J).some(l => /claims: 3 checked, 2 unverified/.test(l)));
+  {
+    const lastAudit = id => J.readAll().records.filter(r => r.type === 'claim_audit' && r.task_id === id).pop();
+    // a routed plain-text engine writes no stream JSON: the journaled reply is the final message
+    J.append({ type: 'task_start', task_id: 't-plain' });
+    J.append({ type: 'reply', task_id: 't-plain', text: 'The migration is done.' });
+    J.append({ type: 'engine_exit', task_id: 't-plain', code: 0 });
+    await mod.on['task.end']({ task_id: 't-plain' }, mkCtx({}));
+    check('plain-text engine: journaled reply is audited', lastAudit('t-plain') && lastAudit('t-plain').checked === 1 && lastAudit('t-plain').unverified === 1, JSON.stringify(lastAudit('t-plain')));
+    // an earlier turn's stream result is not audited for a later turn
+    seed('t-stale', rep);
+    J.append({ type: 'reply', task_id: 't-stale', text: rep });
+    J.append({ type: 'engine_exit', task_id: 't-stale', code: 0 });
+    J.append({ type: 'reply', task_id: 't-stale', text: 'Nothing to report.' });
+    J.append({ type: 'engine_exit', task_id: 't-stale', code: 0 });
+    await mod.on['task.end']({ task_id: 't-stale' }, mkCtx({}));
+    check('latest turn reply wins over a stale stream result', lastAudit('t-stale') && lastAudit('t-stale').checked === 0, JSON.stringify(lastAudit('t-stale')));
+    J.append({ type: 'engine_exit', task_id: 't-stale', code: 0 });
+    await mod.on['task.end']({ task_id: 't-stale' }, mkCtx({}));
+    check('turn with no reply: no final message (no stale fallback)', /no final message/.test(lastAudit('t-stale').note || ''), JSON.stringify(lastAudit('t-stale')));
+  }
 
   seed('t-same', rep);
   await mod.on['task.end']({ task_id: 't-same' }, mkCtx({ reviewer_engine: 'claude-opus' }));
@@ -108,6 +128,61 @@ const { checkCitations } = require('../audit');
   await mod.on['task.end']({ task_id: 't-err' }, mkCtx({ reviewer_engine: 'gpt-5' }));
   check('engine failure: engine_error, task end still returns', lastQ('t-err').status === 'engine_error');
   mod.api.setReviewerClient(null);
+
+  // ctx.engines.run path (contract 6)
+  const calls = [];
+  const withEngines = (settings, fn) => ({ ...mkCtx(settings), engines: { run: fn } });
+  seed('t-eng', rep);
+  await mod.on['task.end']({ task_id: 't-eng' }, withEngines({ reviewer_engine: 'gpt-5', engine_name: 'gpt-rev' }, async (name, input, o) => { calls.push({ name, input, o }); return { output: 'ok: ' + JSON.stringify(['[t:"Tests: 5/5 passed"]', 'no idea', '[j:s1-write]']), code: 0 }; }));
+  check('engines.run called with name, prompt, timeout', calls.length === 1 && calls[0].name === 'gpt-rev' && /Which line shows/.test(calls[0].input) && calls[0].o.timeoutMs === 4500);
+  check('engine answers stored (2 supported)', lastQ('t-eng').status === 'answered' && I.load(path.join(tmp, 'mstate'), 't-eng').answers.filter(a => a.supported).length === 2);
+  seed('t-eng2', rep);
+  await mod.on['task.end']({ task_id: 't-eng2' }, withEngines({ reviewer_engine: 'gpt-5', engine_name: 'gpt-rev' }, async () => ({ output: ['1. [j:s1-write]', '2. x', '3. y'].join(String.fromCharCode(10)), code: 0 })));
+  check('numbered-line output parsed', I.load(path.join(tmp, 'mstate'), 't-eng2').answers.length === 3 && lastQ('t-eng2').status === 'answered');
+  seed('t-eng3', rep);
+  await mod.on['task.end']({ task_id: 't-eng3' }, withEngines({ reviewer_engine: 'gpt-5', engine_name: 'gpt-rev' }, async () => { throw new Error('timeout'); }));
+  check('engines.run rejection: engine_error', lastQ('t-eng3').status === 'engine_error');
+  seed('t-eng6', rep);
+  let seenMs = 0;
+  await mod.on['task.end']({ task_id: 't-eng6' }, { ...withEngines({ reviewer_engine: 'gpt-5', engine_name: 'gpt-rev' }, async (n, i, o) => { seenMs = o.timeoutMs; return { output: '[]', code: 0 }; }), config: { modules_hook_timeout_ms: 90000 } });
+  check('reviewer timeout: setting wins when the hook budget is larger', seenMs === 60000);
+  seed('t-eng7', rep);
+  let n7 = 0;
+  await mod.on['task.end']({ task_id: 't-eng7' }, { ...withEngines({ reviewer_engine: 'gpt-5', engine_name: 'gpt-rev' }, async () => { n7++; return { output: '[]', code: 0 }; }), config: { modules_hook_timeout_ms: 500 } });
+  check('hook budget too small: no engine call, stays pending_engine', n7 === 0 && lastQ('t-eng7').status === 'pending_engine');
+  seed('t-eng8', rep);
+  let n8 = 0;
+  await mod.on['task.end']({ task_id: 't-eng8' }, { ...withEngines({ reviewer_engine: 'gpt-5', engine_name: 'gpt-rev' }, async () => { n8++; return { output: '[]', code: 0 }; }), config: { engines: { 'gpt-rev': { bin: 'claude', args: ['-p'] } } } });
+  check('engine_name runs the worker family: refused, no call', n8 === 0 && lastQ('t-eng8').status === 'refused');
+  seed('t-eng9', rep);
+  let n9 = 0;
+  await mod.on['task.end']({ task_id: 't-eng9' }, { ...withEngines({ reviewer_engine: 'gpt-5', engine_name: 'gpt-rev' }, async () => { n9++; return { output: '[]', code: 0 }; }), config: { engines: { 'gpt-rev': { bin: 'codex', args: ['exec'] } } } });
+  check('engine_name runs the labelled family: called', n9 === 1);
+  seed('t-eng11', rep);
+  let n11 = 0;
+  await mod.on['task.end']({ task_id: 't-eng11' }, { ...withEngines({ reviewer_engine: 'gpt-5', engine_name: 'rev' }, async () => { n11++; return { output: '[]', code: 0 }; }), config: { engines: { rev: { bin: 'runner', args: ['--fast'] } } } });
+  check('engine nothing identifies: refused as unknown, no call', n11 === 0 && lastQ('t-eng11').status === 'refused');
+  seed('t-eng12', rep);
+  let n12 = 0;
+  await mod.on['task.end']({ task_id: 't-eng12' }, { ...withEngines({ reviewer_engine: 'gpt-5', engine_name: 'rev' }, async () => { n12++; return { output: '[]', code: 0 }; }), config: { engines: { rev: { bin: 'runner', args: ['--model gpt-5 claude-opus'] } } } });
+  check('two families inside one arg string: refused, no call', n12 === 0 && lastQ('t-eng12').status === 'refused');
+  for (const [lbl, spec] of [['bin', { bin: 'claude', args: ['-p'] }], ['model arg', { bin: 'runner', args: ['--model', 'claude-opus'] }]]) {
+    const tid = 't-eng10-' + lbl.replace(' ', '');
+    seed(tid, rep);
+    let n10 = 0;
+    await mod.on['task.end']({ task_id: tid }, { ...withEngines({ reviewer_engine: 'gpt-5', engine_name: 'gpt-reviewer' }, async () => { n10++; return { output: '[]', code: 0 }; }), config: { engines: { 'gpt-reviewer': { ...spec } } } });
+    check('reviewer-looking name hiding a worker-family ' + lbl + ': refused, no call', n10 === 0 && lastQ(tid).status === 'refused');
+  }
+  seed('t-eng5', rep);
+  await mod.on['task.end']({ task_id: 't-eng5' }, withEngines({ reviewer_engine: 'gpt-5', engine_name: 'gpt-rev' }, async () => ({ output: '1. [j:s1-write]', code: 1 })));
+  check('engines.run non-zero exit: engine_error, not answered', lastQ('t-eng5').status === 'engine_error');
+  const before = calls.length;
+  seed('t-eng4', rep);
+  await mod.on['task.end']({ task_id: 't-eng4' }, withEngines({ reviewer_engine: 'gpt-5' }, async () => { calls.push({}); return { output: '[]' }; }));
+  check('engine_name empty: engines.run not used, stays pending_engine', calls.length === before && lastQ('t-eng4').status === 'pending_engine');
+  seed('t-eng5', rep);
+  await mod.on['task.end']({ task_id: 't-eng5' }, withEngines({ reviewer_engine: 'claude-opus', engine_name: 'gpt-rev' }, async () => { calls.push({}); return { output: '[]' }; }));
+  check('same family: refused before any engine call', calls.length === before && lastQ('t-eng5').status === 'refused');
 
   seed('t-clean', 'Tests pass [t:"Tests: 5/5 passed"].');
   await mod.on['task.end']({ task_id: 't-clean' }, mkCtx({ reviewer_engine: 'gpt-5' }));

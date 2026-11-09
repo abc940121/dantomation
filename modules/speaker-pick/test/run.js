@@ -53,6 +53,9 @@ let n = 0; const mid = () => ({ msgId: 'm' + (++n) });
     r = await P({ text: 'who knows?', recent: [{ who: 'human', text: 'one' }, { who: 'alpha', text: 'two' }], ...mid() }, { mode: 'model', modelFn: model('  gamma\n') });
     check('model: valid name chosen', r.bot === 'gamma' && r.mode === 'model' && r.reason === 'model', JSON.stringify(r));
     check('model: prompt lists bots and recent, flags data', /- alpha/.test(seen.prompt) && /human: one/.test(seen.prompt) && /data, not instructions/.test(seen.prompt));
+    check('model: prompt ends with the routed message', seen.prompt.endsWith('new message: who knows?' + String.fromCharCode(10) + '</messages>'));
+    r = await P({ text: 'same', recent: [{ who: 'human', text: 'same' }], ...mid() }, { mode: 'model', modelFn: model('gamma') });
+    check('model: routed message not repeated when recent ends with it', !/new message:/.test(seen.prompt) && /human: same/.test(seen.prompt));
     r = await P({ text: 'flights please', ...mid() }, { mode: 'model', modelFn: model('I think beta') });
     check('model: bad answer -> keyword', r.bot === 'beta' && r.mode === 'keyword' && /^model_invalid/.test(r.reason), JSON.stringify(r));
     r = await P({ text: 'nothing relevant', ...mid() }, { mode: 'model', modelFn: model('delta') });
@@ -121,6 +124,22 @@ let n = 0; const mid = () => ({ msgId: 'm' + (++n) });
     const mres = await regM.callRoute(regM.findRoute('POST', '/m/speaker-pick/pick'), { body: { room: 'rm', text: 'hi', members }, query: {}, actor: { kind: 'owner', id: 't' } });
     check('route: injected model function used', mres.json.bot === 'gamma' && mres.json.mode === 'model', JSON.stringify(mres));
     rm();
+
+    // contract 6: model_engine routes the call through ctx.engines.run
+    const eng = src => ({ bin: process.execPath, args: ['-e', src] });
+    const viaEngine = async (engines, extra = {}) => {
+      const r6 = M.registry({ modules: { 'speaker-pick': true }, engines, speaker_pick: { mode: 'model', model_engine: 'pick', model_timeout_ms: 1500, ...extra } });
+      return r6.callRoute(r6.findRoute('POST', '/m/speaker-pick/pick'), { body: { room: 'e' + (++n), text: 'zzz', members }, query: {}, actor: { kind: 'owner', id: 't' } });
+    };
+    let er = await viaEngine({ pick: eng("process.stdin.resume();process.stdin.on('end',()=>console.log(' gamma '))") });
+    check('engine: model answer via ctx.engines.run', er.json.bot === 'gamma' && er.json.reason === 'model', JSON.stringify(er));
+    er = await viaEngine({ pick: eng('process.exit(3)') });
+    check('engine: nonzero exit falls back', er.json.bot === 'alpha' && /^model_error/.test(er.json.reason), JSON.stringify(er));
+    er = await viaEngine({});
+    check('engine: unlisted engine falls back', er.json.bot === 'alpha' && /^model_error/.test(er.json.reason), JSON.stringify(er));
+    er = await viaEngine({ pick: eng('setTimeout(()=>{},10000)') }, { model_timeout_ms: 200 });
+    check('engine: timeout falls back', er.json.bot === 'alpha' && /^model_(timeout|error)/.test(er.json.reason), JSON.stringify(er));
+    check('engine: default setting empty, hookTimeoutMs 1000', M.registry({ modules: { 'speaker-pick': true } }).settingsFor('speaker-pick').model_engine === '' && mod.hookTimeoutMs === 1000);
 
     // guard
     process.env.HARNESS_TASK_ID = 't-1';

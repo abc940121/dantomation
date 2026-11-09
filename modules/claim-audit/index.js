@@ -7,14 +7,14 @@
 const J = require('../../lib/journal');
 const { auditReport, checkCitations } = require('./audit');
 const { collect } = require('./evidence');
-const { checkDifferent } = require('./family');
+const { checkDifferent, familyOf } = require('./family');
 const I = require('./interrogate');
 
 const clip = (s, n) => { s = String(s || '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 3) + '...' : s; };
 const MAX_LISTED = 20;
 
-// The reviewer engine call is the one thing core does not offer yet (see README, SEAM REQUEST).
-// Until it does, another module or a test registers a client: async ({engine, task_id, questions}) -> [answer text].
+// Reviewer call: with setting engine_name set, ctx.engines.run (contract 6) is used. Otherwise another
+// module or a test may register a client: async ({engine, task_id, questions}) -> [answer text].
 let reviewerClient = null;
 const setReviewerClient = fn => { reviewerClient = typeof fn === 'function' ? fn : null; };
 
@@ -36,12 +36,42 @@ function storeAnswers({ dir, append, taskId, answers, evidence }) {
   return next;
 }
 
-async function interrogate({ task_id, claims, evidence, settings, state }) {
-  const engine = String(settings.reviewer_engine || '').trim();
+// Prompt for the reviewer engine: only the short questions, answers as a JSON array of strings.
+// By design no journal records or command outputs leave this module (they can hold secrets); the
+// reviewer answers from its own view and every citation it gives is checked against the real
+// evidence in storeAnswers, so an invented citation is stored as unsupported.
+const reviewerPrompt = questions => 'Answer each question in one short sentence. Cite evidence as [j:<effect_id or stepN>] or [t:"<exact output line>"]. '
+  + 'Reply with ONLY a JSON array of ' + questions.length + ' strings, in order.' + String.fromCharCode(10, 10) + questions.map(q => `${q.n}. ${q.q}`).join(String.fromCharCode(10));
+
+// Parse the engine output: a JSON array of strings (possibly inside text), else numbered lines.
+function parseAnswers(out, n) {
+  const text = String(out || '');
+  const m = /\[[\s\S]*\]/.exec(text);
+  if (m) { try { const a = JSON.parse(m[0]); if (Array.isArray(a)) return a.slice(0, n).map(x => String(x == null ? '' : x)); } catch { /* try lines */ } }
+  const res = [];
+  for (const line of text.split(/\r?\n/)) { const k = /^\s*(\d+)[.)]\s*(.*)$/.exec(line); if (k && +k[1] >= 1 && +k[1] <= n) res[+k[1] - 1] = k[2]; }
+  return Array.from({ length: Math.min(n, Math.max(res.length, 0)) }, (_, i) => res[i] || '');
+}
+
+async function interrogate({ task_id, claims, evidence, settings, state, engines, config }) {
+  const engineName = String(settings.engine_name || '').trim();
+  const engine = String(settings.reviewer_engine || '').trim() || engineName;
   if (!engine) return null;
   const questions = I.makeQuestions(claims, settings.high_stakes_words);
   if (!questions.length) return null;
-  const fam = checkDifferent(engine, settings.worker_model);
+  let fam = checkDifferent(engine, settings.worker_model);
+  // The family check must cover the engine that really runs: every word of engine_name and its config
+  // entry (bin, args) is classified on its own. Any known family other than the reviewer's refuses, so a
+  // reviewer-looking name cannot hide a worker-family bin or model argument, and at least one word must
+  // name the reviewer's family, so an engine nothing identifies is refused as unknown.
+  if (fam.ok && engineName) {
+    const spec = config && config.engines && typeof config.engines === 'object' && Object.prototype.hasOwnProperty.call(config.engines, engineName) ? config.engines[engineName] : null;
+    const words = [engineName, spec && spec.bin, ...(spec && Array.isArray(spec.args) ? spec.args : [])].filter(x => typeof x === 'string').join(' ').split(/\s+/).filter(Boolean);
+    const fams = new Set(words.map(familyOf));
+    const other = [...fams].find(f => f !== 'unknown' && f !== fam.reviewer);
+    if (other) fam = { ...fam, ok: false, reason: `engine_name runs a ${other} engine, not ${fam.reviewer}` };
+    else if (!fams.has(fam.reviewer)) fam = { ...fam, ok: false, reason: 'engine_name family unknown (name its family in the engine name, bin or args)' };
+  }
   const base = { task_id, ts: new Date().toISOString(), reviewer: engine, reviewer_family: fam.reviewer, worker_family: fam.worker, questions };
   if (!fam.ok) {
     // Same or unknown family: no questions leave this module. Kept only as a refusal line.
@@ -51,9 +81,18 @@ async function interrogate({ task_id, claims, evidence, settings, state }) {
   }
   I.save(state.dir, { ...base, status: 'pending_engine', answers: [] });
   state.append({ type: 'claim_interrogation', task_id, status: 'pending_engine', questions: questions.length, reviewer_family: fam.reviewer });
-  if (!reviewerClient) return I.load(state.dir, task_id);
+  const viaEngines = !!(engineName && engines && typeof engines.run === 'function');
+  if (!viaEngines && !reviewerClient) return I.load(state.dir, task_id);
+  const timeoutMs = reviewerTimeout(settings, config);
+  if (viaEngines && !timeoutMs) return I.load(state.dir, task_id); // hook budget too small for a call: stays pending_engine
   let answers;
-  try { answers = await reviewerClient({ engine, task_id, questions: questions.map(q => ({ n: q.n, q: q.q })) }); }
+  try {
+    if (viaEngines) {
+      const r = await engines.run(engineName, reviewerPrompt(questions), { timeoutMs });
+      if (!r || r.code !== 0) throw new Error(`reviewer engine failed (exit ${r && r.code})`);
+      answers = parseAnswers(r && r.output, questions.length);
+    } else answers = await reviewerClient({ engine, task_id, questions: questions.map(q => ({ n: q.n, q: q.q })) });
+  }
   catch (e) {
     I.save(state.dir, { ...base, status: 'engine_error', reason: clip(e && e.message, 160), answers: [] });
     state.append({ type: 'claim_interrogation', task_id, status: 'engine_error', questions: questions.length });
@@ -63,8 +102,18 @@ async function interrogate({ task_id, claims, evidence, settings, state }) {
 }
 
 // on task.end. The records go through ctx.state.append (module field set).
+// The reviewer runs inside the task.end hook, so it must finish before core times that hook out
+// (config modules_hook_timeout_ms, default 5000): cap at that minus a margin. Raise the config value
+// for a slow reviewer. Below 100 ms of room there is no call at all (returns 0).
+function reviewerTimeout(settings, config) {
+  const want = Number.isInteger(settings.reviewer_timeout_ms) ? settings.reviewer_timeout_ms : 60000;
+  const hook = config && Number.isInteger(config.modules_hook_timeout_ms) ? config.modules_hook_timeout_ms : 5000;
+  const ms = Math.min(want, hook - 500);
+  return ms >= 100 ? ms : 0;
+}
+
 async function onTaskEnd({ task_id }, ctx) {
-  const { state, emit, settings } = ctx;
+  const { state, emit, settings, engines, config } = ctx;
   if (!task_id) return;
   const { report, evidence, hash } = collect(J, task_id);
   const base = { type: 'claim_audit', task_id, evidence: { records: evidence.records.length, outputs: evidence.outputs.length, sha256: hash } };
@@ -75,7 +124,7 @@ async function onTaskEnd({ task_id }, ctx) {
   if (a.flagged && typeof emit === 'function') {
     try { await emit('claim-audit.flagged', { task_id, checked: a.claims.length, unverified: a.flagged }); } catch { /* an event never fails the audit */ }
   }
-  try { await interrogate({ task_id, claims: a.claims, evidence, settings: settings || {}, state }); }
+  try { await interrogate({ task_id, claims: a.claims, evidence, settings: settings || {}, state, engines, config }); }
   catch (e) { process.stderr.write(`claim-audit: interrogation failed: ${clip(e && e.message, 120)}\n`); }
 }
 
@@ -123,7 +172,7 @@ const commands = {
 };
 
 module.exports = {
-  contract: 2,
+  contract: 2, // uses v6 ctx.engines.run; core does not gate it by contract number
   name: 'claim-audit',
   description: 'Evidence: checks "done" / "tested" claims of the final message against the journal; optional cross-family reviewer asks 3 evidence questions. Warns, never blocks.',
   on: { 'task.end': onTaskEnd },
@@ -133,6 +182,8 @@ module.exports = {
   settings: {
     ask_to_cite: { type: 'boolean', default: true, description: 'add a short "cite your evidence" line to the engine prompt (and a reminder on resume after a flagged report)' },
     reviewer_engine: { type: 'string', default: '', description: 'engine/model name of a reviewer from a DIFFERENT model family; empty turns interrogation off' },
+    engine_name: { type: 'string', default: '', description: 'name of an entry in config "engines" that runs the reviewer through ctx.engines.run; empty = no engine call (questions stay stored)' },
+    reviewer_timeout_ms: { type: 'integer', default: 60000, min: 1000, max: 600000, description: 'time limit for the reviewer engine call; capped at config modules_hook_timeout_ms minus 500 (it runs inside the task.end hook) and by core at engines_max_timeout_ms' },
     worker_model: { type: 'string', default: 'claude', description: 'model name of the engine that does the work; the reviewer family must differ from it' },
     high_stakes_words: { type: 'array', items: 'string', default: I.DEFAULT_STAKES, description: 'words that make a verified claim high-stakes, so it is also questioned' },
   },

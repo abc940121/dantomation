@@ -22,3 +22,5 @@ E7: the engine call is a seam, not implemented: core offers no way for a module 
 E8: reviewer answers go through the same citation check as the report ([j:...], [t:"..."] must exist in the task evidence, no failing line). Answers are stored with supported true/false; an uncited answer is recorded as unsupported, never dropped.
 E9: the journal gets only a claim_interrogation record with status and counts; question and answer text stays in the module state file, so the journal stays small.
 E10: commands claim-questions and claim-answer (via harness.js) let an outside reviewer run be recorded today; claim-answer refuses to run inside a task.
+
+E8 (contract 6): E7 is superseded. With engine_name set the reviewer call goes through ctx.engines.run (owner-listed engines only, core caps time, prompt never journaled); empty engine_name keeps the old behaviour (pending_engine, setReviewerClient still works). No spawning code existed in the module, so none was removed. No hooks, so no hookTimeoutMs.

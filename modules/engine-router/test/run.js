@@ -72,7 +72,8 @@ const E = { planner: ['big'], editor: ['cheap1', 'cheap2'] };
     // module wiring
     const off = M.registry({ modules: { 'engine-router': false } });
     check('off: nothing registered', !off.listRoutes().length && off.settingsFor('engine-router') === null);
-    const reg = M.registry({ modules: { 'engine-router': true }, engine_router: { planner_engines: ['big'], editor_engines: ['cheap1', 'cheap2'] } });
+    const ENG = { big: { bin: 'big-bin', turn: true }, cheap1: { bin: 'c1', turn: true }, cheap2: { bin: 'c2', turn: true } };
+    const reg = M.registry({ engines: ENG, modules: { 'engine-router': true }, engine_router: { planner_engines: ['big'], editor_engines: ['cheap1', 'cheap2'] } });
     check('on: loads clean', reg.errors.length === 0, reg.errors.join(' | '));
     check('defaults: fail_limit 2', reg.settingsFor('engine-router').fail_limit === 2);
     check('provides engines entry', reg.providers('engines').some(p => p.module === 'engine-router'));
@@ -109,8 +110,45 @@ const E = { planner: ['big'], editor: ['cheap1', 'cheap2'] };
     check('consecutive failures, clean tree: plain switch', r.json.action === 'switch' && r.json.engine === 'cheap2' && !r.json.halfDone, JSON.stringify(r.json));
 
     // prepareTurn
-    const pt = await reg.mods.find(m => m.name === 'engine-router').prepareTurn({ ...reg.mods[0], task_id: 't3', request: 'design the schema', settings: reg.settingsFor('engine-router'), state: { dir: path.join(tmp, 'pt'), append: () => ({}) } });
+    const pt = await reg.mods.find(m => m.name === 'engine-router').prepareTurn({ ...reg.mods[0], task_id: 't3', request: 'design the schema', settings: reg.settingsFor('engine-router'), config: { engines: ENG }, state: { dir: path.join(tmp, 'pt'), append: () => ({}) } });
     check('prepareTurn: planner recommended', pt && /recommended engine: big \(planner\)/.test(pt.context[0]), JSON.stringify(pt));
+
+    // chooseEngine (contract 6)
+    const eng = reg.mods.find(m => m.name === 'engine-router');
+    const cctx = { settings: reg.settingsFor('engine-router'), config: { engines: ENG } };
+    check('chooseEngine: planner step', eng.chooseEngine({ request: 'design the schema' }, cctx) === 'big');
+    check('chooseEngine: editor step', eng.chooseEngine({ request: 'rename a to b' }, cctx) === 'cheap1');
+    check('chooseEngine: listed engine core cannot run per turn is skipped', eng.chooseEngine({ request: 'rename a to b' }, { ...cctx, config: { engines: { ...ENG, cheap1: { bin: 'c1' } } } }) === 'cheap2');
+    check('chooseEngine: no config engines table -> null', eng.chooseEngine({ request: 'rename a to b' }, { settings: cctx.settings }) === null);
+    check('chooseEngine: unconfigured -> null', eng.chooseEngine({ request: 'rename a' }, { settings: { planner_engines: [], editor_engines: [] } }) === null);
+    check('chooseEngine: no turn -> safe', eng.chooseEngine(undefined, cctx) === 'big');
+    const sw = { settings: reg.settingsFor('engine-router'), config: { engines: ENG }, state: { dir: path.join(tmp, 'sw') } };
+    fs.mkdirSync(sw.state.dir, { recursive: true });
+    fs.writeFileSync(path.join(sw.state.dir, 'task-s1.json'), JSON.stringify({ engine: 'cheap2' }));
+    check('chooseEngine: follows the switch prepareTurn recorded', eng.chooseEngine({ task_id: 's1', request: 'rename a to b' }, sw) === 'cheap2');
+    fs.writeFileSync(path.join(sw.state.dir, 'task-s2.json'), JSON.stringify({ engine: 'gone' }));
+    fs.writeFileSync(path.join(sw.state.dir, 'task-s3.json'), JSON.stringify({ engine: 'cheap2', exhausted: true }));
+    check('chooseEngine: exhausted step -> null (no failed engine relaunched)', eng.chooseEngine({ task_id: 's3', request: 'rename a to b' }, sw) === null);
+    {
+      const P = require('../lib/policy');
+      const sa = { ...sw, state: { ...sw.state, append: () => ({}) } };
+      fs.writeFileSync(path.join(sw.state.dir, 'task-s4.json'), JSON.stringify({ ...P.newState('rename a to b', 'cheap2'), failed_engines: ['cheap1', 'cheap2', 'big'] }));
+      const pt = eng.prepareTurn({ ...sa, task_id: 's4', request: 'rename a to b' });
+      check('prepareTurn: exhausted step still tells the default engine to stop', !!pt && pt.context.some(l => /stop and ask the owner/.test(l)) && eng.chooseEngine({ task_id: 's4', request: 'rename a to b' }, sw) === null, JSON.stringify(pt));
+      const none = { settings: { ...sw.settings, planner_engines: [], editor_engines: [] }, state: sa.state, task_id: 's5', request: 'rename a' };
+      check('prepareTurn: no engines configured -> no note', eng.prepareTurn(none) === null);
+    }
+    {
+      const sa = { ...sw, state: { ...sw.state, append: () => ({}) } };
+      fs.writeFileSync(path.join(sw.state.dir, 'task-s6.json'), JSON.stringify({ ...P.newState('rename a to b', 'cheap1'), fails: 1 }));
+      const lost = { ...sa, config: { engines: { ...ENG, cheap1: { bin: 'c1' } } }, task_id: 's6', request: 'rename a to b' };
+      const pt = eng.prepareTurn(lost);
+      const saved = JSON.parse(fs.readFileSync(path.join(sw.state.dir, 'task-s6.json'), 'utf8'));
+      check('prepareTurn: saved engine no longer runnable is dropped and not recommended', pt && /cheap2/.test(pt.context[0]) && saved.engine !== 'cheap1' && saved.fails === 0 && eng.chooseEngine({ task_id: 's6', request: 'rename a to b' }, lost) === 'cheap2', JSON.stringify({ pt, saved }));
+    }
+    check('chooseEngine: ignores a recorded engine no longer configured', eng.chooseEngine({ task_id: 's2', request: 'rename a to b' }, sw) === 'cheap1');
+    check('manifest: hookTimeoutMs 1000', eng.hookTimeoutMs === 1000);
+    check('M.chooseEngine picks via registry', await M.chooseEngine(reg.mods, { task_id: 'c1', request: 'rename a to b' }) !== undefined);
 
     r = await decide({});
     check('route: task_id required', r.status === 400);

@@ -2,9 +2,8 @@
 // tripwires: output guardrails. When a task ends, the final reply (the journal `reply` record core
 // writes just before task.end) and the exit code go through built-in rules. A trip is journaled as
 // a `tripwire` record (rule id + redacted snippet only), emitted as tripwires.tripped, listed in
-// status and kept (capped) in state for the owner routes. Core offers no hook that holds or edits a
-// reply before delivery, so today this can only FLAG after the fact; `api.beforeReply` is the shape
-// of the seam (see README, SEAM REQUEST) and already redacts. It never blocks, never throws.
+// status and kept (capped) in state for the owner routes. The v6 beforeReply hook can also mask or
+// block the reply before delivery when mode is redact or block (default flag: report only).
 const fs = require('fs');
 const path = require('path');
 const J = require('../../lib/journal');
@@ -26,26 +25,56 @@ const lastReply = taskId => {
   return '';
 };
 
+// Journal, list and emit trips. enforced: true when beforeReply masked or withheld them (task.end then
+// sees only the cleaned reply, so those are recorded at the hook). Returns the emit promise.
+function record(ctx, task_id, trips, enforced) {
+  const { state, emit, settings } = ctx;
+  const list = load(state.dir);
+  for (const t of trips) {
+    const rec = state.append({ type: 'tripwire', task_id, rule: t.rule, snippet: t.snippet, mode: settings.mode, enforced });
+    list.push({ id: rec.id, ts: rec.ts, task_id, rule: t.rule, snippet: t.snippet, mode: settings.mode, enforced });
+  }
+  save(state.dir, list.slice(-Math.max(1, settings.retention)));
+  if (typeof emit !== 'function') return Promise.resolve();
+  try { return Promise.resolve(emit('tripwires.tripped', { task_id, rules: trips.map(t => t.rule), mode: settings.mode, enforced })).catch(() => { /* events never fail the check */ }); }
+  catch { return Promise.resolve(); }
+}
+
 async function onTaskEnd({ task_id, code }, ctx) {
   try {
-    const { state, emit, settings } = ctx;
     if (!task_id) return;
-    const trips = scan(lastReply(task_id), opts(settings, typeof code === 'number' ? code : null));
+    const trips = scan(lastReply(task_id), opts(ctx.settings, typeof code === 'number' ? code : null));
     if (!trips.length) return;
-    const list = load(state.dir);
-    for (const t of trips) {
-      const rec = state.append({ type: 'tripwire', task_id, rule: t.rule, snippet: t.snippet, mode: settings.mode, enforced: false });
-      list.push({ id: rec.id, ts: rec.ts, task_id, rule: t.rule, snippet: t.snippet, mode: settings.mode, enforced: false });
-    }
-    save(state.dir, list.slice(-Math.max(1, settings.retention)));
-    if (typeof emit === 'function') {
-      try { await emit('tripwires.tripped', { task_id, rules: trips.map(t => t.rule), mode: settings.mode, enforced: false }); } catch { /* events never fail the check */ }
-    }
+    await record(ctx, task_id, trips, false);
   } catch (e) { try { process.stderr.write(`tripwires: check failed: ${String(e && e.message).slice(0, 120)}\n`); } catch { /* nothing more to do */ } }
 }
 
-// The future core seam: beforeReply(ctx, reply) -> reply | {block, reason}. Core does not call it yet.
-function beforeReply(ctx, reply) {
+// v6 hook: beforeReply(reply, ctx). flag (default) leaves the reply alone, redact masks secrets,
+// home paths and private IPs, block withholds the reply when a text rule trips. The reason names
+// rule ids only, never the matched text. Errors propagate: manifest failMode "closed" blocks them.
+// What is masked or withheld is recorded here (enforced: true), since task.end only sees the result.
+// success_claim needs the exit code, which core does not pass to beforeReply: it stays a task.end
+// (flag) check in every mode until a v7 seam hands the code over.
+const MASKED = new Set(['secrets', 'paths', 'private_ips']);
+function beforeReply(reply, ctx) {
+  const s = (ctx && ctx.settings) || {};
+  if (s.mode !== 'redact' && s.mode !== 'block') return undefined;
+  if (typeof reply !== 'string' || !reply) return undefined;
+  const taskId = ctx && ctx.task_id ? String(ctx.task_id) : '';
+  const note = trips => { if (trips.length && ctx.state) { try { record(ctx, taskId, trips, true); } catch { /* the reply decision stands */ } } };
+  if (s.mode === 'redact') {
+    const out = redact(reply, ruleFlags(s));
+    if (out !== reply) note(scan(reply, opts(s, null)).filter(t => MASKED.has(t.rule)));
+    return out;
+  }
+  const trips = scan(reply, opts(s, null));
+  if (!trips.length) return undefined;
+  note(trips);
+  return { block: true, reason: 'tripwire rule(s): ' + [...new Set(trips.map(t => t.rule))].join(', ') };
+}
+
+// Older shape kept on the api: beforeReply(ctx, reply) -> reply (redacts in redact mode).
+function apiBeforeReply(ctx, reply) {
   const s = (ctx && ctx.settings) || {};
   if (s.mode !== 'redact') return reply;
   return redact(reply, ruleFlags(s));
@@ -74,14 +103,17 @@ const routes = [
 ];
 
 module.exports = {
-  contract: 2,
+  contract: 2, // uses v6 beforeReply + failMode; core does not gate them by contract number
+  failMode: 'closed',
+  hookTimeoutMs: 1000,
   name: 'tripwires',
-  description: 'Output guardrails: flags secrets, home paths, private IPs, banned phrases, oversized replies and success claims on a failed exit. Flag-only until core can hold a reply.',
+  description: 'Output guardrails: flags secrets, home paths, private IPs, banned phrases, oversized replies and success claims on a failed exit. Flags by default; can mask or block the reply before delivery (mode redact or block).',
+  beforeReply,
   on: { 'task.end': onTaskEnd },
   statusLines,
   routes,
   settings: {
-    mode: { type: 'string', enum: ['flag', 'redact'], default: 'flag', description: 'flag: report only. redact: also redact through api.beforeReply once core calls it (today still report only)' },
+    mode: { type: 'string', enum: ['flag', 'redact', 'block'], default: 'flag', description: 'flag: report only. redact: mask secrets, paths and private IPs in the delivered reply. block: withhold a reply that trips a text rule' },
     rule_secrets: { type: 'boolean', default: true, description: 'API key shapes, private key headers, bearer tokens' },
     rule_paths: { type: 'boolean', default: true, description: 'absolute home paths (/home, /Users, drive Users folders)' },
     rule_private_ips: { type: 'boolean', default: true, description: 'private, link-local and CGNAT IPv4 addresses' },
@@ -92,5 +124,5 @@ module.exports = {
     max_reply_chars: { type: 'integer', default: 3000, min: 100, max: 100000, description: 'oversize limit in characters (core clips replies at 4000)' },
     retention: { type: 'integer', default: 200, min: 1, max: 5000, description: 'most trips kept for the owner list (journal records are not capped)' },
   },
-  api: { scan, redact, beforeReply },
+  api: { scan, redact, beforeReply: apiBeforeReply },
 };

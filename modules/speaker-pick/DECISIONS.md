@@ -8,3 +8,4 @@ Module-owned log. Append only.
 - Journal reason is a short code, never text.
 - Per-process memory (last bot, run length, auto turns) is not persisted: a restart only resets caps.
 - rooms exposes no recipient hook, so this module does not depend on it; the seam is reported instead.
+- Contract 6 seam (manifest still contract 2: trunk test requires it, ctx.engines is available to contract >= 1): model mode calls ctx.engines.run via the `model_engine` setting. It is a string defaulting to `""` (the settings schema has no null default); empty means unset and keeps the old fallback. A non-zero engine exit is a model error. hookTimeoutMs stays 1000 (beforeTool and statusLines are cheap).
