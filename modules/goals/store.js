@@ -9,6 +9,8 @@ const path = require('path');
 
 const LIMITS = { goal: 2000, part: 1000, what: 500, missed: 300, fix: 500 };
 const ID_RE = /^(g|l)-[0-9a-f]{12}$/;
+const LOCK_STALE_MS = 30000, LOCK_WAIT_MS = 5000;
+const DEFAULT_RETENTION = { max_replaced_goals: 50, max_lessons: 200, max_repeats_per_lesson: 100 };
 const DAY = 86400000;
 const WEEK = 7 * DAY;
 // eslint-disable-next-line no-control-regex
@@ -47,25 +49,72 @@ function save(dir, data) {
   fs.writeFileSync(tmp, JSON.stringify(data, null, 1), { mode: 0o600 });
   fs.renameSync(tmp, f);
 }
+// Lock with an owner token. The lock file holds "<pid>.<random>"; only its holder removes it.
+// A stale lock is broken by renaming it aside, confirming the renamed file is still the stale
+// content that was seen (not a successor's fresh lock), and only then deleting it.
+function lockAcquire(lockFile, { staleMs, waitMs, transient, sleepMs, busyError }) {
+  const token = `${process.pid}.${crypto.randomBytes(8).toString('hex')}`;
+  const start = Date.now();
+  for (;;) {
+    try { fs.writeFileSync(lockFile, token, { flag: 'wx' }); return token; } catch (e) {
+      if (e.code !== 'EEXIST' && !transient.has(e.code)) throw e;
+    }
+    try {
+      if (Date.now() - fs.statSync(lockFile).mtimeMs > staleMs) {
+        const seen = fs.readFileSync(lockFile, 'utf8');
+        const aside = `${lockFile}.${token}.stale`;
+        fs.renameSync(lockFile, aside);
+        let same = false;
+        try { same = fs.readFileSync(aside, 'utf8') === seen && Date.now() - fs.statSync(aside).mtimeMs > staleMs; } catch { /* gone */ }
+        if (same) { try { fs.unlinkSync(aside); } catch { /* gone */ } continue; }
+        // We moved a live successor's lock: put it back without clobbering, then retry.
+        try { fs.linkSync(aside, lockFile); } catch { /* someone else took the name */ }
+        try { fs.unlinkSync(aside); } catch { /* gone */ }
+        continue;
+      }
+    } catch { /* raced */ }
+    if (Date.now() - start > waitMs) throw busyError();
+    sleepMs(5);
+  }
+}
+function lockRelease(lockFile, token) {
+  try { if (fs.readFileSync(lockFile, 'utf8') === token) fs.unlinkSync(lockFile); } catch { /* gone or not ours */ }
+}
+
 // Read-modify-write under a simple lock file so the server and the CLI do not lose each other's rows.
 function update(dir, fn) {
   fs.mkdirSync(dir, { recursive: true });
   const lock = path.join(dir, 'lock');
-  const end = Date.now() + 5000;
-  for (;;) {
-    try { fs.writeFileSync(lock, String(process.pid), { flag: 'wx' }); break; } catch (e) {
-      if (e.code !== 'EEXIST') throw e;
-      try { if (Date.now() - fs.statSync(lock).mtimeMs > 30000) fs.unlinkSync(lock); } catch { /* raced */ }
-      if (Date.now() > end) throw new Error('goals store is busy');
-      const t = Date.now() + 20; while (Date.now() < t) { /* short spin */ }
-    }
-  }
+  const token = lockAcquire(lock, { staleMs: LOCK_STALE_MS, waitMs: LOCK_WAIT_MS, transient: new Set(['EPERM', 'EACCES', 'EBUSY']), sleepMs: ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms), busyError: () => new Error('goals store is busy') });
   try {
     const data = load(dir);
     const r = fn(data);
     if (r && !r.error) save(dir, data);
     return r;
-  } finally { try { fs.unlinkSync(lock); } catch { /* gone */ } }
+  } finally { lockRelease(lock, token); }
+}
+
+// ---- retention (settings override DEFAULT_RETENTION)
+const limit = (ret, k) => { const v = ret && ret[k]; return Number.isInteger(v) && v >= 1 ? v : DEFAULT_RETENTION[k]; };
+// Keep the active goal and the newest closed ones; drop the oldest beyond the cap.
+function pruneGoals(data, ret) {
+  const cap = limit(ret, 'max_replaced_goals');
+  const closed = data.goals.filter(g => g.state !== 'active');
+  if (closed.length <= cap) return;
+  const drop = new Set(closed.slice(0, closed.length - cap)); // rows are in creation order
+  data.goals = data.goals.filter(g => !drop.has(g));
+}
+// Over the cap: drop stale lessons oldest first, then the oldest of the rest. The lesson just added stays.
+function pruneLessons(data, fresh, ret, windowWeeks) {
+  const cap = limit(ret, 'max_lessons');
+  let over = data.lessons.length - cap;
+  if (over <= 0) return;
+  const t = now(), w = windowWeeks || 2;
+  const old = data.lessons.filter(l => l !== fresh);
+  const stale = old.filter(l => status(l, w, t) === 'stale');
+  const order = [...stale, ...old.filter(l => !stale.includes(l))];
+  const drop = new Set(order.slice(0, over));
+  data.lessons = data.lessons.filter(l => !drop.has(l));
 }
 
 // ---- goals
@@ -81,7 +130,7 @@ function missing(g) {
   return q;
 }
 
-function setGoal(data, input) {
+function setGoal(data, input, ret) {
   const v = text(input && input.verbatim, LIMITS.goal, 'verbatim', true); if (v.error) return v;
   const d = text(input && input.done, LIMITS.part, 'done', false); if (d.error) return d;
   const o = text(input && input.out_of_scope, LIMITS.part, 'out_of_scope', false); if (o.error) return o;
@@ -89,6 +138,7 @@ function setGoal(data, input) {
   for (const g of data.goals) if (g.state === 'active') { g.state = 'replaced'; g.closed_at = iso(t); }
   const g = { goal_id: newId('g'), verbatim: v.value, done: d.value, out_of_scope: o.value, confirmed: false, confirmed_at: null, state: 'active', created_at: iso(t), closed_at: null };
   data.goals.push(g);
+  pruneGoals(data, ret);
   return { goal: g };
 }
 function editGoal(data, input) {
@@ -116,18 +166,21 @@ function closeGoal(data, how) {
 }
 
 // ---- lessons
-function addLesson(data, input) {
+function addLesson(data, input, ret, windowWeeks) {
   const w = text(input && input.what, LIMITS.what, 'what', true); if (w.error) return w;
   const m = text(input && input.missed_by, LIMITS.missed, 'missed_by', true); if (m.error) return m;
   const f = text(input && input.fix, LIMITS.fix, 'fix', true); if (f.error) return f;
   const l = { lesson_id: newId('l'), what: w.value, missed_by: m.value, fix: f.value, created_at: iso(now()), repeats: [] };
   data.lessons.push(l);
+  pruneLessons(data, l, ret, windowWeeks);
   return { lesson: l };
 }
-function repeatLesson(data, id) {
+function repeatLesson(data, id, ret) {
   const l = data.lessons.find(x => x.lesson_id === id);
   if (!l) return { error: 'no such lesson', status: 404 };
   l.repeats.push(iso(now()));
+  const cap = limit(ret, 'max_repeats_per_lesson');
+  if (l.repeats.length > cap) l.repeats = l.repeats.slice(l.repeats.length - cap);
   return { lesson: l };
 }
 
@@ -156,4 +209,4 @@ function lessonView(l, windowWeeks, t) {
   return { lesson_id: l.lesson_id, what: l.what, missed_by: l.missed_by, fix: l.fix, created_at: l.created_at, repeat_count: l.repeats.length, weekly: weekly(l), status: status(l, windowWeeks, t === undefined ? now() : t) };
 }
 
-module.exports = { LIMITS, ID_RE, load, save, update, now, activeGoal, missing, setGoal, editGoal, confirmGoal, closeGoal, addLesson, repeatLesson, weekly, weekStart, status, lessonView };
+module.exports = { lockAcquire, lockRelease, DEFAULT_RETENTION, LIMITS, ID_RE, load, save, update, now, activeGoal, missing, setGoal, editGoal, confirmGoal, closeGoal, addLesson, repeatLesson, weekly, weekStart, status, lessonView };

@@ -12,3 +12,13 @@
 10. **The api uses the last hook context.** Module api functions get no ctx, so the api uses the ctx of the most recent hook, route or command (settings, journal, emit), and before any ran uses defaults with no events. See the SEAM REQUEST in the build report.
 11. **Journal records carry ids and owners, never titles or notes.** Task text is agent-written and may hold anything.
 12. **Board is bounded.** `max_tasks` drops the oldest done tasks nobody waits on; if none can go, add answers 409.
+
+## Review fixes
+- Lock ownership: the lock file holds an owner token (pid plus random). Only the holder removes it.
+  A stale lock is renamed aside and deleted only when the renamed file is still the stale content
+  that was seen; otherwise it is restored and the waiter retries. No lock, no work: after the wait
+  limit the call throws `busy`.
+- A failed workspace creation releases the claim only if the task is still held by the same owner
+  with the same `claimed_at`; a claim made later by someone else is left alone.
+- Pruning at the cap never removes a done task that any remaining task, or the task being added,
+  lists in `deps`. If nothing can be pruned the add is refused with `full`.

@@ -1,0 +1,9 @@
+{
+  "suites": [
+    {
+      "label": "repo-map",
+      "file": "test/run.js",
+      "needs": ["repo-map"]
+    }
+  ]
+}

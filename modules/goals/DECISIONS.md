@@ -29,3 +29,13 @@
     `max_lessons_in_prompt` newest non-stale lessons.
 13. Limits: goal 2000 characters, done / out of scope 1000, lesson what 500, missed_by 300, fix 500;
     no control characters.
+14. Retention (revises 5 and 11). Rows are bounded so `data.json` cannot grow forever. Settings:
+    `max_replaced_goals` (default 50: closed goals kept, oldest dropped when a goal is set; the
+    active goal is never dropped), `max_lessons` (default 200: when a lesson is added over the cap,
+    stale lessons go first, oldest first, then the oldest others; the new lesson always stays) and
+    `max_repeats_per_lesson` (default 100: newest repeat timestamps kept, so `repeat_count` and the
+    weekly counts cover the kept ones). Pruning runs inside the locked write. The module still never
+    deletes a lesson below the cap.
+15. The store lock holds an owner token (pid plus random). Only the holder removes it. A stale lock
+    is renamed aside and deleted only if the renamed file is still the stale content that was seen;
+    otherwise it is put back and the waiter retries. Without the lock the module throws "busy".

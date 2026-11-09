@@ -17,7 +17,7 @@ const C = require('../lib/config');
 const M = require('../lib/modules');
 
 const HARNESS = path.join(__dirname, 'harness.js');
-const USAGE = 'usage: dantomation do "<request>" | do | status | undo | serve | token new [--worker]';
+const USAGE = 'usage: dantomation do "<request>" | do | status | undo | serve | token new [--worker] | new-module <name> [--from-skill <dir>] [--force]';
 const fail = (msg, code = 1) => { console.error(msg); process.exit(code); };
 
 let CONFIG;
@@ -142,7 +142,7 @@ async function undoDirect(args) {
 }
 
 const [verb, ...rest] = process.argv.slice(2);
-const run = { do: doVerb, status: statusVerb, undo: undoVerb,
+const run = { 'new-module': async () => { try { process.exitCode = require('../lib/scaffold').cli(rest); } catch (e) { fail('dantomation: ' + e.message, 2); } }, do: doVerb, status: statusVerb, undo: undoVerb,
   serve: async () => { await require('../lib/server').serve(); },
   token: async () => {
     if (rest[0] !== 'new') fail(USAGE, 2);

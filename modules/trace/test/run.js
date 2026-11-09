@@ -143,6 +143,64 @@ const writeRec = (id, f) => { const r = readRec(id); f(r); fs.writeFileSync(task
     await tiny.callRoute(tiny.findRoute('GET', `${P}/tasks`), { query: {}, actor: owner });
     const left = fs.readdirSync(path.dirname(taskFile('k1'))).filter(n => n.endsWith('.json')).length;
     check('ended tasks beyond the cap are pruned', left <= 10 + 6 /* running tasks are kept */ && !fs.existsSync(taskFile('z0')), String(left));
+    // review fixes: worker write scope
+    const wA = { kind: 'worker', id: 'wa' }, wB = { kind: 'worker', id: 'wb' };
+    await post(`${P}/tasks/s1/predict`, { minutes: 5 }, wA);
+    check('worker B cannot preempt/overwrite A prediction', (await post(`${P}/tasks/s1/predict`, { minutes: 1 }, wB)).status === 409 && readRec('s1').prediction.duration_ms === 300000);
+    await ev('task.start', { task_id: 's1', request: 'x', workdir: '.', resumed: false });
+    await ev('task.start', { task_id: 's2', request: 'x', workdir: '.', resumed: false });
+    check('worker cannot predict for an already started task', (await post(`${P}/tasks/s2/predict`, { minutes: 1 }, wB)).status === 403 && !readRec('s2').prediction);
+    check('worker B cannot write result of A task', (await post(`${P}/tasks/s1/result`, { result: 'evil' }, wB)).status === 403 && !readRec('s1').actual_result);
+    check('worker A writes result once', (await post(`${P}/tasks/s1/result`, { result: 'good' }, wA)).status === 200);
+    check('result is write-once for non-owners', (await post(`${P}/tasks/s1/result`, { result: 'again' }, wA)).status === 409 && readRec('s1').actual_result === 'good');
+    check('owner may overwrite the result', (await post(`${P}/tasks/s1/result`, { result: 'fixed' })).status === 200 && readRec('s1').actual_result === 'fixed');
+
+    // review fixes: un-started prediction cap, age and prune
+    {
+      const dirOf = () => path.dirname(taskFile('k1'));
+      const cap = M.registry({ modules: { trace: true }, trace: { max_unstarted_predictions: 3 }, ...PRICES });
+      const pc = id => cap.callRoute(cap.findRoute('POST', `${P}/tasks/${id}/predict`), { body: { minutes: 1 }, actor: wA });
+      const codes = []; for (let i = 0; i < 6; i++) codes.push((await pc(`cap${i}`)).status);
+      const unstarted = fs.readdirSync(dirOf()).filter(n => /^cap\d+\.json$/.test(n)).length;
+      check('un-started predictions are capped with 429', codes.filter(c => c === 429).length >= 3, codes.join());
+      writeRec('cap0', r => { r.prediction.ts = Date.now() - 25 * 3600 * 1000; });
+      check('a prediction under the cap is accepted again after the old one ages out', (await pc('cap9')).status === 200 && !fs.existsSync(taskFile('cap0')), String(unstarted));
+      const many = M.registry({ modules: { trace: true }, trace: { max_unstarted_predictions: 50, max_tracked_tasks: 10 }, ...PRICES });
+      for (let i = 0; i < 20; i++) await many.callRoute(many.findRoute('POST', `${P}/tasks/pp${i}/predict`), { body: { minutes: 1 }, actor: wA });
+      const ppLeft = fs.readdirSync(dirOf()).filter(n => /^pp\d+\.json$/.test(n)).length;
+      check('prediction-only records count toward max_tracked_tasks, oldest first', ppLeft <= 10 && ppLeft > 0 && !fs.existsSync(taskFile('pp0')) && fs.existsSync(taskFile('pp19')), String(ppLeft));
+    }
+
+    // review fixes: lock ownership
+    {
+      const lockFile = taskFile('lk1') + '.lock';
+      await ev('task.start', { task_id: 'lk1', request: 'x', workdir: '.', resumed: false });
+      fs.writeFileSync(lockFile, 'someone-else-token');
+      const pending = ev('tool.done', { task_id: 'lk1', tool: 'Read', ok: true });
+      await new Promise(r => setTimeout(r, 300));
+      const held = fs.readFileSync(lockFile, 'utf8') === 'someone-else-token' && readRec('lk1').tool_count === 0;
+      fs.unlinkSync(lockFile); await pending;
+      check('a fresh foreign lock is not stolen; the update runs once it is released', held && readRec('lk1').tool_count === 1);
+      fs.writeFileSync(lockFile, 'dead-holder'); const old = new Date(Date.now() - 60000); fs.utimesSync(lockFile, old, old);
+      await ev('tool.done', { task_id: 'lk1', tool: 'Read', ok: true });
+      check('a stale lock is broken and the update runs', readRec('lk1').tool_count === 2 && !fs.existsSync(lockFile));
+      check('no stale-lock leftovers', !fs.readdirSync(path.dirname(taskFile('k1'))).some(n => n.includes('.stale.')));
+      // the lock is replaced under a running holder: the holder must not unlink the successor's lock
+      const realRename = fs.renameSync, realUnlink = fs.unlinkSync;
+      let violated = false;
+      fs.renameSync = (a, b) => { if (String(b).endsWith("lk1.json")) { fs.unlinkSync(lockFile); fs.writeFileSync(lockFile, "successor"); setTimeout(() => { try { realUnlink(lockFile); } catch { /* gone */ } }, 200); } return realRename(a, b); };
+      fs.unlinkSync = p => { if (String(p) === lockFile && fs.readFileSync(lockFile, "utf8") === "successor") violated = true; return realUnlink(p); };
+      try { await ev("task.start", { task_id: "lk1", request: "x", workdir: ".", resumed: true }); } finally { fs.renameSync = realRename; fs.unlinkSync = realUnlink; }
+      check("holder does not unlink a lock that is not its own token", !violated);
+      // an unexpected open error: the hook does not throw, fn does not run unlocked, a status is journaled
+      const mod = require('../index.js'), jr = [];
+      const fctx = { settings: { overrun_factor: 2, max_events_per_task: 500, max_tracked_tasks: 200 }, config: {}, emit: async () => {}, state: { dir: path.join(tmp, 'state', 'm', 'trace'), append: r => { jr.push(r); } } };
+      const realWrite = fs.writeFileSync;
+      fs.writeFileSync = (f, ...rest) => { if (String(f).endsWith('lk3.json.lock')) { const e = new Error('disk full'); e.code = 'ENOSPC'; throw e; } return realWrite(f, ...rest); };
+      let threw = false;
+      try { await mod.on['tool.done']({ task_id: 'lk3', tool: 'Read', ok: true }, fctx); } catch { threw = true; } finally { fs.writeFileSync = realWrite; }
+      check('lock error: hook never throws, nothing written unlocked, status logged', !threw && !fs.existsSync(taskFile('lk3')) && jr.some(r => r.type === 'trace_skipped' && r.task_id === 'lk3'), JSON.stringify(jr));
+    }
   } catch (e) {
     check('no exception', false, e && e.stack);
   }

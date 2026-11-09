@@ -239,6 +239,30 @@ Handlers in the same process see each other's emits; a nested emit deeper than 8
 
 It serves no HTTP. The server (S1) and UI (S2) are built on it.
 
+## From a skill: dantomation new-module
+
+```
+dantomation new-module <name> [--from-skill <dir>] [--force]
+```
+
+Turns a skill folder (`SKILL.md` with YAML frontmatter `name` and `description`,
+plus optional extra files) into `modules/<name>/` that passes the contract on its
+first run. `<name>` is `[a-z][a-z0-9-]{1,40}`. An existing `modules/<name>` is
+refused unless `--force`; nothing is written outside that folder.
+
+| File | Content |
+|---|---|
+| `index.js` | `contract: 2`, `name`, `description` from the skill, one setting (`include_skill`), and a `prepareTurn` that returns the skill text as context |
+| `skill.md` | the SKILL.md body without frontmatter (read at run time, not inlined) |
+| `files/` | the skill's extra files, copied as they are |
+| `tests.json`, `test/run.js` | the manifest validates, `contract === 2`, `prepareTurn` returns the skill text |
+| `DECISIONS.md`, `PROVENANCE.md` | "generated from skill <name>"; source is the skill's folder name only, `license: unknown, check before publishing` unless the frontmatter has `license` |
+
+Without `--from-skill` you get the same shape with no `prepareTurn`. The module is
+**off by default**: modules run only when the config's `modules` says `true`, and
+the command never edits a config. Turn it on with `"<name>": true`; run its tests with
+`node test/run-all.js module <name>`. Check the skill's license before publishing.
+
 ## Planned additive extensions
 
 Later versions are expected to add, as optional fields that leave contract 1

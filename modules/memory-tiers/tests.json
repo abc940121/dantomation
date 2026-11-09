@@ -1,0 +1,9 @@
+{
+  "suites": [
+    {
+      "label": "memory-tiers",
+      "file": "test/run.js",
+      "needs": ["memory-tiers"]
+    }
+  ]
+}

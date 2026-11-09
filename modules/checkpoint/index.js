@@ -1,8 +1,44 @@
 'use strict';
 // checkpoint: snapshot the task folder before every mutating tool call, and the
-// owner-only `harness.js restore <task> <n>` command (checkpoint.js has the how).
+// owner-only `harness.js restore <task> <n>` command (checkpoint.js has the how), and fork-from-step (fork.js).
 const { mutating } = require('../../lib/shell');
 const ck = require('./checkpoint');
+const fk = require('./fork');
+
+const forkOpts = settings => ({ base: settings && settings.fork_dir ? settings.fork_dir : undefined, max: settings && settings.max_forks, pruneDirs: !!(settings && settings.prune_fork_dirs) });
+const errMsg = e => String((e && e.message) || e).split('\n')[0].slice(0, 200);
+const bad = e => ({ status: 400, json: { error: errMsg(e) } });
+
+// harness.js fork <task> <n> | fork steps <task> | fork diff <task> <a> <b> | fork list
+// Not for agents: refuses when HARNESS_TASK_ID is set. It only reads the original folder.
+function forkCmd(args, ctx) {
+  if (process.env.HARNESS_TASK_ID) { console.error('fork is for the person at the keyboard, not for agents (HARNESS_TASK_ID is set). Stopping.'); process.exit(6); }
+  const [a, b, c, d] = args;
+  try {
+    if (a === 'steps' && b) { for (const s of fk.steps(b)) console.log(`${s.step}\t${s.tool}\t${s.time}\t${s.ref}${s.safety ? '\t(restore safety point)' : ''}`); return; }
+    if (a === 'diff' && b && c && d) { for (const x of fk.diff(b, c, d)) console.log(`${x.status}\t${x.path}`); return; }
+    if (!a || a === 'list') { for (const f of fk.forks()) console.log(`${f.id}\t${f.parent_task} step ${f.step}\t${f.path}`); return; }
+    if (a && b) {
+      const r = fk.fork(a, b, forkOpts(ctx && ctx.settings));
+      console.log(`forked step ${r.step} of task ${r.parent_task} into ${r.path} (fork ${r.id}); original folder untouched. Start a task there to continue.`);
+      return;
+    }
+    console.error('usage: harness fork <task> <n> | fork steps <task> | fork diff <task> <a> <b> | fork list'); process.exitCode = 2;
+  } catch (e) { console.error(`fork failed: ${errMsg(e)}`); process.exitCode = 1; }
+}
+
+// Context for a task whose workdir is a fork. Never throws.
+function prepareTurn(ctx) {
+  try { const n = fk.noteFor(ctx && ctx.workdir); return n ? { context: [n] } : null; } catch { return null; }
+}
+
+const safeRoute = fn => args => { try { return { status: 200, json: fn(args) }; } catch (e) { return bad(e); } };
+const routes = [
+  { method: 'GET', path: '/steps/:task', description: 'steps (checkpoints) of a task', handler: safeRoute(({ params }) => ({ steps: fk.steps(params.task) })) },
+  { method: 'GET', path: '/diff/:task/:a/:b', description: 'changed paths between two steps', handler: safeRoute(({ params }) => ({ changes: fk.diff(params.task, params.a, params.b) })) },
+  { method: 'GET', path: '/forks', description: 'fork records', handler: safeRoute(() => ({ forks: fk.forks() })) },
+  { method: 'POST', path: '/fork/:task/:n', description: 'restore step n into a new folder (never the original)', handler: safeRoute(({ params, settings }) => ({ fork: fk.fork(params.task, params.n, forkOpts(settings)) })) },
+];
 
 function restoreCmd([task, n], { J, EXEC_LOCK }) {
   if (process.env.HARNESS_OWNER !== '1') { console.error('restore is owner-only: set HARNESS_OWNER=1 in your own shell. Agents never restore.'); process.exit(6); }
@@ -68,10 +104,17 @@ module.exports = {
   contract: 2,
   name: 'checkpoint',
   runsOn: ['main', 'worker'],
-  description: 'Snapshots the task folder before every mutating tool call; owner commands restore and undo.',
+  description: 'Snapshots the task folder before every mutating tool call; owner commands restore, undo and fork from step N.',
   priority: 90, // last: snapshot only calls that nothing else blocked or held for approval
   statusLines,
-  api: { undoInfo, undoStack, checkpoint: ck.checkpoint },
+  api: { undoInfo, undoStack, checkpoint: ck.checkpoint, steps: fk.steps, diff: fk.diff, fork: fk.fork, forks: fk.forks },
+  settings: {
+    fork_dir: { type: 'string', default: '', description: 'absolute folder for forks; empty = under the harness state dir' },
+    max_forks: { type: 'integer', default: 20, min: 1, max: 1000, description: 'fork records kept; the oldest are dropped' },
+    prune_fork_dirs: { type: 'boolean', default: false, description: 'also delete the folders of dropped fork records' },
+  },
+  prepareTurn,
+  routes,
   // Inside a harness task (HARNESS_TASK_ID + HARNESS_TASK_DIR, set by runEngine).
   // If the snapshot fails the call is blocked (fail closed).
   beforeTool({ tool, ti }) {
@@ -80,5 +123,5 @@ module.exports = {
     try { ck.checkpoint(task, dir, tool); } catch (e) { return ['checkpoint', `could not snapshot the task folder (${String(e.message).split('\n')[0].slice(0, 120)})`]; }
     return null;
   },
-  commands: { restore: restoreCmd, undo: undoCmd },
+  commands: { restore: restoreCmd, undo: undoCmd, fork: forkCmd },
 };

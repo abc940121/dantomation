@@ -76,7 +76,7 @@ const ops = {
         const ws = W.ensure(ctx.settings, t.id);
         t = (await run(ctx, async s => s.setWorkspace(t.id, ws))) || t;
       } catch (e) {
-        await run(ctx, async s => { try { s.release(t.id, owner, true); } catch { /* already moved on */ } });
+        await run(ctx, async s => { try { s.release(t.id, owner, false, t.claimed_at); } catch { /* already moved on */ } });
         throw Object.assign(new Error('could not create the task workspace'), { code: 'workspace_failed' });
       }
     }

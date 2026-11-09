@@ -15,7 +15,40 @@ const clean = (s, n) => String(s == null ? '' : s).replace(/[\u0000-\u001f\u007f
 const err = (code, msg) => Object.assign(new Error(msg), { code });
 const sleep = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
-function open(dir, { now = () => Date.now() } = {}) {
+// Lock with an owner token. The lock file holds "<pid>.<random>"; only its holder removes it.
+// A stale lock is broken by renaming it aside, confirming the renamed file is still the stale
+// content that was seen (not a successor's fresh lock), and only then deleting it.
+function lockAcquire(lockFile, { staleMs, waitMs, transient, sleepMs, busyError }) {
+  const token = `${process.pid}.${crypto.randomBytes(8).toString('hex')}`;
+  const start = Date.now();
+  for (;;) {
+    try { fs.writeFileSync(lockFile, token, { flag: 'wx' }); return token; } catch (e) {
+      if (e.code !== 'EEXIST' && !transient.has(e.code)) throw e;
+    }
+    try {
+      if (Date.now() - fs.statSync(lockFile).mtimeMs > staleMs) {
+        const seen = fs.readFileSync(lockFile, 'utf8');
+        const aside = `${lockFile}.${token}.stale`;
+        fs.renameSync(lockFile, aside);
+        let same = false;
+        try { same = fs.readFileSync(aside, 'utf8') === seen && Date.now() - fs.statSync(aside).mtimeMs > staleMs; } catch { /* gone */ }
+        if (same) { try { fs.unlinkSync(aside); } catch { /* gone */ } continue; }
+        // We moved a live successor's lock: put it back without clobbering, then retry.
+        try { fs.linkSync(aside, lockFile); } catch { /* someone else took the name */ }
+        try { fs.unlinkSync(aside); } catch { /* gone */ }
+        continue;
+      }
+    } catch { /* raced */ }
+    if (Date.now() - start > waitMs) throw busyError();
+    sleepMs(5);
+  }
+}
+function lockRelease(lockFile, token) {
+  try { if (fs.readFileSync(lockFile, 'utf8') === token) fs.unlinkSync(lockFile); } catch { /* gone or not ours */ }
+}
+
+function open(dir, opts = {}) {
+  const now = opts.now || (() => Date.now());
   const file = path.join(dir, 'board.json');
   const lockFile = path.join(dir, 'board.lock');
   const STALE_MS = 10000, WAIT_MS = 15000;
@@ -54,15 +87,7 @@ function open(dir, { now = () => Date.now() } = {}) {
   // fn(d) -> { save?, value }
   const locked = fn => {
     fs.mkdirSync(dir, { recursive: true });
-    const start = Date.now();
-    for (;;) {
-      try { fs.closeSync(fs.openSync(lockFile, 'wx')); break; } catch (e) {
-        if (e.code !== 'EEXIST' && !TRANSIENT.has(e.code)) throw e;
-        try { if (Date.now() - fs.statSync(lockFile).mtimeMs > STALE_MS) { fs.unlinkSync(lockFile); continue; } } catch { /* raced */ }
-        if (Date.now() - start > WAIT_MS) throw err('busy', 'task-board store busy');
-        sleep(5);
-      }
-    }
+    const token = lockAcquire(lockFile, { staleMs: opts.staleMs || STALE_MS, waitMs: opts.waitMs || WAIT_MS, transient: TRANSIENT, sleepMs: sleep, busyError: () => err('busy', 'task-board store busy') });
     try {
       const d = read();
       const changed = expire(d);
@@ -71,7 +96,7 @@ function open(dir, { now = () => Date.now() } = {}) {
       if (changed || (out && out.save)) write(d); // lease expiry is kept even when fn threw
       if (fnErr) throw fnErr;
       return out ? out.value : undefined;
-    } finally { try { fs.unlinkSync(lockFile); } catch { /* gone */ } }
+    } finally { lockRelease(lockFile, token); }
   };
 
   const byId = (d, id) => d.tasks.find(x => x.id === id);
@@ -98,11 +123,22 @@ function open(dir, { now = () => Date.now() } = {}) {
         if (byId(d, tid)) throw err('exists', 'a task with that id exists');
         if (deps.includes(tid)) throw err('bad_input', 'a task cannot depend on itself');
         for (const dep of deps) if (!byId(d, dep)) throw err('bad_input', `unknown dependency ${dep}`);
-        // Prune the oldest finished, unreferenced tasks to stay under the cap.
-        while (d.tasks.length >= cap) {
-          const i = d.tasks.findIndex(x => x.status === 'done' && !d.tasks.some(y => y.status !== 'done' && y.deps.includes(x.id)));
-          if (i === -1) throw err('full', 'board is full');
-          d.tasks.splice(i, 1);
+        // Prune the oldest finished tasks nothing remaining depends on (the new task counts) to stay under the cap.
+        let over = d.tasks.length - cap + 1;
+        if (over > 0) {
+          // A done task referenced by any other task is kept; removing others can free more, so repeat.
+          const drop = new Set();
+          for (let moved = true; moved && over > 0;) {
+            moved = false;
+            for (const x of d.tasks) {
+              if (over <= 0) break;
+              if (drop.has(x) || x.status !== 'done' || deps.includes(x.id)) continue;
+              if (d.tasks.some(y => y !== x && !drop.has(y) && y.deps.includes(x.id))) continue;
+              drop.add(x); over--; moved = true;
+            }
+          }
+          if (over > 0) throw err('full', 'board is full');
+          d.tasks = d.tasks.filter(x => !drop.has(x));
         }
         const ts = now();
         const x = { id: tid, title: t, deps: [...new Set(deps)], status: 'open', owner: null, lease_until: null, claimed_at: null,
@@ -151,10 +187,12 @@ function open(dir, { now = () => Date.now() } = {}) {
         return { save: true, value: { task: view(d, x), unblocked } };
       });
     },
-    release(id, by, force = false) {
+    // claimed_at pins the claim: when given, release only that exact claim.
+    release(id, by, force = false, claimedAt = null) {
       return locked(d => {
         const x = need(d, id);
         if (x.status !== 'claimed') throw err('not_claimed', `task is ${x.status}`);
+        if (claimedAt !== null && (x.claimed_at !== claimedAt || x.owner !== by)) throw err('not_claimed', 'the claim changed hands');
         mayAct(x, by, force);
         reopen(x, now());
         return { save: true, value: view(d, x) };
@@ -192,4 +230,4 @@ function open(dir, { now = () => Date.now() } = {}) {
   };
 }
 
-module.exports = { open, ID_RE, STATUSES };
+module.exports = { open, ID_RE, STATUSES, lockAcquire, lockRelease };

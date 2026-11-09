@@ -33,7 +33,7 @@ const T0 = Date.parse('2030-01-07T12:00:00Z'); // a Monday
 
     const reg = M.registry({ modules: { goals: true }, goals: { stale_window_weeks: 2, max_lessons_in_prompt: 3 } });
     check('on: loads with no errors', reg.errors.length === 0, reg.errors.join(' | '));
-    check('settings merge', JSON.stringify(reg.settingsFor('goals')) === '{"stale_window_weeks":2,"max_lessons_in_prompt":3}');
+    check('settings merge', JSON.stringify(reg.settingsFor('goals')) === '{"stale_window_weeks":2,"max_lessons_in_prompt":3,"max_replaced_goals":50,"max_lessons":200,"max_repeats_per_lesson":100}');
     check('wrong setting type is a load error', M.registry({ modules: { goals: true }, goals: { stale_window_weeks: 'x' } }).errors.length === 1);
     check('unknown setting is a load error', M.registry({ modules: { goals: true }, goals: { nope: 1 } }).errors.length === 1);
     const routes = reg.listRoutes().filter(r => r.module === 'goals');
@@ -219,6 +219,49 @@ const T0 = Date.parse('2030-01-07T12:00:00Z'); // a Monday
     check('cmd lesson repeat with a bad id exits 2', p.status === 2);
     p = run('lesson', ['repeat', 'l-000000000000']);
     check('cmd lesson repeat unknown id exits 3', p.status === 3);
+
+    // ---- review fixes: lock ownership and retention
+    {
+      const dir = path.join(tmp, 'lk'); fs.mkdirSync(dir, { recursive: true });
+      const lf = path.join(dir, 'lock');
+      const o = { staleMs: 50, waitMs: 150, transient: new Set(['EPERM', 'EACCES', 'EBUSY']), sleepMs: ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms), busyError: () => new Error('busy') };
+      const a = S.lockAcquire(lf, o);
+      let busy = false; try { S.lockAcquire(lf, { ...o, staleMs: 60000 }); } catch (e) { busy = e.message === 'busy'; }
+      check('lock: fresh lock is not taken; busy at the wait limit', busy && fs.readFileSync(lf, 'utf8') === a);
+      const old = new Date(Date.now() - 5000); fs.utimesSync(lf, old, old);
+      const b = S.lockAcquire(lf, o);
+      S.lockRelease(lf, a);
+      check('lock: stale lock broken; old holder cannot remove the successor lock', b !== a && fs.readFileSync(lf, 'utf8') === b);
+      S.lockRelease(lf, b);
+      check('lock: holder release removes its lock', !fs.existsSync(lf) && fs.readdirSync(dir).length === 0);
+    }
+    {
+      const d = { goals: [], lessons: [] };
+      const ret = { max_replaced_goals: 2, max_lessons: 3, max_repeats_per_lesson: 4 };
+      for (let i = 0; i < 6; i++) S.setGoal(d, { verbatim: 'goal ' + i }, ret);
+      check('retention: replaced goals capped, active kept, newest kept', d.goals.length === 3 && d.goals.filter(g => g.state === 'active').length === 1 && d.goals[0].verbatim === 'goal 3' && d.goals[2].verbatim === 'goal 5');
+      const dd = { goals: [], lessons: [] };
+      for (let i = 0; i < 80; i++) S.setGoal(dd, { verbatim: 'g' + i });
+      check('retention: default keeps 50 replaced goals', dd.goals.length === 51);
+      const l = { goals: [], lessons: [] };
+      const old = new Date(Date.now() - 20 * WEEKMS).toISOString();
+      const mk = (id, created, repeats) => ({ lesson_id: id, what: 'w', missed_by: 'm', fix: 'f', created_at: created, repeats });
+      const recent = new Date().toISOString();
+      l.lessons.push(mk('l-old-kept', old, []), mk('l-old-stale', old, [recent]), mk('l-new', recent, []));
+      S.addLesson(l, { what: 'w', missed_by: 'm', fix: 'f' }, ret, 2);
+      const ids = l.lessons.map(x => x.lesson_id);
+      check('retention: over the lesson cap the stale one goes first, the added one stays', l.lessons.length === 3 && !ids.includes('l-old-stale') && ids.includes('l-old-kept') && ids.includes('l-new'), ids.join());
+      S.addLesson(l, { what: 'w2', missed_by: 'm', fix: 'f' }, ret, 2);
+      check('retention: then the oldest of the rest', l.lessons.length === 3 && !l.lessons.some(x => x.lesson_id === 'l-old-kept'));
+      const r = S.addLesson({ goals: [], lessons: [] }, { what: 'w', missed_by: 'm', fix: 'f' });
+      const dl = { goals: [], lessons: [r.lesson] };
+      for (let i = 0; i < 7; i++) S.repeatLesson(dl, r.lesson.lesson_id, ret);
+      check('retention: repeat timestamps capped per lesson', dl.lessons[0].repeats.length === 4);
+      for (let i = 0; i < 150; i++) S.repeatLesson(dl, r.lesson.lesson_id);
+      check('retention: default keeps 100 repeats', dl.lessons[0].repeats.length === 100);
+      const s = M.registry({ modules: { goals: true } }).settingsFor('goals');
+      check('retention settings declared with defaults', s.max_replaced_goals === 50 && s.max_lessons === 200 && s.max_repeats_per_lesson === 100);
+    }
   } finally {
     try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* best effort */ }
   }

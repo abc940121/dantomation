@@ -34,33 +34,63 @@ function all(ctx) {
   }
   return out;
 }
-function prune(ctx) {
+const PRED_MAX_AGE_MS = 24 * 3600 * 1000; // a prediction never followed by a start is forgotten after this
+const isUnstarted = r => !r.started_ts;
+const stampOf = r => r.ended_ts || (r.prediction && r.prediction.ts) || r.started_ts || 0;
+function prune(ctx, now = Date.now()) {
   const rs = all(ctx), max = ctx.settings.max_tracked_tasks;
-  const done = rs.filter(r => r.ended_ts).sort((a, b) => a.ended_ts - b.ended_ts);
-  for (let i = 0; i < rs.length - max && i < done.length; i++) { try { fs.unlinkSync(fileOf(ctx, done[i].task_id)); } catch { /* gone */ } }
+  const drop = r => { try { fs.unlinkSync(fileOf(ctx, r.task_id)); } catch { /* gone */ } };
+  let left = rs.length;
+  // un-started predictions past the max age go first
+  for (const r of rs) if (isUnstarted(r) && now - stampOf(r) > PRED_MAX_AGE_MS) { drop(r); left--; r.gone = true; }
+  // then ended tasks and prediction-only records count toward the cap, oldest first; running tasks are kept
+  const cand = rs.filter(r => !r.gone && (r.ended_ts || isUnstarted(r))).sort((a, b) => stampOf(a) - stampOf(b));
+  for (let i = 0; left > max && i < cand.length; i++, left--) drop(cand[i]);
 }
+const countUnstarted = ctx => all(ctx).filter(isUnstarted).length;
 
-// ---- per-task lock (a lock file; stale after 5 s; on any other error run unlocked) ----
+// ---- per-task lock: a lock file holding a unique owner token ----
+// Only the holder removes its own lock (token compared). A stale lock (older than 5 s) is broken by renaming it
+// to a unique name, checking that what we renamed is what we judged stale, and only then deleting it.
+// fn never runs without the lock: on timeout or an unexpected error withLock throws (the hook boundary catches).
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-const LOCK_STALE_MS = 5000;
+const LOCK_STALE_MS = 5000, LOCK_WAIT_MS = 15000;
+const readTok = f => { try { return fs.readFileSync(f, 'utf8'); } catch { return null; } };
 async function withLock(ctx, id, fn) {
-  const lock = `${fileOf(ctx, id)}.lock`, t0 = Date.now();
+  const lock = `${fileOf(ctx, id)}.lock`, t0 = Date.now(), token = `${process.pid}.${crypto.randomBytes(12).toString('hex')}`;
   for (;;) {
-    try { fs.closeSync(fs.openSync(lock, 'wx')); break; }
+    try { fs.writeFileSync(lock, token, { flag: 'wx' }); break; }
     catch (e) {
       const transient = e && (e.code === 'EPERM' || e.code === 'EACCES' || e.code === 'EBUSY');
-      if (!e || (e.code !== 'EEXIST' && !(transient && Date.now() - t0 <= LOCK_STALE_MS))) break;
-      if (!transient) {
-        let age = 0; try { age = Date.now() - fs.statSync(lock).mtimeMs; } catch { continue; }
-        if (age > LOCK_STALE_MS || Date.now() - t0 > LOCK_STALE_MS) { try { fs.unlinkSync(lock); } catch { /* raced */ } continue; }
+      if (!e || (e.code !== 'EEXIST' && !transient)) throw e;
+      if (Date.now() - t0 > LOCK_WAIT_MS) throw new Error(`trace: lock for ${id} not acquired in ${LOCK_WAIT_MS} ms`);
+      if (e.code === 'EEXIST') {
+        let age = 0, seen = null;
+        try { seen = readTok(lock); age = Date.now() - fs.statSync(lock).mtimeMs; } catch { continue; }
+        if (age > LOCK_STALE_MS) {
+          const grave = `${lock}.stale.${process.pid}.${crypto.randomBytes(6).toString('hex')}`;
+          try { fs.renameSync(lock, grave); } catch { continue; } // raced: someone else broke or released it
+          const got = readTok(grave);
+          if (got === seen) { try { fs.unlinkSync(grave); } catch { /* gone */ } }
+          else { // we took a lock that was not the stale one (a successor's): put it back if the name is free
+            try { fs.linkSync(grave, lock); } catch { /* name taken */ }
+            try { fs.unlinkSync(grave); } catch { /* gone */ }
+          }
+          continue;
+        }
       }
       await sleep(5 + Math.floor(Math.random() * 15));
     }
   }
-  try { return await fn(); } finally { try { fs.unlinkSync(lock); } catch { /* gone */ } }
+  try { return await fn(); } finally { if (readTok(lock) === token) { try { fs.unlinkSync(lock); } catch { /* gone */ } } }
 }
 // Locked read-modify-write; mut(rec|null) returns a record to save or falsy to skip.
 const update = (ctx, id, mut) => withLock(ctx, id, () => { const rec = mut(load(ctx, id)); if (rec) save(ctx, rec); return rec || null; });
+// Hooks must never throw into the core turn: log a status record and skip the update.
+const safe = (name, fn) => async (p, ctx) => {
+  try { return await fn(p, ctx); }
+  catch (e) { try { ctx.state.append({ type: 'trace_skipped', hook: name, task_id: p && okId(p.task_id) ? p.task_id : null, reason: clip(e && e.message, 200) }); } catch { /* best effort */ } }
+};
 
 const fresh = (id, now) => ({ task_id: id, request: '', started_ts: now, ended_ts: null, code: null, resumed: 0,
   tokens: { input: 0, output: 0, cache_write: 0, cache_read: 0 }, cost_usd: null, tool_count: 0, tool_errors: 0, tool_ms: 0,
@@ -181,23 +211,48 @@ async function predict(ctx, id, body, actor) {
   if (!okId(id)) return { status: 400, json: { error: 'bad task id' } };
   const p = parsePrediction(body, actor);
   if (p.error) return { status: 400, json: { error: p.error } };
-  let conflict = false;
-  const rec = await update(ctx, id, old => {
-    const rec = old || Object.assign(fresh(id, null), { started_ts: null });
-    if (rec.prediction) { conflict = true; return null; } // commit before the work: no rewriting afterwards
-    rec.prediction = Object.assign(p.value, { ts: Date.now() });
-    return rec;
-  });
-  if (conflict) return { status: 409, json: { error: 'this task already has a prediction' } };
+  const isOwner = !!actor && actor.kind === 'owner';
+  let refuse = null, rec;
+  try {
+    prune(ctx);
+    const cap = ctx.settings.max_unstarted_predictions;
+    rec = await update(ctx, id, old => {
+      // commit before the work: no rewriting afterwards
+      if (old && old.prediction) { refuse = { status: 409, json: { error: 'this task already has a prediction' } }; return null; }
+      // a worker may only predict for a task that has not started (a started task belongs to whoever started it)
+      if (old && old.started_ts && !isOwner) { refuse = { status: 403, json: { error: 'task already started; only the owner may add a prediction now' } }; return null; }
+      if (!old && countUnstarted(ctx) >= cap) { refuse = { status: 429, json: { error: 'too many un-started predictions (max ' + cap + ')' } }; return null; }
+      const r = old || Object.assign(fresh(id, null), { started_ts: null });
+      r.prediction = Object.assign(p.value, { ts: Date.now(), by: (actor && actor.id) || '' });
+      return r;
+    });
+  } catch { return { status: 503, json: { error: 'busy, try again' } }; }
+  if (refuse) return refuse;
   try { ctx.state.append({ type: 'trace_predicted', task_id: id, predicted_ms: p.value.duration_ms, line_owner: p.value.line_owner }); } catch { /* best effort */ }
   return { status: 200, json: { prediction: rec.prediction } };
 }
-async function recordResult(ctx, id, body) {
+async function recordResult(ctx, id, body, actor) {
   if (!okId(id)) return { status: 400, json: { error: 'bad task id' } };
   const text = clip(body && body.result, 500);
   if (!text) return { status: 400, json: { error: 'result is required' } };
-  const rec = await update(ctx, id, r => { if (!r) return null; r.actual_result = text; return r; });
-  return rec ? { status: 200, json: { actual_result: text } } : { status: 404, json: { error: 'no such task' } };
+  const isOwner = !!actor && actor.kind === 'owner', who = (actor && actor.id) || '';
+  let refuse = null, found = false;
+  try {
+    await update(ctx, id, r => {
+      if (!r) return null;
+      found = true;
+      if (!isOwner) {
+        // the core gives workers no task link (one shared worker token, no id), so: write-once for non-owners,
+        // and a task whose prediction was made by actor A is closed to any other non-owner actor
+        if (r.actual_result !== undefined) { refuse = { status: 409, json: { error: 'result already recorded; only the owner may change it' } }; return null; }
+        if (r.prediction && r.prediction.by !== undefined && r.prediction.by !== who) { refuse = { status: 403, json: { error: 'this task belongs to another actor' } }; return null; }
+      }
+      r.actual_result = text; r.result_by = who;
+      return r;
+    });
+  } catch { return { status: 503, json: { error: 'busy, try again' } }; }
+  if (refuse) return refuse;
+  return found ? { status: 200, json: { actual_result: text } } : { status: 404, json: { error: 'no such task' } };
 }
 
 // ---- views ----
@@ -225,12 +280,12 @@ module.exports = {
   emits: [],
 
   on: {
-    'task.start': onStart,
-    'tool.done': onTool,
-    'task.end': onEnd,
+    'task.start': safe('task.start', onStart),
+    'tool.done': safe('tool.done', onTool),
+    'task.end': safe('task.end', onEnd),
   },
 
-  jobs: [{ id: 'sweep', every: 30, run: ctx => sweep(ctx) }],
+  jobs: [{ id: 'sweep', every: 30, run: ctx => sweep(ctx).catch(() => 0) }],
 
   commands: {
     // trace [list] | trace show <task_id> | trace predict <task_id> <minutes> [expected result words]
@@ -276,7 +331,7 @@ module.exports = {
     { method: 'POST', path: '/tasks/:id/predict', access: 'worker', description: 'record {duration_ms|minutes, result?, line_owner?} before the work',
       handler: ctx => predict(ctx, ctx.params.id, ctx.body, ctx.actor) },
     { method: 'POST', path: '/tasks/:id/result', access: 'worker', description: 'record the actual result text {result}',
-      handler: ctx => recordResult(ctx, ctx.params.id, ctx.body) },
+      handler: ctx => recordResult(ctx, ctx.params.id, ctx.body, ctx.actor) },
     { method: 'GET', path: '/overruns', access: 'owner', description: 'tasks over their predicted duration; ?line_owner=x filters',
       handler: async ctx => {
         await sweep(ctx);
@@ -305,7 +360,8 @@ module.exports = {
   settings: {
     overrun_factor: { type: 'number', default: 2, min: 1, max: 100, description: 'elapsed time over this multiple of the predicted duration raises trace.overrun' },
     max_events_per_task: { type: 'integer', default: 500, min: 10, max: 5000, description: 'timeline events kept per task; later ones are counted, not stored' },
-    max_tracked_tasks: { type: 'integer', default: 200, min: 10, max: 5000, description: 'ended tasks beyond this many are forgotten, oldest first' },
+    max_unstarted_predictions: { type: 'integer', default: 100, min: 1, max: 5000, description: 'predictions for tasks that have not started; more are refused with 429 (they are also forgotten after 24 h)' },
+    max_tracked_tasks: { type: 'integer', default: 200, min: 10, max: 5000, description: 'ended tasks and un-started predictions beyond this many are forgotten, oldest first' },
   },
 
   api: { costOf, summary, sweep },

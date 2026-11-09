@@ -44,6 +44,7 @@ const CORE_SUITES = [
   ['integration', 'test/integration.js', ['chat-ui', 'approval-cards']],
   ['trunk-diff', 'test/trunk-diff.js', []],
   ['trunk-diff-test', 'test/trunk-diff.test.js', []],
+  ['scaffold', 'test/scaffold.test.js', []],
 ];
 const LAST_SUITES = [['public-boundary', 'test/public-boundary.js', ['guard-base'], true]];
 

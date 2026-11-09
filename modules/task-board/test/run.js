@@ -257,6 +257,56 @@ const boardFile = path.join(process.env.HARNESS_STATE_DIR, 'm', 'task-board', 'b
       const g = await bad.callRoute(bad.findRoute('GET', `${P}/tasks/ws4`), { actor: OWNER, query: {} });
       check('workspace failure: 500 and the task is open again', r.status === 500 && g.json.status === 'open' && g.json.owner === null, `${r.status} ${g.json.status}`);
     }
+
+    // ---- review fixes: lock ownership, safe release, dependency-aware prune ----
+    {
+      const dir = path.join(tmp, 'locks');
+      fs.mkdirSync(dir, { recursive: true });
+      const lf = path.join(dir, 'board.lock');
+      const o = { staleMs: 50, waitMs: 150, transient: new Set(['EPERM', 'EACCES', 'EBUSY']), sleepMs: ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms), busyError: () => new Error('busy') };
+      const tokA = S.lockAcquire(lf, o);
+      check('lock: file holds the owner token', fs.readFileSync(lf, 'utf8') === tokA);
+      let busy = false; try { S.lockAcquire(lf, { ...o, staleMs: 60000 }); } catch (e) { busy = e.message === 'busy'; }
+      check('lock: fresh lock held by another is never taken; throws busy at the wait limit', busy && fs.readFileSync(lf, 'utf8') === tokA);
+      const old = new Date(Date.now() - 5000); fs.utimesSync(lf, old, old);
+      const tokB = S.lockAcquire(lf, o);
+      check('lock: a stale lock is broken and replaced by the new owner', tokB !== tokA && fs.readFileSync(lf, 'utf8') === tokB);
+      S.lockRelease(lf, tokA); // the slow old holder finishing must not remove the successor's lock
+      check('lock: old holder release leaves the successor lock', fs.existsSync(lf) && fs.readFileSync(lf, 'utf8') === tokB);
+      S.lockRelease(lf, tokB);
+      check('lock: holder release removes its own lock', !fs.existsSync(lf));
+      check('lock: no stale leftovers', fs.readdirSync(dir).every(n => !n.endsWith('.stale')));
+      const st = S.open(dir, { staleMs: 50, waitMs: 150 });
+      fs.writeFileSync(lf, 'dead.token'); fs.utimesSync(lf, old, old);
+      check('lock: store op recovers from a dead stale lock', st.list().length === 0 && !fs.existsSync(lf));
+    }
+    {
+      let t = 1000;
+      const st = S.open(path.join(tmp, 'rel'), { now: () => t });
+      st.add({ id: 'a', title: 'x' });
+      const c1 = st.claim('w1', { lease_ms: 1000 });
+      t = 5000; // lease over; another worker claims, then the first one's failure path releases
+      const c2 = st.claim('w2', { lease_ms: 5000 });
+      let code = null; try { st.release('a', 'w1', false, c1.claimed_at); } catch (e) { code = e.code; }
+      check('release: stale claim identity does not release a newer claim', c2 && c2.owner === 'w2' && code === 'not_claimed' && st.get('a').owner === 'w2');
+      let code2 = null; try { st.release('a', 'w2', false, c1.claimed_at); } catch (e) { code2 = e.code; }
+      check('release: same owner but a different claim is refused', code2 === 'not_claimed' && st.get('a').status === 'claimed');
+      st.release('a', 'w2', false, c2.claimed_at);
+      check('release: the exact claim is released', st.get('a').status === 'open');
+    }
+    {
+      const st = S.open(path.join(tmp, 'prune'));
+      const done = id => { st.claim('w', { id, lease_ms: 60000 }); st.finish(id, 'w', true); };
+      st.add({ id: 'a', title: 'a' }, 3); done('a');
+      st.add({ id: 'b', title: 'b' }, 3); done('b');
+      st.add({ id: 'c', title: 'c', deps: ['a'] }, 3);
+      let code = null; try { st.add({ id: 'd', title: 'd', deps: ['b'] }, 3); } catch (e) { code = e.code; }
+      check('prune: refuses the add rather than drop a done task the new task depends on', code === 'full' && st.get('b') && st.get('a'), String(code));
+      st.add({ id: 'e', title: 'e' }, 3);
+      check('prune: drops the unreferenced done task, keeps the one a remaining task needs', st.get('b') === null && st.get('a') && st.get('c').blocked_by.length === 0);
+      let code3 = null; try { st.add({ id: 'f', title: 'f' }, 3); } catch (e) { code3 = e.code; }
+      check('prune: nothing prunable is a clear full error', code3 === 'full');
+    }
   } catch (e) {
     results.push(false); console.log('FAIL unexpected error:', e && e.stack || e);
   }

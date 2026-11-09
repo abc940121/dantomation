@@ -1,11 +1,6 @@
 {
   "suites": [
-    {
-      "label": "checkpoint",
-      "file": "test/checkpoint.js",
-      "needs": [
-        "checkpoint"
-      ]
-    }
+    { "label": "checkpoint", "file": "test/checkpoint.js", "needs": ["checkpoint"] },
+    { "label": "checkpoint-fork", "file": "test/fork.js", "needs": ["checkpoint"] }
   ]
 }

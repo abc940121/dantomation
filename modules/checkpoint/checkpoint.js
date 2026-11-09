@@ -147,4 +147,4 @@ function restore(task, n, opts = {}) {
   } finally { fs.rmSync(tmp, { force: true }); }
 }
 
-module.exports = { checkpoint, restore, MAX_BYTES, REPO };
+module.exports = { checkpoint, restore, MAX_BYTES, REPO, git, ensureRepo, taskDir, safeId: safe };

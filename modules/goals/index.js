@@ -10,6 +10,7 @@ const inTask = () => !!process.env.HARNESS_TASK_ID;
 const clip = (s, n) => { s = String(s || '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 3) + '...' : s; };
 const dirOf = ctx => ctx.state.dir;
 const win = ctx => ctx.settings.stale_window_weeks;
+const ret = ctx => ({ max_replaced_goals: ctx.settings.max_replaced_goals, max_lessons: ctx.settings.max_lessons, max_repeats_per_lesson: ctx.settings.max_repeats_per_lesson });
 
 // An agent may read the card (goal show) but never set, edit, confirm or close goals, nor write lessons.
 const OWNER_CMD = /(dantomation|harness)(\.(js|cmd))?["']?\s+(goal\s+["']?(set|edit|confirm|done|drop)|lesson\s+["']?(add|repeat))\b/i;
@@ -56,15 +57,15 @@ function mutate(ctx, fn, type, pick) {
   return r;
 }
 const goalGet = ctx => { const data = S.load(dirOf(ctx)); const g = S.activeGoal(data); return { status: 200, json: { goal: goalView(g), questions: S.missing(g) } }; };
-const goalPost = ctx => { const r = mutate(ctx, d => S.setGoal(d, body(ctx)), 'goal_set', x => x.goal.goal_id); return r.error ? fail(r) : { status: 201, json: { goal: goalView(r.goal), questions: S.missing(r.goal) } }; };
+const goalPost = ctx => { const r = mutate(ctx, d => S.setGoal(d, body(ctx), ret(ctx)), 'goal_set', x => x.goal.goal_id); return r.error ? fail(r) : { status: 201, json: { goal: goalView(r.goal), questions: S.missing(r.goal) } }; };
 const goalPatch = ctx => { const r = mutate(ctx, d => S.editGoal(d, body(ctx)), 'goal_edit', x => x.goal.goal_id); return r.error ? fail(r) : { status: 200, json: { goal: goalView(r.goal), questions: S.missing(r.goal) } }; };
 const goalConfirm = ctx => { const r = mutate(ctx, d => S.confirmGoal(d), 'goal_confirm', x => x.goal.goal_id); return r.error ? fail(r) : { status: 200, json: { goal: goalView(r.goal) } }; };
 const goalClose = ctx => { const how = body(ctx).how === 'dropped' ? 'dropped' : 'done'; const r = mutate(ctx, d => S.closeGoal(d, how), 'goal_close', x => x.goal.goal_id); return r.error ? fail(r) : { status: 200, json: { goal: goalView(r.goal) } }; };
 const lessonList = ctx => { const data = S.load(dirOf(ctx)); const t = S.now(); return { status: 200, json: { lessons: data.lessons.map(l => S.lessonView(l, win(ctx), t)) } }; };
-const lessonAdd = ctx => { const r = mutate(ctx, d => S.addLesson(d, body(ctx)), 'lesson_add', x => x.lesson.lesson_id); return r.error ? fail(r) : { status: 201, json: { lesson: S.lessonView(r.lesson, win(ctx)) } }; };
+const lessonAdd = ctx => { const r = mutate(ctx, d => S.addLesson(d, body(ctx), ret(ctx), win(ctx)), 'lesson_add', x => x.lesson.lesson_id); return r.error ? fail(r) : { status: 201, json: { lesson: S.lessonView(r.lesson, win(ctx)) } }; };
 const lessonRepeat = ctx => {
   if (!S.ID_RE.test(ctx.params.id)) return { status: 404, json: { error: 'no such lesson' } };
-  const r = mutate(ctx, d => S.repeatLesson(d, ctx.params.id), 'lesson_repeat', x => x.lesson.lesson_id);
+  const r = mutate(ctx, d => S.repeatLesson(d, ctx.params.id, ret(ctx)), 'lesson_repeat', x => x.lesson.lesson_id);
   return r.error ? fail(r) : { status: 200, json: { lesson: S.lessonView(r.lesson, win(ctx)) } };
 };
 
@@ -105,7 +106,7 @@ async function goalCmd(args, ctx) {
   let r;
   if (verb === 'set') {
     if (p.pos.length !== 1) return bad('goal set takes your goal as one quoted text\n' + GOAL_USAGE);
-    r = S.update(dir, d => S.setGoal(d, { verbatim: p.pos[0], done: p.f.done, out_of_scope: p.f.out }));
+    r = S.update(dir, d => S.setGoal(d, { verbatim: p.pos[0], done: p.f.done, out_of_scope: p.f.out }, ret(ctx)));
     if (!r.error) rec('goal_set', r.goal.goal_id);
   } else if (verb === 'edit') {
     if (p.pos.length) return bad(GOAL_USAGE);
@@ -144,11 +145,11 @@ async function lessonCmd(args, ctx) {
   let r;
   if (verb === 'add') {
     if (p.pos.length !== 1) return bad('lesson add takes the problem as one quoted text\n' + LESSON_USAGE);
-    r = S.update(dir, d => S.addLesson(d, { what: p.pos[0], missed_by: p.f.missed, fix: p.f.fix }));
+    r = S.update(dir, d => S.addLesson(d, { what: p.pos[0], missed_by: p.f.missed, fix: p.f.fix }, ret(ctx), win(ctx)));
     if (!r.error) ctx.state.append({ type: 'lesson_add', id: r.lesson.lesson_id });
   } else {
     if (p.pos.length !== 1 || !S.ID_RE.test(p.pos[0])) return bad(LESSON_USAGE);
-    r = S.update(dir, d => S.repeatLesson(d, p.pos[0]));
+    r = S.update(dir, d => S.repeatLesson(d, p.pos[0], ret(ctx)));
     if (!r.error) ctx.state.append({ type: 'lesson_repeat', id: r.lesson.lesson_id });
   }
   if (r.error) return bad(r.error + (verb === 'add' ? '\n' + LESSON_USAGE : ''), 3);
@@ -190,5 +191,8 @@ module.exports = {
   settings: {
     stale_window_weeks: { type: 'integer', default: 2, min: 1, max: 26, description: 'weeks per window; a lesson older than two windows is stale if its repeats did not drop between them' },
     max_lessons_in_prompt: { type: 'integer', default: 10, min: 0, max: 50, description: 'most recent non-stale lessons put in each turn prompt' },
+    max_replaced_goals: { type: 'integer', default: 50, min: 1, max: 10000, description: 'closed goals kept (replaced, done or dropped); the oldest beyond this are deleted when a goal is set' },
+    max_lessons: { type: 'integer', default: 200, min: 1, max: 10000, description: 'lessons kept; over the cap the oldest stale lessons are deleted first, then the oldest others, when a lesson is added' },
+    max_repeats_per_lesson: { type: 'integer', default: 100, min: 1, max: 10000, description: 'repeat timestamps kept per lesson (newest); the repeat count shown is of kept ones' },
   },
 };

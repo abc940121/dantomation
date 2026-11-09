@@ -14,6 +14,19 @@ Makes every agent edit undoable. Inside a harness task (`HARNESS_TASK_ID`, `HARN
 
 - `undo` (via `dantomation undo`) rolls the latest task's folder back by one agent change, then one more on each repeat. It needs no HARNESS_OWNER: it refuses when `HARNESS_TASK_ID` is set (inside an engine) and guard-base blocks agents that name it. It uses the same snapshots. Before it changes anything it takes a fresh checkpoint and prints how to get back (`Undo this with: HARNESS_OWNER=1 node bin/harness.js restore <task> <n>`), so an undo is itself undoable.
 
+## Fork from step N
+
+Every checkpoint is a step. A fork restores the snapshot of step N (the folder as it was just before that tool call) into a NEW folder and records it; the original task folder is only read. It is a plain copy without `.git`, not a git worktree.
+
+    node bin/harness.js fork steps <task>          step, tool, time, ref
+    node bin/harness.js fork <task> <n>            new folder + fork record
+    node bin/harness.js fork diff <task> <a> <b>   A/M/D paths from step a to step b
+    node bin/harness.js fork list                  fork records
+
+The command refuses inside an engine (`HARNESS_TASK_ID`). Routes (owner access): `GET /m/checkpoint/steps/:task`, `GET /m/checkpoint/diff/:task/:a/:b`, `GET /m/checkpoint/forks`, `POST /m/checkpoint/fork/:task/:n`. Settings (`checkpoint` section): `fork_dir` (absolute base, default under the state dir, may not be inside the original folder), `max_forks` (default 20, oldest records dropped), `prune_fork_dirs` (default false: a dropped record keeps its folder). Input is a task id (`[A-Za-z0-9._-]`, no separators) and a step number; the fork dir is always a generated child of the base.
+
+`prepareTurn` adds "you are continuing from step N of task X" when a task's workdir is a fork. Starting a task inside a fork needs core support; until then the owner points a new task at the fork folder.
+
 ## Turn it on
 
     "modules": { "checkpoint": true }
