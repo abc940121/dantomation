@@ -2,7 +2,9 @@
 // Card store. The journal is the single source of truth (append-only, fsynced);
 // <module state dir>/<id>.json (state/m/approval-cards/) is a readable mirror,
 // rewritten from the journal.
-//   card         {card_id, task_id, tool, input, sha256, summary, rule, created_at, expires_at}
+//   card         {card_id, task_id, tool, input, sha256, summary, rule, created_at, expires_at, live?}
+//                live: raised by the permission-prompt tool (bin/approve-mcp.js) while the engine waits
+//                in the same turn; expires_at is null and the card never times out.
 //   card_answer  {card_id, answer: yes | no | timeout | unclear}
 //   card_used    {card_id}
 // Card state is a fold over those records, so a crash at any point leaves a card
@@ -18,7 +20,7 @@ const crypto = require('crypto');
 // 15 minutes: long enough for an owner who is away from the desk to see a phone
 // notification and answer, short enough that a stale request does not hang a task
 // all afternoon (an expired card is denied for good, so too short a window costs a retry).
-const DEFAULT_TIMEOUT_MIN = 15;
+const DEFAULT_TIMEOUT_MIN = 0; // 0: a card waits until someone answers it (no answer is never a no)
 const WHO = ['owner', 'device', 'timeout', 'system'];
 const WHERE = ['chat', 'phone', 'voice', 'cli'];
 const DEVICE_RE = /^[A-Za-z0-9._:-]{1,64}$/;
@@ -57,14 +59,15 @@ const hashOf = (tool, input) => crypto.createHash('sha256').update(tool + '\n' +
 // settings: the module's validated settings (core checked the config section).
 function timeoutMs(settings) {
   const m = Number(settings && settings.timeout_minutes);
-  return (Number.isFinite(m) && m > 0 ? m : DEFAULT_TIMEOUT_MIN) * 60000;
+  return (Number.isFinite(m) && m > 0 ? m : DEFAULT_TIMEOUT_MIN) * 60000; // 0 = no deadline
 }
 
 // records -> Map card_id -> card with .state: pending | approved | denied | expired | used
 function fold(records) {
   const cards = new Map();
   for (const r of records) {
-    if (r.type === 'card') cards.set(r.card_id, { ...r, state: 'pending', unclear: 0 });
+    // First card with an id wins: a later record reusing it (a collision or a forgery) never replaces it.
+    if (r.type === 'card') { if (!cards.has(r.card_id)) cards.set(r.card_id, { ...r, state: 'pending', unclear: 0 }); }
     else if (r.type === 'card_answer' && cards.has(r.card_id)) {
       const c = cards.get(r.card_id);
       if (r.answer === 'unclear') { c.unclear++; continue; }
@@ -76,7 +79,8 @@ function fold(records) {
   }
   return cards;
 }
-const isExpired = c => c.state === 'pending' && now() >= Date.parse(c.expires_at);
+// A live card (expires_at null) never expires: nobody answering is not a no.
+const isExpired = c => c.state === 'pending' && !!c.expires_at && now() >= Date.parse(c.expires_at);
 
 function mirror(io, cards) {
   try {
@@ -89,11 +93,30 @@ function mirror(io, cards) {
   } catch { /* the journal is authoritative; a failed mirror changes nothing */ }
 }
 
-async function create(io, { task_id, tool, input, summary, rule }, settings) {
-  const card_id = 'card-' + crypto.randomBytes(3).toString('hex');
+// A short id the owner can type, unique across processes: each is reserved by an exclusive create
+// of ids/<id> in the module state dir (a taken id is drawn again, longer after a few tries).
+function reserveId(io) {
+  const dir = path.join(io.state.dir, 'ids');
+  fs.mkdirSync(dir, { recursive: true });
+  // Cards from before reservations existed have journal records but no ids/ file: their ids are taken too.
+  const old = new Set(io.J.readAll().records.filter(r => r && r.type === 'card').map(r => r.card_id));
+  for (let i = 0; i < 32; i++) {
+    const id = 'card-' + crypto.randomBytes(i < 8 ? 3 : 6).toString('hex');
+    if (old.has(id)) continue;
+    try { fs.closeSync(fs.openSync(path.join(dir, id), 'wx')); return id; }
+    catch (e) { if (e.code !== 'EEXIST') throw e; }
+  }
+  throw new Error('no free card id');
+}
+
+// opts.live: no deadline (expires_at null), see the card record above.
+async function create(io, { task_id, tool, input, summary, rule, cwd }, settings, opts) {
+  const card_id = reserveId(io);
   const t = now();
-  const rec = io.state.append({ type: 'card', card_id, task_id, tool, input, sha256: hashOf(tool, input), summary, rule,
-    created_at: new Date(t).toISOString(), expires_at: new Date(t + timeoutMs(settings)).toISOString() });
+  const live = !!(opts && opts.live);
+  const ms = timeoutMs(settings);
+  const rec = io.state.append({ type: 'card', card_id, task_id, tool, input, sha256: hashOf(tool, input), summary, rule, ...(cwd ? { cwd } : {}),
+    created_at: new Date(t).toISOString(), expires_at: live || !ms ? null : new Date(t + ms).toISOString(), ...(live ? { live: true } : {}) });
   mirror(io, [{ ...rec, state: 'pending', unclear: 0 }]);
   await io.emit('card.created', { card_id, task_id, summary, rule, expires_at: rec.expires_at });
   return rec;
@@ -143,4 +166,29 @@ async function sweep(io) {
 
 const pending = records => [...fold(records).values()].filter(c => c.state === 'pending' && !isExpired(c));
 
-module.exports = { source, sourceText, decisionLabel, denyMessage, systemDeny, WHO, WHERE, DEFAULT_TIMEOUT_MIN, fold, create, sweep, answered, pending, note, mirror, hashOf, isExpired, now, timeoutMs, canon };
+// Live cards left pending when their wait ended (task stopped, engine exited, prompt cancelled): each is
+// closed as a system no, so no orphan card holds the task. append: a journal append (the record carries
+// module "approval-cards", as the module's own writes do). task_id null: every live card. -> closed card ids.
+// Use up an approved card exactly once across processes: an exclusive create of a claim file in the module's
+// state dir. true: this caller won and must act on the yes; false: another caller already used it. Any other
+// error throws (beforeTool then fails closed).
+function claim(io, card_id, task_id = null) {
+  const dir = path.join(io.state.dir, 'used');
+  fs.mkdirSync(dir, { recursive: true });
+  try { fs.writeFileSync(path.join(dir, String(card_id).replace(/[^A-Za-z0-9_-]/g, '_')), '', { flag: 'wx' }); }
+  catch (e) { if (e && e.code === 'EEXIST') return false; throw e; }
+  io.state.append({ type: 'card_used', card_id, task_id });
+  return true;
+}
+
+function closeLive(append, records, task_id, why) {
+  const out = [];
+  for (const c of fold(records).values()) {
+    if (!c.live || c.state !== 'pending' || (task_id != null && c.task_id !== task_id)) continue;
+    append({ type: 'card_answer', module: 'approval-cards', card_id: c.card_id, task_id: c.task_id, answer: 'no', who: 'system', where: null, reason: String(why || '').slice(0, 120) });
+    out.push(c.card_id);
+  }
+  return out;
+}
+
+module.exports = { claim, closeLive, source, sourceText, decisionLabel, denyMessage, systemDeny, WHO, WHERE, DEFAULT_TIMEOUT_MIN, fold, create, sweep, answered, pending, note, mirror, hashOf, isExpired, now, timeoutMs, canon };

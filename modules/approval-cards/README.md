@@ -21,7 +21,7 @@ Off by default. It works alone and together with every other module. It only act
    `do` with no answer while a card is pending does not resume; it tells you the card is waiting.
 3. A yes approves exactly that input hash, once. The task resumes, the agent is told the card was approved, and the identical call passes once; the card is then marked used. A second identical call, or any changed input, needs a new card.
 4. A no denies it; the resumed agent is told not to retry or reword it.
-5. No answer in 15 minutes (`approval_cards.timeout_minutes`, default 15) counts as no and the card is closed for good.
+5. By default a card waits until someone answers it; no answer is never a no. Set `approval_cards.timeout_minutes` (default 0, meaning no deadline) to make an unanswered card count as no after that many minutes; it is then closed for good.
 
 The card is a journal record, so a crash or power cut between the card and your answer loses nothing: the card is still pending after a restart and the same call does not create a second one.
 
@@ -79,7 +79,7 @@ Every decision (`card_answer` record) carries `who`: `owner`, `device` (+ `devic
 
 ## Expiry
 
-Default 15 minutes: long enough to see a phone notification and answer away from the desk, short enough that a stale request does not hang a task. An expired card is journaled as `timeout` and is closed forever: a late yes is recorded as a timeout, it is never re-posted after a restart (the journal fold keeps it expired), and the same call in the same task gets the denial message, not a new card. A different call needs its own card.
+By default there is no deadline: nobody answering is never a no, so a card waits until it is answered or the task is stopped. With `timeout_minutes` set, an expired card is journaled as `timeout` and is closed forever: a late yes is recorded as a timeout, it is never re-posted after a restart (the journal fold keeps it expired), and the same call in the same task gets the denial message, not a new card. A different call needs its own card.
 
 ## Deny message
 

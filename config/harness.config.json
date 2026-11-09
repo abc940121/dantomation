@@ -41,6 +41,8 @@
     "HARNESS_OWNER"
   ],
   "engine": {
+    "profile": "full",
+    "full_setting_sources": "user,project,local",
     "claude_tools": "Bash,Read",
     "setting_sources": "local"
   },

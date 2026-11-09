@@ -27,7 +27,7 @@ const at = min => { process.env.HARNESS_NOW = String(T0 + min * 60000); };
     const emitted = [];
     const state = { dir: sdir, append: rec => J.append({ ...rec, module: 'approval-cards' }) };
     const quiet = { J, state, emit: async () => {} };
-    const ctxFor = (command, extra) => ({ tool: 'Bash', ti: { command }, cwd: tmp, settings: {}, state, emit: async (e, p) => emitted.push([e, p]), core: { J }, ...extra });
+    const ctxFor = (command, extra) => ({ tool: 'Bash', ti: { command }, cwd: tmp, settings: { timeout_minutes: 15 }, state, emit: async (e, p) => emitted.push([e, p]), core: { J }, ...extra });
     const cardOf = r => (String(r && r[1]).match(/card-[0-9a-f]{6}/) || [])[0];
     const folded = id => K.fold(J.readAll().records).get(id);
     const ask = async cmd => { const r = await mod.beforeTool(ctxFor(cmd)); return { r, id: cardOf(r) }; };
@@ -36,7 +36,7 @@ const at = min => { process.env.HARNESS_NOW = String(T0 + min * 60000); };
     const answer = (id, body, actor) => route('/cards/:id/answer').handler({ ...ctxFor('x'), params: { id }, body, actor: actor || OWN });
     const DEV = id => ({ kind: 'owner', id: 'device:' + id });
 
-    check('default timeout is 15 minutes', K.DEFAULT_TIMEOUT_MIN === 15 && mod.settings.timeout_minutes.default === 15 && K.timeoutMs({}) === 15 * 60000);
+    check('default: no deadline, a card waits until answered', K.DEFAULT_TIMEOUT_MIN === 0 && mod.settings.timeout_minutes.default === 0 && K.timeoutMs({}) === 0);
 
     // each source
     let { id } = await ask('git push origin a');
@@ -119,9 +119,24 @@ const at = min => { process.env.HARNESS_NOW = String(T0 + min * 60000); };
     const a1 = await ask('npm install zed');
     await answer(a1.id, { text: 'yes' });
     check('a different input is not covered by the approval', cardOf(await mod.beforeTool(ctxFor('npm install other'))) !== a1.id);
-    check('approved call passes once', (await mod.beforeTool(ctxFor('npm install zed'))) === null);
+    check('approved call passes once (allow:card, so a guard ask is answered too)', ((r0) => Array.isArray(r0) && r0[0] === 'allow:card')(await mod.beforeTool(ctxFor('npm install zed'))));
     const second = cardOf(await mod.beforeTool(ctxFor('npm install zed')));
     check('second identical call needs a new card', second && second !== a1.id);
+
+    // no deadline by default: the card stays open, the sweep never answers it
+    at(0);
+    const nd = await mod.beforeTool({ ...ctxFor('git push origin nodeadline'), settings: {} });
+    const ndc = folded(cardOf(nd));
+    at(60 * 24 * 7);
+    await K.sweep(quiet);
+    check('default card has no deadline and is still pending a week later', ndc && ndc.expires_at === null && folded(ndc.card_id).state === 'pending', ndc && ndc.expires_at);
+
+    // a live card's yes belongs to the waiting prompt tool, not to a concurrent hook call
+    at(0);
+    const lv = await K.create(quiet, { task_id: process.env.HARNESS_TASK_ID, tool: 'Bash', input: { command: 'npm install livepkg' }, summary: 'x', rule: 'install' }, {}, { live: true });
+    await K.answered(quiet, folded(lv.card_id), 'yes', undefined, K.source({}));
+    await mod.beforeTool(ctxFor('npm install livepkg'));
+    check('beforeTool does not use up an approved live card', folded(lv.card_id).state === 'approved');
 
     // fail closed on internal error
     const bad = await mod.beforeTool({ ...ctxFor('git push origin z'), state: null });

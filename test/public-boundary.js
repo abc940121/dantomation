@@ -19,7 +19,9 @@ const git = (...a) => spawnSync('git', a, { cwd: ROOT, encoding: 'utf8', maxBuff
 const s = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'harness.js'), 'start', `Synthetic task ${MARK}`], { cwd: ROOT, env, encoding: 'utf8', timeout: 60000 });
 console.log(`synthetic task: exit ${s.status} ${s.stdout.trim()}`);
 const recs = fs.readFileSync(path.join(ROOT, 'state', 'journal.jsonl'), 'utf8').trim().split('\n').map(l => { try { return JSON.parse(l); } catch { return {}; } });
-const task = recs.filter(r => r.type === 'task_start' && (r.request || '').includes(MARK)).pop().task_id;
+const startRec = recs.filter(r => r.type === 'task_start' && (r.request || '').includes(MARK)).pop();
+const task = startRec.task_id;
+const wdRel = path.relative(ROOT, path.resolve(ROOT, startRec.workdir || `work/${task}`)).split(path.sep).join('/');
 
 // a guard block whose logged command carries the marker
 spawnSync(process.execPath, [path.join(ROOT, 'guards', 'guard.js')], { input: JSON.stringify({ session_id: 'boundary', tool_name: 'Bash', tool_input: { command: `rm -rf work/${MARK}` }, cwd: ROOT }), encoding: 'utf8' });
@@ -28,7 +30,7 @@ const files = {
   journal: 'state/journal.jsonl',
   outbox: `state/outbox/${task}__s1-message.json`,
   'guard log': 'logs/guard.jsonl',
-  'work dir file': `work/${task}/out.txt`,
+  'work dir file': `${wdRel}/out.txt`,
 };
 const res = {};
 for (const [name, f] of Object.entries(files)) {

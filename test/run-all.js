@@ -33,6 +33,7 @@ const CORE_SUITES = [
   ['module-events', 'test/module-events.js', [], true],
   ['module-seams', 'test/module-seams.js', [], true],
   ['contract-v6', 'test/contract-v6.js', [], true],
+  ['approve-mcp', 'test/approve-mcp.js', []],
   ['entry', 'test/entry.js', ['guard-base', 'checkpoint']],
   ['journal-prompt', 'test/journal-prompt.js', []],
   ['lock-race', 'test/lock-race.js', []],

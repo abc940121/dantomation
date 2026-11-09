@@ -10,7 +10,8 @@ const K = require('./cards');
 const DEFAULTS = require('./default-risky.json').rules;
 
 const clip = (s, n) => { s = String(s || '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 3) + '...' : s; };
-const ID_RE = /\bcard-[0-9a-f]{6}\b/i;
+// Ids are 6 hex digits, 12 after repeated collisions (cards.js reserveId).
+const ID_RE = /\bcard-(?:[0-9a-f]{12}|[0-9a-f]{6})\b/i;
 
 // settings: this module's validated settings (config section "approval_cards").
 function rules(settings) {
@@ -76,22 +77,46 @@ async function decide(ctx) {
   if (isShell(tool) && ANSWER_CMD.test(String((ti && ti.command) || ''))) return ['approval_cards', 'answering an approval card is for the owner only'];
   const rule = classify(tool, ti || {}, settings, process.env.HARNESS_TASK_DIR, cwd);
   if (!rule) return null;
-  const io = ioOf(ctx);
+  // Full profile: the engine's permission-prompt tool (bin/approve-mcp.js) raises the card and waits on it, so
+  // the hook only asks; a timed card here would block the call before the prompt tool ever saw it.
+  return cardFor(ioOf(ctx), task, tool, ti || {}, rule, settings, process.env.HARNESS_PROMPT_TOOL === '1', cwd);
+}
+
+// The directory a call runs in is part of "this exact call": a yes for git push in one repo is not a yes in another.
+const whereOf = cwd => (cwd ? path.resolve(String(cwd)) : null);
+
+// The card for one exact call (task + call hash) on a red line -> a beforeTool result:
+// ['allow:card', ...] uses up the owner's yes; ['approval_card', ...] blocks while a card waits or after a no;
+// ['ask:<rule>', ...] only when promptTool (the prompt tool raises its own live card).
+async function cardFor(io, task, tool, ti, rule, settings, promptTool, cwd) {
   await K.sweep(io);
-  const hash = K.hashOf(tool, ti || {});
-  const mine = [...K.fold(io.J.readAll().records).values()].filter(c => c.task_id === task && c.sha256 === hash);
-  const ok = mine.find(c => c.state === 'approved');
-  if (ok) { io.state.append({ type: 'card_used', card_id: ok.card_id, task_id: task }); return null; }
+  const hash = K.hashOf(tool, ti || {}), where = whereOf(cwd);
+  const mine = [...K.fold(io.J.readAll().records).values()].filter(c => c.task_id === task && c.sha256 === hash && (c.cwd || null) === where);
+  // A live card belongs to the prompt tool that is waiting on it; only that waiter uses its yes.
+  // The claim is atomic, so two hooks racing on the same call cannot both use one yes.
+  const ok = mine.find(c => c.state === 'approved' && !c.live && K.claim(io, c.card_id, task));
+  // allow: tells the chain the owner said yes to this exact call, so another module's ask (guard-base
+  // red lines) does not ask a second time; a block from any module still wins.
+  if (ok) return ['allow:card', `approved on card ${ok.card_id}`];
   // A denied or expired card for this exact call stays closed: no new card, no re-ask.
   const last = mine[mine.length - 1];
   if (last && (last.state === 'denied' || last.state === 'expired')) {
     const d = last.decided || { who: 'owner' };
     return ['approval_card', K.denyMessage(last, d)];
   }
+  if (promptTool) return ['ask:' + rule.id, rule.summary || rule.id];
   const wait = mine.find(c => c.state === 'pending' && !K.isExpired(c));
-  const card = wait || await K.create(io, { task_id: task, tool, input: ti || {}, rule: rule.id,
-    summary: `${rule.summary || rule.id}: ${clip(isShell(tool) ? ti.command : ti.url || JSON.stringify(ti), 160)}` }, settings);
+  const card = wait || await K.create(io, { task_id: task, tool, input: ti || {}, rule: rule.id, cwd: where,
+    summary: `${rule.summary || rule.id}: ${clip(isShell(tool) ? ti.command : ti.url || JSON.stringify(ti), 160)}${where ? ` (in ${clip(where, 80)})` : ''}` }, settings);
   return ['approval_card', `waiting for approval card ${card.card_id} (${card.summary}); stop and end your turn, tell the owner the card id, and do not retry or reword the call`];
+}
+
+// Core's way in for a red line some other module asked about (guards/guard.js, locked profile, no prompt
+// tool): the same card flow as this module's own rules. io = { J, state, settings, emit }.
+// -> ['allow:card', why] (an approved card, now used) | ['approval_card', why] (block: a card waits, or a no).
+async function raise(io, { task_id, tool, ti, kind, reason, cwd }) {
+  if (!task_id) return null;
+  return cardFor(io, String(task_id), String(tool || ''), ti && typeof ti === 'object' ? ti : {}, { id: 'redline:' + String(kind || 'ask'), summary: String(reason || kind || 'red line') }, io.settings, false, cwd);
 }
 
 // The owner's answer text on one pending card -> 'yes' | 'no' | 'unclear', written to
@@ -135,8 +160,9 @@ async function answer(args, ctx) {
     console.log(`Your answer was unclear, so nothing was approved. Still waiting on ${show}\nanswer with: taskmote do yes   |   taskmote do no`);
     return { handled: true, resume: false, code: 3 };
   }
-  console.log(`${a === 'yes' ? 'approved' : 'denied'} ${show}; resuming the task`);
-  return { handled: true, resume: true, code: 0 };
+  // A live card's task is still running and picks the answer up itself: nothing to resume.
+  console.log(`${a === 'yes' ? 'approved' : 'denied'} ${show}; ${card.live ? 'the waiting task continues' : 'resuming the task'}`);
+  return { handled: true, resume: !card.live, code: 0 };
 }
 
 // status: pending cards, with how to answer.
@@ -145,7 +171,7 @@ function statusLines(Jn) {
   for (const c of K.fold(Jn.readAll().records).values()) {
     if (c.state !== 'pending') continue;
     if (K.isExpired(c)) { lines.push(`card ${c.card_id}: expired, counts as no (${c.summary}); resume with: taskmote do`); continue; }
-    lines.push(`approval card ${c.card_id} is waiting: ${c.summary}`, `  expires: ${c.expires_at}`);
+    lines.push(`approval card ${c.card_id} is waiting: ${c.summary}`, c.live ? '  never expires; a waiting approval pauses all bots until answered or stopped' : c.expires_at ? `  expires: ${c.expires_at}` : '  no time limit; it waits until answered');
     if (c.unclear) lines.push(`  last answer was unclear (${c.unclear}x); nothing is approved`);
     lines.push('  answer with: taskmote do yes   |   taskmote do no');
   }
@@ -154,7 +180,7 @@ function statusLines(Jn) {
 
 // Routes (mounted at /m/approval-cards/...). The server that calls them is S1;
 // who may reach them (the owner only) is the server's job, not this module's.
-const view = c => ({ decision: c.decision || null, card_id: c.card_id, task_id: c.task_id, summary: c.summary, rule: c.rule, created_at: c.created_at, expires_at: c.expires_at, unclear: c.unclear });
+const view = c => ({ decision: c.decision || null, card_id: c.card_id, task_id: c.task_id, summary: c.summary, rule: c.rule, created_at: c.created_at, expires_at: c.expires_at, live: !!c.live, unclear: c.unclear });
 async function listCards(ctx) {
   const io = ioOf(ctx), j = io.J;
   await K.sweep(io);
@@ -183,7 +209,7 @@ async function answerCard(ctx) {
   if (!src || src.who === 'timeout' || src.who === 'system') return { status: 400, json: { error: 'bad source: where is chat | phone | voice | cli (a device is always phone)' } };
   const a = await record(io, card, text, src);
   if (a === 'timeout') return { status: 409, json: { error: 'card expired; denied (timeout)', answer: 'timeout' } };
-  return { status: 200, json: { card_id: card.card_id, answer: a, resume: a !== 'unclear', decision: a === 'unclear' ? null : K.decisionLabel({ state: a === 'yes' ? 'approved' : 'denied', decided: src }) } };
+  return { status: 200, json: { card_id: card.card_id, answer: a, resume: a !== 'unclear' && !card.live, decision: a === 'unclear' ? null : K.decisionLabel({ state: a === 'yes' ? 'approved' : 'denied', decided: src }) } };
 }
 
 // The hook point for voice: the voice module calls this (route POST /cards/:id/voice, or
@@ -201,7 +227,7 @@ async function voiceAnswer(ctx, { card_id, text, device_id }) {
   const a = await record(io, card, text, src);
   if (a === 'unclear') return { status: 200, json: { card_id: card.card_id, answer: 'unclear', reask: true, say: REASK } };
   if (a === 'timeout') return { status: 409, json: { error: 'card expired; denied (timeout)', answer: 'timeout' } };
-  return { status: 200, json: { card_id: card.card_id, answer: a, reask: false, resume: true } };
+  return { status: 200, json: { card_id: card.card_id, answer: a, reask: false, resume: !card.live } };
 }
 // The one exception: the plain owner token (the server token voice-chat uses to talk to this
 // server) may name the device it is relaying for. It already holds owner power, and K.source
@@ -237,10 +263,10 @@ module.exports = {
   ],
   panels: [{ id: 'cards', title: 'Approval cards', mount: 'chat', entry: 'ui/cards-panel.js' }],
   settings: {
-    timeout_minutes: { type: 'number', default: 15, min: 1, description: 'minutes a card waits before it counts as no' },
+    timeout_minutes: { type: 'number', default: 0, min: 0, description: 'minutes a card waits before it counts as no; 0 (default): it waits until answered' },
     risky: { type: 'array', items: 'object', default: [], description: 'extra rules {id, match, pattern, flags?, summary?, outside_workdir?}' },
     skip: { type: 'array', items: 'string', default: [], description: 'ids of built-in rules to switch off' },
   },
   // fold, pending, isExpired are the pure journal helpers the server lists cards with.
-  api: { parseAnswer, voiceAnswer, source: K.source, decisionLabel: K.decisionLabel, rules, listCards, answerCard, fold: K.fold, pending: K.pending, isExpired: K.isExpired },
+  api: { raise, parseAnswer, voiceAnswer, source: K.source, decisionLabel: K.decisionLabel, rules, listCards, answerCard, fold: K.fold, pending: K.pending, closeLive: K.closeLive, isExpired: K.isExpired, create: K.create, answered: K.answered, denyMessage: K.denyMessage, now: K.now },
 };

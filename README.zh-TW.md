@@ -1,6 +1,6 @@
 [English](README.md) | **繁體中文**
 
-> 以英文版為準；本翻譯同步至英文版 README.md（git blob `71a1dd4`，可用 `git hash-object README.md` 核對）。
+> 以英文版為準；本翻譯同步至英文版 README.md（git blob `2467967`，可用 `git hash-object README.md` 核對）。
 
 # Taskmote
 
@@ -9,6 +9,8 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 > **開始之前：** Taskmote 會在你的電腦上以你的使用者權限執行 AI 代理。主幹只監聽 `127.0.0.1`，所有選用模組在你開啟前都是**關閉**的。要讓手機或網路連進來之前，請先讀[安全性](#security)。
+
+> **配對過的手機擁有你的權限。** 預設（`engine.profile: "full"`）每個 bot 都是一個持續存在的 Claude Code 工作階段，使用你自己的 Claude 設定、工具與 MCP 伺服器。任何拿著已配對裝置的人，都能讓它做你坐在這台電腦前能做的事；只有紅線動作會被防護擋下，或等你在卡片上同意。請把配對當成交出一台已登入的筆電：只配對你自己的裝置，用 `node bin/harness.js devices` 列出，用 `node bin/harness.js revoke <id>` 移除。若要回到舊的窄工具白名單，把 `engine.profile` 設為 `"locked"`。
 
 Taskmote 在 2026 年 11 月前叫做 *dantomation*。舊指令名稱 `dantomation` 仍可作為別名使用。
 
@@ -95,6 +97,10 @@ Taskmote 用以下方式降低風險：
 - 復原、還原與卡片回答在代理內部執行時會被拒絕。
 
 它**無法**防範：繞過樣式比對防護的代理（例如混淆過的指令）、你開啟的模組（模組是受信任的程式碼，就像你安裝的程式），以及你開放到網際網路的連接埠。
+
+紅線防護（安裝軟體、持久設定、登入帳號、改寫 git 歷史、付費運算與金錢，都會跳出核准卡）只能降低風險，擋不住刻意繞過的代理。它是樣式比對，所以腳本、別名或編碼過的指令都可能繞過。檔案路徑會照原樣比對，也會解開符號連結後再比對，但執行時才組出來的路徑看不到。
+
+紅線卡片不會逾時；卡片等待期間，所有 bot 都會暫停，直到你回答或停止任務（在 app 裡按該任務的「停止」即可結束等待）。紅線核准需要開啟 approval-cards 模組；未開啟時紅線一律拒絕，agent 會告訴你。
 
 **只從** <https://github.com/abc940121/taskmote> **取得。** 沒有 npm 套件。
 

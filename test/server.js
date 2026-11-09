@@ -132,7 +132,9 @@ async function main() {
   const done = j.filter(r => r.task_id === taskId && r.type === 'effect_done');
   const ids = done.map(d => d.effect_id).sort();
   const dups = ids.length - new Set(ids).size;
-  const outTxt = fs.existsSync(path.join(work, taskId, 'out.txt')) ? fs.readFileSync(path.join(work, taskId, 'out.txt'), 'utf8') : '';
+  const wd = (j.find(r => r.type === 'task_start' && r.task_id === taskId) || {}).workdir || path.join(work, taskId);
+  const outF = path.join(path.isAbsolute(wd) ? wd : path.join(work, '..', wd), 'out.txt');
+  const outTxt = fs.existsSync(outF) ? fs.readFileSync(outF, 'utf8') : '';
   const writes = outTxt.split('\n').filter(l => l === 'second change').length;
   note('0 duplicate effects (effect_done)', dups === 0 && ids.join() === 's1-message,s1-write,s2-write', ids.join());
   note('0 duplicate effects (file writes)', outTxt === 'server kill test\nsecond change\n' && writes === 1, JSON.stringify(outTxt));

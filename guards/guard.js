@@ -4,7 +4,8 @@
 // Reads the hook JSON on stdin, then awaits each enabled module's beforeTool in
 // load order (lib/modules.js), each within modules_hook_timeout_ms; a timeout
 // blocks with kind module_timeout. The first hit blocks: exit 2, reason on stderr,
-// one line in logs/guard.jsonl. No hit: exit 0. What is checked is up to the
+// one line in logs/guard.jsonl. An "ask:" kind: exit 0 with permissionDecision "ask"
+// on stdout (the owner decides). No hit: exit 0. What is checked is up to the
 // modules (guard-base, guard-private-rules, spend-count, voice, checkpoint).
 // Fails closed: unreadable input, unreadable config, or an enabled module that
 // cannot load blocks every call.
@@ -49,6 +50,15 @@ function block(kind, reason, input, quiet) {
   process.exit(2);
 }
 
+// A red line the owner decides: answer the host with permissionDecision "ask", so it
+// prompts (then an approval card) even when the owner's allow list would pass the call.
+function ask(kind, reason, input) {
+  const ti = input && input.tool_input && typeof input.tool_input === 'object' ? input.tool_input : null;
+  kind = clean(kind, 80); reason = clean(reason, 1000);
+  log('guard.jsonl', { session_id: clean(input && input.session_id, 120), tool: clean(input && input.tool_name, 120), kind, reason, decision: 'ask', detail: clean(ti ? (ti.command || ti.file_path || ti.url || '') : '', 300) });
+  process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask', permissionDecisionReason: `red line (${kind}): ${reason}; ${(CONFIG && CONFIG.owner_name) || 'the owner'} decides` } }) + '\n');
+}
+
 // tool.done's durationMs: the allowed pre-call stamps state/tool-start/<tool_use_id>,
 // --after reads and removes it. Stamps older than an hour are swept. Best effort.
 const STAMPS = path.join(J.STATE, 'tool-start');
@@ -74,7 +84,7 @@ async function main() {
   if (!after) setTimeout(() => die(), M.ENGINE_HOOK_LIMIT_MS - 2000).unref(); // unref: it must not hold a finished guard open; if it fires, exit 2
   if (CONFIG_ERR && after) return skip('config unreadable');
   if (CONFIG_ERR) return block('config', `run-time config unreadable (${CONFIG_ERR.slice(0, 160)})`, input);
-  const { mods, errors } = M.load(CONFIG);
+  const { mods, errors, meta } = M.load(CONFIG);
   const ctx = { input, tool: input.tool_name || '', ti: input.tool_input || {}, cwd: input.cwd || process.cwd(), config: CONFIG };
   const id = typeof input.tool_use_id === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(input.tool_use_id) ? input.tool_use_id : null;
   if (after) {
@@ -87,8 +97,26 @@ async function main() {
     process.exit(0);
   }
   if (errors.length) return block('module', `module load error: ${errors.join('; ').slice(0, 1000)}`, input);
-  const hit = await M.beforeTool(mods, ctx);
-  if (hit) block(hit[0], hit[1], input);
+  let hit = await M.beforeTool(mods, ctx);
+  // Locked profile (no permission-prompt tool): nobody can answer the engine's own ask in -p mode, so a red-line
+  // ask becomes an approval card the owner answers (approval-cards api); its yes lets this exact call pass once.
+  // With approval-cards off the ask stays, and the engine refuses it.
+  if (hit && /^ask:/.test(hit[0]) && process.env.HARNESS_PROMPT_TOOL !== '1' && process.env.HARNESS_TASK_ID) {
+    const A = M.apiOf(mods, 'approval-cards'), mt = meta && meta.get('approval-cards');
+    if (A && typeof A.raise === 'function' && mt && mt.state) {
+      const r = await A.raise({ J, state: mt.state, settings: mt.settings, emit: (ev, p) => M.emit(mods, ev, p).catch(() => {}) },
+        { task_id: process.env.HARNESS_TASK_ID, tool: ctx.tool, ti: ctx.ti, kind: hit[0].slice(4), reason: hit[1], cwd: ctx.cwd });
+      hit = r && /^allow:/.test(r[0]) ? null : (r || hit);
+    }
+  }
+  // Full profile: the prompt tool (bin/approve-mcp.js) never sees the hook's cwd, so the hook writes down the
+  // ask for this tool_use_id; the prompt tool keeps it as an ask and checks in that directory. No record, no ask.
+  if (hit && /^ask:/.test(hit[0]) && process.env.HARNESS_PROMPT_TOOL === '1' && id) {
+    try { J.append({ type: 'hook_ask', tool_use_id: id, task_id: process.env.HARNESS_TASK_ID || null, tool: ctx.tool, cwd: ctx.cwd, kind: hit[0].slice(4), reason: hit[1] }); }
+    catch (e) { hit = ['journal', `could not record the red-line ask (${e.message}); fail closed`]; }
+  }
+  if (hit && /^ask:/.test(hit[0])) ask(hit[0].slice(4), hit[1], input);
+  else if (hit) block(hit[0], hit[1], input);
   if (id) stampStart(id);
   // Allow: no forced exit. The loop drains naturally, so any later throw / rejection of a hook still reaches the fail-closed handlers (exit 2);
   // a module that leaves a live timer open runs into the deadline above, which blocks.

@@ -21,7 +21,7 @@ export function mount(el, { base, fetch }) {
     const { cards = [] } = await res.json();
     box.replaceChildren(...(cards.length ? cards.map(c => {
       const row = document.createElement('div');
-      row.textContent = `${c.card_id}: ${c.summary} (expires ${c.expires_at}) `;
+      row.textContent = `${c.card_id}: ${c.summary} (${c.live ? "no time limit; a waiting approval pauses all bots until answered or stopped" : c.expires_at ? "expires " + c.expires_at : "no time limit"}) `;
       row.append(button('yes', c), button('no', c));
       return row;
     }) : [Object.assign(document.createElement('div'), { textContent: 'no cards waiting' })]));

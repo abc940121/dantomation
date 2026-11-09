@@ -48,6 +48,30 @@ function protocolFile() {
   return f;
 }
 
+// Full profile: the MCP config for our permission-prompt server (bin/approve-mcp.js). In -p mode a
+// prompt (a tool outside the owner's allow list, or a red-line "ask" from the guard) goes to its
+// "approve" tool instead of being denied: ordinary calls pass, red lines wait on an approval card.
+const PROMPT_TOOL = 'mcp__taskmote__approve';
+// task: {task_id, workdir} for a task turn. The server gets the task's ids in its own env (a host need not
+// pass its env on to an MCP server), so it can raise the card for that task and run the module chain as the hook does.
+function approveMcpFile(task) {
+  const node = process.execPath.replace(/\\/g, '/');
+  const server = path.join(J.ROOT, 'bin', 'approve-mcp.js').replace(/\\/g, '/');
+  const env = { HARNESS_STATE_DIR: J.STATE, HARNESS_CONFIG: C.file(), HARNESS_PROMPT_TOOL: '1', ...(task ? { HARNESS_TASK_ID: task.task_id, HARNESS_TASK_DIR: task.workdir } : {}) };
+  const s = { mcpServers: { taskmote: { type: 'stdio', command: node, args: [server], env } } };
+  const f = path.join(J.STATE, task ? `mcp-approve-${String(task.task_id).replace(/[^\w-]/g, '_')}.json` : 'mcp-approve.json');
+  fs.mkdirSync(J.STATE, { recursive: true });
+  fs.writeFileSync(f, JSON.stringify(s, null, 2));
+  return f;
+}
+
+// Close the task's live approval cards (bin/approve-mcp.js) as a system no. Best effort: none exist unless
+// the approval-cards module raised one.
+function closeLiveCards(task_id, why) {
+  const A = M.apiOf(MODS, 'approval-cards');
+  if (A && typeof A.closeLive === 'function') try { A.closeLive(J.append, J.readAll().records, task_id, why); } catch { /* nothing to close */ }
+}
+
 function ensureWorkdir(dir) {
   fs.mkdirSync(dir, { recursive: true });
   if (!fs.existsSync(path.join(dir, '.git'))) execFileSync('git', ['init', '-q'], { cwd: dir });
@@ -57,23 +81,58 @@ function ensureWorkdir(dir) {
 // process (e.g. modules/voice/ with --input-format stream-json) reuses the same
 // settings, guard, tools and env instead of copying them.
 // prompt === null -> bare -p (print mode, no prompt; caller streams input instead).
-// Guard hooks, tool allowlist, protocol and strict MCP flags: what makes a claude-format engine run under the harness.
-function guardArgs() {
-  return ['--setting-sources', CONFIG.engine.setting_sources,
-    '--settings', settingsFile(),
-    '--append-system-prompt-file', protocolFile(),
-    '--tools', CONFIG.engine.claude_tools,
-    '--allowedTools', CONFIG.engine.claude_tools,
-    '--strict-mcp-config', '--disable-slash-commands',
-    '--output-format', 'stream-json', '--verbose'];
+// Profiles (config engine.profile):
+//   "full" (default): the engine is a normal Claude Code session with the owner's own settings, tools, MCP
+//     servers and slash commands. The floor still applies: our guard hooks (--settings, stacked on top of the
+//     owner's settings), the protocol, the stripped env, one executor, and --permission-mode default so an
+//     owner default of bypassPermissions never applies here. Permission prompts go to our approve tool
+//     (approveMcpFile above), so red lines wait on an approval card and the rest runs.
+//   "locked": the old lockdown (local settings only, tool allowlist, strict MCP, no slash commands).
+const profile = () => (CONFIG.engine.profile === 'locked' ? 'locked' : 'full');
+function guardArgs(session) {
+  const floor = ['--settings', settingsFile(), '--append-system-prompt-file', protocolFile()];
+  const out = ['--output-format', 'stream-json', '--verbose'];
+  if (profile() === 'locked') {
+    return ['--setting-sources', CONFIG.engine.setting_sources, ...floor,
+      '--tools', CONFIG.engine.claude_tools,
+      '--allowedTools', CONFIG.engine.claude_tools,
+      '--strict-mcp-config', '--disable-slash-commands', ...out];
+  }
+  return ['--setting-sources', CONFIG.engine.full_setting_sources || 'user,project,local', ...floor,
+    '--permission-mode', 'default', '--mcp-config', approveMcpFile(), '--permission-prompt-tool', PROMPT_TOOL, ...(session || []), ...out];
 }
 
-function engineSpec(prompt) {
+// session: extra args from sessionArgs() (--session-id / --resume), only for a task turn.
+function engineSpec(prompt, session) {
   const { env, stripped } = cleanEnv();
-  const args = [...(prompt === null ? ['-p'] : ['-p', prompt]), ...guardArgs()];
+  const args = [...(prompt === null ? ['-p'] : ['-p', prompt]), ...guardArgs(session)];
   // Test seam: HARNESS_ENGINE_SCRIPT runs a node script as a fake engine.
+  if (profile() === 'full') env.HARNESS_PROMPT_TOOL = '1'; // the hook asks; the prompt tool raises and waits on the card
   const fake = process.env.HARNESS_ENGINE_SCRIPT;
   return { bin: fake ? process.execPath : (process.env.HARNESS_CLAUDE || 'claude'), args: fake ? [fake, ...args] : args, env, stripped };
+}
+
+// Persistent session per bot (full profile): one Claude session per (bot, workdir), so a bot keeps its context
+// across chat messages. A session id is recorded (bot_session) only after a turn that created it exits 0;
+// until then each turn starts with a fresh --session-id. Claude stores sessions per working directory, hence the key.
+const botOf = task => String(task.bot || process.env.HARNESS_BOT || 'main');
+function currentSession(records, bot, workdir) {
+  let cur = null;
+  for (const r of records) {
+    if (r.type === 'bot_session' && r.bot === bot && r.workdir === workdir) cur = r;
+    else if (r.type === 'bot_session_end' && r.bot === bot && (!r.workdir || r.workdir === workdir)) cur = null;
+  }
+  return cur;
+}
+function sessionArgs(task) {
+  if (profile() !== 'full') return null;
+  const bot = botOf(task), cur = currentSession(J.readAll().records, bot, task.workdir);
+  if (cur) return { args: ['--resume', cur.session_id], id: cur.session_id, fresh: false, bot };
+  const id = require('crypto').randomUUID();
+  return { args: ['--session-id', id], id, fresh: true, bot };
+}
+function botWorkdir(bot) {
+  return path.join(process.env.HARNESS_WORK_DIR || path.join(J.ROOT, 'work'), 'bot-' + bot.replace(/[^\w-]/g, '_'));
 }
 
 // One executor per harness: state/executor.lock holds the harness pid and the
@@ -141,7 +200,8 @@ async function runEngine(task, nonce) {
   const extra = await M.prepareTurn(MODS, { task_id: task.task_id, request: task.request, workdir: task.workdir, resumed: !!task.resumed });
   const notes = extra.context.map(c => `[${c.module}] ${c.text}`).join('\n');
   const choice = await M.chooseEngine(MODS, { task_id: task.task_id, request: task.request, workdir: task.workdir, resumed: !!task.resumed }); // null when no module has an opinion
-  const spec = engineSpec(J.buildPrompt(J.readAll().records, task) + (notes ? `\n\n## Context from modules\n${notes}` : ''));
+  const sess = sessionArgs(task);
+  const spec = engineSpec(J.buildPrompt(J.readAll().records, task) + (notes ? `\n\n## Context from modules\n${notes}` : ''), sess && sess.args);
   const logFile = path.join(J.STATE, `engine-${task.task_id}.jsonl`);
   let logFrom = 0; try { logFrom = fs.statSync(logFile).size; } catch { /* no log yet */ }
   const out = fs.openSync(logFile, 'a');
@@ -160,12 +220,13 @@ async function runEngine(task, nonce) {
       const i = spec.args.indexOf('-p');
       input = i >= 0 ? spec.args[i + 1] : '';
       claudeFmt = ent.format === 'claude';
-      spec.bin = ent.bin; spec.args = [...(Array.isArray(ent.args) ? ent.args.map(String) : []), ...(claudeFmt ? ['-p', ...guardArgs()] : [])];
+      spec.bin = ent.bin; spec.args = [...(Array.isArray(ent.args) ? ent.args.map(String) : []), ...(claudeFmt ? ['-p', ...guardArgs(sess && sess.args)] : [])];
       swapped = true; stdin = 'pipe';
       J.append({ type: 'engine_used', task_id: task.task_id, engine: choice.engine, module: choice.module });
     }
   }
   Object.assign(spec.env, swapped ? { HARNESS_ENGINE_CHOSEN: choice.engine } : {}, { HARNESS_TASK_ID: task.task_id, HARNESS_TASK_DIR: task.workdir, HARNESS_STATE_DIR: J.STATE });
+  { const i = spec.args.indexOf('--mcp-config'); if (i >= 0 && spec.args[i + 2] === '--permission-prompt-tool') spec.args[i + 1] = approveMcpFile(task); } // this task's prompt-tool server
   // a plain-text turn engine's stdout (the reply) is kept apart from its stderr noise
   const plainOut = swapped && !claudeFmt, plainFile = logFile + '.stdout', plainFd = plainOut ? fs.openSync(plainFile, 'w') : -1;
   // a stream-json engine's stderr gets its own file: reply records are read from stdout only, so stderr can never supply or split one
@@ -211,7 +272,9 @@ async function runEngine(task, nonce) {
       else reply = M.scrubAll(rh.reply).trim().slice(0, 4000);
     }
     if (reply) J.append({ type: 'reply', task_id: task.task_id, text: reply });
+    closeLiveCards(task.task_id, 'the engine ended'); // a prompt still waiting when the engine died must not hold the task
     J.append({ type: 'engine_exit', task_id: task.task_id, code });
+    if (sess && sess.fresh && code === 0 && (!swapped || claudeFmt)) J.append({ type: 'bot_session', bot: sess.bot, workdir: task.workdir, session_id: sess.id, task_id: task.task_id });
     // task.end runs while the executor lock is still held: no other process can resume the task and start a new turn before the hooks have read this turn's records
     await M.emit(MODS, 'task.end', { task_id: task.task_id, code, workdir: task.workdir, turn_start: startRec && startRec.id }, { task, code, config: CONFIG });
   } finally { if (!J.unlock(EXEC_LOCK, nonce)) J.unlockLater(EXEC_LOCK, nonce, undefined, 'harness exec lock'); } // long-lived worker: do not strand the lock
@@ -317,7 +380,8 @@ async function main() {
     if (!request) { console.error('usage: harness start "<request>"'); process.exit(2); }
     // HARNESS_NEW_TASK_ID / HARNESS_BOT: set by the server so the task id and bot are known before the engine starts.
     const task_id = /^t[\w-]+$/.test(process.env.HARNESS_NEW_TASK_ID || '') ? process.env.HARNESS_NEW_TASK_ID : 't' + J.newId();
-    const workdir = path.resolve(wi >= 0 ? rest[wi + 1] : path.join(process.env.HARNESS_WORK_DIR || path.join(J.ROOT, 'work'), task_id));
+    // full profile: one fixed workdir per bot (the persistent session lives there); locked: one per task
+    const workdir = path.resolve(wi >= 0 ? rest[wi + 1] : profile() === 'full' ? botWorkdir(botOf({})) : path.join(process.env.HARNESS_WORK_DIR || path.join(J.ROOT, 'work'), task_id));
     ensureWorkdir(workdir);
     let forked = null; try { const f = JSON.parse(process.env.HARNESS_FORKED_FROM || 'null'); if (f && /^t[\w-]+$/.test(String(f.task))) forked = { task: f.task, step: f.step }; } catch { /* ignore */ }
     const t = J.append({ type: 'task_start', task_id, request, workdir, ...(process.env.HARNESS_BOT ? { bot: process.env.HARNESS_BOT } : {}), ...(forked ? { forked_from: forked } : {}) });

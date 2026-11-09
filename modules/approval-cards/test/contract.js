@@ -59,8 +59,8 @@ const check = (label, ok, info) => { results.push(!!ok); console.log(`${ok ? 'PA
     const bad = M.load({ modules: { 'approval-cards': true }, approval_cards: { timeout_minutes: '10', colour: 'red' } });
     const msg = bad.errors.join(' | ');
     check('bad config section is a load error naming key and type', bad.mods.length === 0 && /config "approval_cards\.timeout_minutes" must be a number, got string "10"/.test(msg) && /unknown key "colour"/.test(msg), msg);
-    const low = M.load({ modules: { 'approval-cards': true }, approval_cards: { timeout_minutes: 0.5 } });
-    check('timeout_minutes under 1 is a load error', low.mods.length === 0 && /timeout_minutes/.test(low.errors.join(' ')), low.errors.join(' | '));
+    const low = M.load({ modules: { 'approval-cards': true }, approval_cards: { timeout_minutes: -1 } });
+    check('timeout_minutes below 0 is a load error', low.mods.length === 0 && /timeout_minutes/.test(low.errors.join(' ')), low.errors.join(' | '));
   } catch (e) { check('no exception', false, e.stack); }
   finally { fs.rmSync(tmp, { recursive: true, force: true }); }
   try { // decision source, expiry, deny message, voice hook (own process and state dir)

@@ -93,6 +93,7 @@ Modules this one calls through `ctx.api(name)`. `ctx.api` throws for a name not 
 Runs in the guard before every tool call, in load order, with ctx `{input, tool, ti, cwd, config, settings, secret, state, api, emit, tasks, signal}`. The first hit blocks.
 
 - Only `null`, `undefined` or `false` allow. `[kind, reason]` (two strings) blocks. Any other result (a string, `true`, an object, a short array) blocks with kind `module_bad_result`, so a mistake fails closed.
+- A kind that starts with `ask:` does not block: the owner is asked instead (a later block still wins). A kind that starts with `allow:` means the owner already approved this exact call (an approved card): it answers any `ask:` in the chain, never a block. Only approval modules should return it.
 - A throw or reject is a block of kind `module`.
 - It is cut off after `modules_hook_timeout_ms` (config, default 5000): a block of kind `module_timeout`, never a pass, and `ctx.signal` is aborted. A synchronous busy loop cannot be cut off; keep it fast.
 - It must not prompt.

@@ -8,6 +8,8 @@
 
 > **Before you start:** Taskmote runs AI agents on your machine, with your user's rights. The trunk only listens on `127.0.0.1`, and every optional module is **off** until you turn it on. Read [Security](#security) before you expose it to a phone or a network.
 
+> **A paired phone has your powers.** By default (`engine.profile: "full"`) each bot is a persistent Claude Code session with your own Claude settings, tools and MCP servers. Anyone holding a paired device can make it do what you could do at this keyboard, except the red-line actions, which the guard blocks or holds for your yes. Treat pairing like handing over a logged-in laptop: pair only devices you own, list them with `node bin/harness.js devices`, and remove one with `node bin/harness.js revoke <id>`. Set `engine.profile` to `"locked"` for the older narrow tool allowlist.
+
 Taskmote was called *dantomation* until November 2026. The old command name `dantomation` still works as an alias.
 
 ## Why
@@ -128,6 +130,10 @@ What Taskmote does to reduce that risk:
 - Undo, restore and card answers refuse to run inside an agent.
 
 What it does **not** protect against: an agent that gets past the pattern-matching guard (for example with an obfuscated command), a module you enable (modules are trusted code, like a program you install), or a port you expose to the internet.
+
+The red-line guard (approval cards for installs, persistent config, sign-ins, history rewrites, paid compute and money) reduces risk; it does not stop a determined agent. It matches patterns, so a script, an alias or an encoded command can get past it. File paths are checked as written and with symlinks resolved, but a path built at run time is not seen.
+
+A red-line card never times out, and a waiting approval pauses all bots until answered or stopped (Stop on the task in the app ends the wait). Red-line approvals need the approval-cards module: with it off, red lines are refused and the agent tells you so.
 
 **Get it only from** <https://github.com/abc940121/taskmote>. There is no npm package.
 

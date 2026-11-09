@@ -294,7 +294,37 @@ const ENGINES = { echo: { bin: process.execPath, args: [echoJs] }, slow: { bin: 
     fs.writeFileSync(argvJs, "process.stdin.resume();process.stdin.on('end',()=>process.stdout.write(JSON.stringify({type:'result',result:'ARGV '+process.argv.slice(2).join(' ')})+String.fromCharCode(10)));");
     const cl = turn({ modules: { [cSwap]: true }, engines: { fakeswap: { bin: process.execPath, args: [argvJs], turn: true, format: 'claude' } } });
     const clText = (cl.ofType('reply')[0] || {}).text || '';
-    check('format claude turn engine gets guard hooks, allowlist, protocol and strict MCP flags', /^ARGV /.test(clText) && ['--settings', '--allowedTools', '--append-system-prompt-file', '--strict-mcp-config'].every(f => clText.includes(f)) && cl.ofType('engine_used').length === 1, { clText: clText.slice(0, 200), err: cl.p.stderr.slice(0, 200) });
+    check('format claude turn engine gets guard hooks and protocol, plus the allowlist and strict MCP when locked', /^ARGV /.test(clText) && ['--settings', '--append-system-prompt-file'].every(f => clText.includes(f)) && (['--allowedTools', '--strict-mcp-config'].every(f => clText.includes(f)) || /--permission-mode default/.test(clText)) && cl.ofType('engine_used').length === 1, { clText: clText.slice(0, 200), err: cl.p.stderr.slice(0, 200) });
+
+    // full profile: one persistent Claude session per bot and workdir; locked: a fresh session each turn
+    {
+      const base = path.join(tmp, 'sess'), work = path.join(base, 'work');
+      fs.mkdirSync(work, { recursive: true });
+      execFileSync('git', ['init', '-q'], { cwd: work });
+      const run = (profile) => {
+        const cfg = path.join(base, 'config-' + profile + '.json');
+        fs.writeFileSync(cfg, JSON.stringify({ owner_name: 'Tester', engine: { profile }, modules: { [cSwap]: true }, engines: { fakeswap: { bin: process.execPath, args: [argvJs], turn: true, format: 'claude' } } }));
+        const env = { ...process.env, HARNESS_STATE_DIR: path.join(base, 'state'), HARNESS_LOG_DIR: path.join(base, 'logs'), HARNESS_CONFIG: cfg, HARNESS_ENGINE_SCRIPT: defJs, HARNESS_NO_SERVER: '1' };
+        delete env.HARNESS_TASK_ID; delete env.HARNESS_BOT;
+        spawnSync(process.execPath, [path.join(ROOT, 'bin', 'harness.js'), 'start', 'session turn', '--workdir', work], { env, encoding: 'utf8', timeout: 60000 });
+        const recs = fs.readFileSync(path.join(base, 'state', 'journal.jsonl'), 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l));
+        const tid = (recs.filter(x => x.type === 'task_start').pop() || {}).task_id;
+        spawnSync(process.execPath, [path.join(ROOT, 'bin', 'effect.js'), 'task-done', tid], { env, encoding: 'utf8', timeout: 30000 });
+        return { recs, argv: (recs.filter(x => x.type === 'reply').pop() || {}).text || '' };
+      };
+      const a = run('full'), sid = (a.argv.match(/--session-id (\S+)/) || [])[1];
+      const rec = a.recs.filter(x => x.type === 'bot_session').pop();
+      check('full profile: first turn starts a named session and journals it', !!sid && !!rec && rec.session_id === sid && /--permission-mode default/.test(a.argv) && !a.argv.includes('--allowedTools'), { argv: a.argv.slice(0, 300), rec });
+      const b = run('full');
+      check('full profile: the next turn of the same bot resumes that session', b.argv.includes('--resume ' + sid) && !b.argv.includes('--session-id') && b.recs.filter(x => x.type === 'bot_session').length === 1, b.argv.slice(0, 300));
+      const c = run('locked');
+      check('locked profile: no session flags, allowlist and strict MCP kept', !/--resume|--session-id/.test(c.argv) && ['--allowedTools', '--strict-mcp-config'].every(f => c.argv.includes(f)), c.argv.slice(0, 300));
+      const mcpf = (a.argv.match(/--mcp-config (\S+)/) || [])[1];
+      let mcp = null; try { mcp = JSON.parse(fs.readFileSync(mcpf, 'utf8')); } catch { /* checked below */ }
+      const srv = mcp && mcp.mcpServers && mcp.mcpServers.taskmote;
+      check('full profile: permission prompts go to our approve tool over our own MCP config', a.argv.includes('--permission-prompt-tool mcp__taskmote__approve') && !!srv && srv.args.some(x => /bin\/approve-mcp\.js$/.test(x)), { argv: a.argv.slice(0, 400), mcp });
+      check('locked profile: no permission-prompt tool and no extra MCP config', !/--permission-prompt-tool|--mcp-config/.test(c.argv), c.argv.slice(0, 300));
+    }
 
     // a hook matching only past char 4000 sees the full reply
     const longJs = path.join(tmp, 'long.js');
@@ -369,6 +399,21 @@ const ENGINES = { echo: { bin: process.execPath, args: [echoJs] }, slow: { bin: 
     r = M.load({ modules: { [hNone]: true }, modules_hook_timeout_ms: 5000 });
     hit = await M.beforeTool(r.mods, { tool: 'Bash', ti: {} });
     check('hookTimeoutMs: undeclared keeps the global timeout', hit === null, hit);
+    const askM = htm('ka', '', "() => ['ask:install', 'installs software']");
+    const allowM = htm('kl', '', "() => ['allow:card', 'approved on card card-000000']");
+    const blockM = htm('kb', '', "() => ['bad', 'blocked']");
+    r = M.load({ modules: { [askM]: true } });
+    hit = await M.beforeTool(r.mods, { tool: 'Bash', ti: {} });
+    check('ask alone: the chain asks', hit && hit[0] === 'ask:install', hit);
+    r = M.load({ modules: { [askM]: true, [allowM]: true } });
+    hit = await M.beforeTool(r.mods, { tool: 'Bash', ti: {} });
+    check('allow: answers an earlier ask (owner approved this exact call)', hit === null, hit);
+    r = M.load({ modules: { [allowM]: true, [askM]: true } });
+    hit = await M.beforeTool(r.mods, { tool: 'Bash', ti: {} });
+    check('allow: answers a later ask too', hit === null, hit);
+    r = M.load({ modules: { [askM]: true, [allowM]: true, [blockM]: true } });
+    hit = await M.beforeTool(r.mods, { tool: 'Bash', ti: {} });
+    check('allow: never answers a block', hit && hit[0] === 'bad', hit);
     const twelve = (k, extra) => Object.fromEntries(Array.from({ length: 12 }, (_, i) => [htm(`${k}${i}`, extra), true]));
     r = M.load({ modules: twelve('b1', 'hookTimeoutMs: 1000') });
     check('hook budget: 12 modules declaring 1000 ms load fine', !r.errors.length && r.mods.length === 12, r.errors.join(' | '));
