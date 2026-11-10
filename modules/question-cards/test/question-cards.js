@@ -97,6 +97,18 @@ const T0 = Date.parse('2030-01-01T00:00:00Z');
     r = await call('POST', `/questions/${id1}/answer`, { body: { choice: 1 } });
     check('answer twice: 409, first answer stands', r.status === 409 && (await call('GET', '/questions/' + id1)).json.question.answer.option === 'Green');
     check('answered question left the pending list, shows in /recent', (await call('GET', '/questions')).json.questions.length === 0 && (await call('GET', '/questions/recent')).json.questions.length === 1);
+    const ZH = { text: '要繼續嗎？', options: ['好', '不要'] };
+    r = await call('POST', '/questions', { body: { text: 'Go on?', options: ['Yes', 'No'], locales: { 'zh-TW': ZH } } });
+    const idL = r.json.question && r.json.question.question_id;
+    check('locales: accepted, returned on the POST', r.status === 201 && JSON.stringify(r.json.question.locales) === JSON.stringify({ 'zh-TW': ZH }), JSON.stringify(r));
+    const bads = [['unknown locale key', { fr: ZH }], ['wrong options count', { 'zh-TW': { text: 'x', options: ['好'] } }], ['overlong text', { 'zh-TW': { text: 'x'.repeat(501), options: ['好', '不要'] } }],
+      ['overlong option', { 'zh-TW': { text: 'x', options: ['好', 'y'.repeat(101)] } }], ['not an object', 'zh-TW']];
+    for (const [why, loc] of bads) { const b = await call('POST', '/questions', { body: { text: 'Go on?', options: ['Yes', 'No'], locales: loc } }); check('locales: ' + why + ' is rejected (400)', b.status === 400, JSON.stringify(b)); }
+    r = await call('GET', '/questions');
+    const got = (r.json.questions || []).find(q => q.question_id === idL);
+    check('locales: returned in GET /questions', got && JSON.stringify(got.locales) === JSON.stringify({ 'zh-TW': ZH }), JSON.stringify(r.json));
+    r = await call('POST', '/questions/' + idL + '/answer', { body: { choice: 2 } });
+    check('locales: the answer stays a 1-based choice on the main options', r.status === 200 && JSON.stringify(r.json).includes('"choice":2'), JSON.stringify(r));
     r = await call('POST', '/questions', { body: { ...ASK, allow_free: true, task_id: 'task-7' } });
     const id2 = r.json.question.question_id;
     r = await call('POST', `/questions/${id2}/answer`, { actor: DEVICE, body: { text: 'Purple, please', where: 'cli' } });

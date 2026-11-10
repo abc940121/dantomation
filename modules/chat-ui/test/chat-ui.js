@@ -227,6 +227,15 @@ function assetTests() {
   check('ui has index.html, app.js, style.css, state.js', ['index.html', 'app.js', 'style.css', 'state.js'].every(f => files.includes(f)));
   const read = f => fs.readFileSync(path.join(UI, f), 'utf8');
   const html = read('index.html');
+  const I = require(path.join(UI, 'i18n.js'));
+  const ek = Object.keys(I.TABLE.en).sort(), zk = Object.keys(I.TABLE['zh-TW']).sort();
+  check('i18n: en and zh-TW tables have the same keys', ek.length > 40 && JSON.stringify(ek) === JSON.stringify(zk), ek.filter(k => !zk.includes(k)).concat(zk.filter(k => !ek.includes(k))).join(','));
+  const ph = s => (s.match(/{w+}/g) || []).sort().join();
+  check('i18n: every key has the same {placeholders} in both languages and no empty text', ek.every(k => ph(I.TABLE.en[k]) === ph(I.TABLE['zh-TW'][k]) && I.TABLE.en[k] && I.TABLE['zh-TW'][k]));
+  check('i18n: zh-TW is really Chinese for the main words', I.t('zh-TW', 'send') !== I.t('en', 'send') && /[一-鿿]/.test(I.t('zh-TW', 'auth.heading')));
+  const qc = { text: 'Go?', options: ['Yes', 'No'], locales: { 'zh-TW': { text: '好嗎？', options: ['好', '不'] } } };
+  check('i18n: cardText picks the chosen language, else the default', I.cardText(qc, 'zh-TW').options[0] === '好' && I.cardText(qc, 'en').text === 'Go?' && I.cardText({ text: 'a', options: ['x', 'y'] }, 'zh-TW').text === 'a');
+  check('first-open picker: two language buttons, i18n.js loaded before app.js, lang-btn in the top bar', /data-lang="en"/.test(html) && /data-lang="zh-TW"/.test(html) && /id="lang-btn"/.test(html) && html.indexOf('i18n.js') > 0 && html.indexOf('i18n.js') < html.indexOf('app.js'));
   check('viewport meta with viewport-fit=cover', /<meta\s+name="viewport"[^>]*width=device-width[^>]*viewport-fit=cover/.test(html));
   const all = files.map(f => [f, read(f)]);
   const ext = all.filter(([, c]) => /(?:https?:)?\/\/[a-z0-9.-]+\.[a-z]{2,}|\bsrc="\/\/|@import|url\(\s*["']?https?:/i.test(c.replace(/\/\/ .*$/gm, '').replace(/\/\*[^]*?\*\//g, '')));
@@ -273,10 +282,10 @@ function hashTests() {
   const run = hash => {
     const store = new Map(), handlers = {};
     const location = { hash, pathname: '/m/chat-ui/ui/index.html', search: '' };
-    const win = { DantoState: D, DantoRooms: require(path.join(UI, 'rooms.js')), addEventListener: (ev, f) => { handlers[ev] = f; } };
+    const win = { DantoI18n: require(path.join(UI, 'i18n.js')), DantoState: D, DantoRooms: require(path.join(UI, 'rooms.js')), addEventListener: (ev, f) => { handlers[ev] = f; } };
     const ctx = { window: win, DantoState: D, location, history: { replaceState: (a, b, url) => { location.hash = ''; ctx.replaced = url; } },
       localStorage: { getItem: k => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)) },
-      document: { getElementById: stub, createElement: stub, addEventListener: () => {}, body: stub(), hidden: false },
+      document: { getElementById: stub, createElement: stub, querySelectorAll: () => [], documentElement: {}, addEventListener: () => {}, body: stub(), hidden: false },
       fetch: () => Promise.reject(new Error('offline')), requestAnimationFrame: () => 0, setTimeout: () => 0, setInterval: () => 0, clearTimeout() {}, clearInterval() {},
       console: { log() {}, error() {} }, AbortController, TextDecoder, URL, navigator: {} };
     ctx.self = ctx.globalThis = ctx;

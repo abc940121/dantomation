@@ -22,7 +22,7 @@ Taskmote 在 2026 年 11 月前叫做 *dantomation*。舊指令名稱 `dantomati
 
 ## Why
 
-程式代理很會做事，但不太會在筆電睡眠時乾淨地停下、誠實告訴你測試到底有沒有過，或在 `git push` 前先等你同意。Taskmote 是包在 Claude Code 外面的小工具，專門處理這些：防當機的日誌、一個任務只有一個執行者、每次修改前先存檢查點，以及危險動作先停下來等你說好。
+程式代理很會做事，但不太會在筆電睡眠時乾淨地停下、誠實告訴你測試到底有沒有過，或在花錢前先等你同意。Taskmote 是包在 Claude Code 外面的小工具，專門處理這些：防當機的日誌、一個任務只有一個執行者、每次修改前先存檢查點，以及危險動作先停下來等你說好。
 
 ## What it is, and what it is not
 
@@ -82,7 +82,7 @@ Windows 上 `bin\taskmote.cmd` 效果相同；把 `bin` 加入 PATH 就能直接
 ## Features
 
 - **代理改過的東西都能復原**（`checkpoint`）。
-- **危險動作會等你**（`approval-cards`）：`git push`、任務資料夾外的刪除、安裝、付費 API 呼叫會停下，等你回答 `do yes` 或 `do no`；10 分鐘沒回答視為拒絕。
+- **危險動作會等你**（`approval-cards`）：任務資料夾外的刪除、安裝、付費 API 呼叫會停下，等你回答 `do yes` 或 `do no`；10 分鐘沒回答視為拒絕。
 - **誠實的回覆**（`tripwires`、`claim-audit`）：回覆宣稱「測試通過」但執行其實失敗時會被標記；在設定加上 `"tripwires": {"mode": "block"}` 則會直接扣住該回覆。
 - **用手機聊天**（`chat-ui`/`app-ui` 搭配 `device-pairing`）。
 - **語音**（`voice`、`voice-chat`）。

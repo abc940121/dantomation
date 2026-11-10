@@ -59,7 +59,7 @@ const hook = (command, task, env = {}, tool = 'Bash', ti) => spawnSync(process.e
   input: JSON.stringify({ session_id: 's', tool_name: tool, tool_input: ti || { command }, cwd: work }),
   env: { ...base, HARNESS_TASK_ID: task, HARNESS_TASK_DIR: work, ...env }, encoding: 'utf8' });
 const dant = (args, env = {}) => spawnSync(process.execPath, [DANT, ...args], { cwd: ROOT, env: { ...base, ...env }, encoding: 'utf8', timeout: 120000 });
-const CMD = 'git push origin main';
+const CMD = 'curl https://api.openai.com/v1/models';
 const cardId = r => (r.stderr.match(/card-[0-9a-f]{6}/) || [])[0];
 
 startTask('t1');
@@ -68,7 +68,7 @@ const safe = hook('git status', 't1');
 check('a safe command passes', safe.status === 0, `exit ${safe.status}`);
 const r1 = hook(CMD, 't1');
 const id1 = cardId(r1);
-check('git push is blocked with "waiting for approval card <id>; stop and end your turn"', r1.status === 2 && /waiting for approval card card-[0-9a-f]{6}/.test(r1.stderr) && /end your turn/.test(r1.stderr), r1.stderr.trim().slice(0, 110));
+check('a paid-API call is blocked with "waiting for approval card <id>; stop and end your turn"', r1.status === 2 && /waiting for approval card card-[0-9a-f]{6}/.test(r1.stderr) && /end your turn/.test(r1.stderr), r1.stderr.trim().slice(0, 110));
 const c1 = cards()[0] || {};
 check('the card has id, task, tool, exact input, sha256, summary, created_at, expires_at',
   c1.card_id === id1 && c1.task_id === 't1' && c1.tool === 'Bash' && c1.input && c1.input.command === CMD && /^[0-9a-f]{64}$/.test(c1.sha256) && c1.summary && c1.created_at && Date.parse(c1.expires_at) - Date.parse(c1.created_at) === 600000,
@@ -99,7 +99,7 @@ const prompt = (() => { // the resume prompt the agent saw
 check('the resumed agent is told it was approved', /APPROVED/.test(prompt) && prompt.includes(id1));
 jadd({ type: 'task_start', task_id: 't2', request: 'cards test 2', workdir: work });
 // t1 is done; the approval belongs to task t1. Re-open the scenario inside t1 by calling as t1 (hooks only need the env)
-const changed = hook('git push origin other-branch', 't1');
+const changed = hook('curl https://api.openai.com/v1/files', 't1');
 check('a changed input is not approved (needs its own new card)', changed.status === 2 && cardId(changed) && cardId(changed) !== id1 && cards().length === 2);
 const pass1 = hook(CMD, 't1');
 check('the identical call passes once', pass1.status === 0, `exit ${pass1.status} ${pass1.stderr.trim().slice(0, 80)}`);
@@ -133,7 +133,8 @@ check('the expired card does not approve a retry', hook(CMD, 't4', late).status 
 fs.writeFileSync(jfile, ''); fs.rmSync(path.join(state, 'm', 'approval-cards'), { recursive: true, force: true });
 startTask('t5');
 const blocked = c => hook(c, 't5', {}, 'Bash').status === 2 && /approval card/.test(hook(c, 't5').stderr);
-check('pip/winget installs, gh release, npm publish each ask', ['pip install requests', 'winget install Foo.Bar', 'gh release create v1', 'npm publish', 'gh repo create x'].every(blocked));
+check('pip/winget installs each ask', ['pip install requests', 'winget install Foo.Bar'].every(blocked));
+check('publishing is not a red line: gh release, npm publish, docker push, git push go through', ['gh release create v1', 'npm publish', 'gh repo create x', 'docker push img', 'git push origin main'].every(c => !blocked(c)));
 check('a paid API call by URL asks (shell and fetch tool)', blocked('curl https://api.openai.com/v1/chat/completions') && hook('', 't5', {}, 'WebFetch', { url: 'https://api.anthropic.com/v1/messages' }).status === 2);
 const PAID = {
   'python requests': `python -c "import requests; requests.post('https://api.openai.com/v1/chat/completions')"`,
@@ -171,7 +172,7 @@ const nCards = cards().length;
 const offPush = hook(CMD, 't5', offEnv);
 const offDo = dant(['do', 'yes'], offEnv);
 const offStatus = dant(['status'], offEnv);
-check('with the module off: git push is not held, "do yes" is just a request refused as before, status has no card lines',
+check('with the module off: a paid-API call is not held, "do yes" is just a request refused as before, status has no card lines',
   offPush.status === 0 && !/approval card/.test(offStatus.stdout) && cards().length === nCards, `push exit ${offPush.status}`);
 check('with the module off: do "<request>" with an open task still refuses; no card record is written', offDo.status !== 0 && /still open/.test(offDo.stdout + offDo.stderr) && cards().length === nCards);
 

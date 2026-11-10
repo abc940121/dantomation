@@ -17,6 +17,7 @@ const fs = require('fs');
 const path = require('path');
 const JL = require('../../lib/journal');
 
+const LOCALES = ['en', 'zh-TW']; // the only locale keys a question may carry
 const LIMITS = { text: 500, option: 100, free: 500, min_options: 2, max_options: 6 };
 const ID_RE = /^q-(?:[0-9a-f]{24}|[0-9a-f]{6})$/; // new ids carry 96 random bits; 6-hex ones are legacy
 const TASK_RE = /^[A-Za-z0-9._:-]{1,64}$/;
@@ -36,6 +37,32 @@ const now = () => {
 const CTRL = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/;
 const clean = s => String(s).replace(/\r\n?/g, '\n').trim();
 
+// Optional translations: {"zh-TW": {text, options[]}}. Same caps as text/options; the options count must match the
+// main options, so answer {choice: n} means the same in every language. Returns {ok, value|null} or {ok: false, error}.
+function validateLocales(l, nOptions) {
+  if (l === undefined || l === null) return { ok: true, value: null };
+  if (typeof l !== 'object' || Array.isArray(l)) return { ok: false, error: 'locales must be an object like {"zh-TW": {text, options}}' };
+  const out = {};
+  for (const k of Object.keys(l)) {
+    if (!LOCALES.includes(k)) return { ok: false, error: `unknown locale "${String(k).slice(0, 20)}" (known: ${LOCALES.join(', ')})` };
+    const v = l[k];
+    if (!v || typeof v !== 'object' || Array.isArray(v)) return { ok: false, error: `locales.${k} must be an object {text, options}` };
+    if (typeof v.text !== 'string' || !clean(v.text)) return { ok: false, error: `locales.${k}.text is required (a string)` };
+    const text = clean(v.text);
+    if (text.length > LIMITS.text || CTRL.test(text)) return { ok: false, error: `locales.${k}.text must be at most ${LIMITS.text} characters, no control characters` };
+    if (!Array.isArray(v.options) || v.options.length !== nOptions) return { ok: false, error: `locales.${k}.options must hold exactly ${nOptions} choices, like the main options` };
+    const options = [];
+    for (const o of v.options) {
+      if (typeof o !== 'string' || !clean(o)) return { ok: false, error: `every locales.${k} option must be a non-empty string` };
+      const x = clean(o);
+      if (x.length > LIMITS.option || CTRL.test(x) || x.includes('\n')) return { ok: false, error: `each locales.${k} option must be one line of at most ${LIMITS.option} characters` };
+      options.push(x);
+    }
+    out[k] = { text, options };
+  }
+  return { ok: true, value: Object.keys(out).length ? out : null };
+}
+
 // Returns {ok: true, value} or {ok: false, error}. Never throws.
 function validateAsk(b) {
   if (!b || typeof b !== 'object' || Array.isArray(b)) return { ok: false, error: 'body must be an object {text, options, allow_free?, task_id?}' };
@@ -52,9 +79,11 @@ function validateAsk(b) {
     if (options.some(x => x.toLowerCase() === v.toLowerCase())) return { ok: false, error: 'options must be different from each other' };
     options.push(v);
   }
+  const loc = validateLocales(b.locales, options.length);
+  if (!loc.ok) return loc;
   if (b.allow_free !== undefined && typeof b.allow_free !== 'boolean') return { ok: false, error: 'allow_free must be true or false' };
   if (b.task_id !== undefined && b.task_id !== null && (typeof b.task_id !== 'string' || !TASK_RE.test(b.task_id))) return { ok: false, error: 'task_id is not a valid task id' };
-  return { ok: true, value: { text, options, allow_free: b.allow_free === true, task_id: b.task_id || null } };
+  return { ok: true, value: { text, options, allow_free: b.allow_free === true, task_id: b.task_id || null, ...(loc.value ? { locales: loc.value } : {}) } };
 }
 
 // Resolve an owner's answer against a question. input: {choice?: int 1..n | option text, text?: string}.
@@ -135,7 +164,7 @@ function fold(records, vault) {
     if (r.module !== 'question-cards') continue;
     if (r.type === 'question') {
       const v = vault[r.question_id] || {};
-      qs.set(r.question_id, { question_id: r.question_id, task_id: r.task_id || null, text: v.text !== undefined ? v.text : (r.text || ''), options: v.options || r.options || [],
+      qs.set(r.question_id, { question_id: r.question_id, task_id: r.task_id || null, text: v.text !== undefined ? v.text : (r.text || ''), options: v.options || r.options || [], locales: v.locales || null,
         allow_free: !!r.allow_free, created_at: r.created_at, expires_at: r.expires_at, state: 'pending', answer: null });
     } else if (qs.has(r.question_id)) {
       const q = qs.get(r.question_id);
@@ -154,7 +183,7 @@ function fold(records, vault) {
 }
 const isExpired = q => q.state === 'pending' && now() >= Date.parse(q.expires_at);
 const pending = (records, vault) => [...fold(records, vault).values()].filter(q => q.state === 'pending' && !isExpired(q));
-const view = q => ({ question_id: q.question_id, task_id: q.task_id, text: q.text, options: q.options, allow_free: q.allow_free, state: isExpired(q) ? 'expired' : q.state,
+const view = q => ({ question_id: q.question_id, task_id: q.task_id, text: q.text, options: q.options, ...(q.locales ? { locales: q.locales } : {}), allow_free: q.allow_free, state: isExpired(q) ? 'expired' : q.state,
   created_at: q.created_at, expires_at: q.expires_at, answer: q.answer });
 // io-level helpers: journal + vault together
 const foldIO = io => fold(io.J.readAll().records, vaultLoad(io));
@@ -198,12 +227,12 @@ async function ask(io, v, settings) {
     const vault = vaultLoad(io), known = new Set(io.J.readAll().records.filter(x => x.type === 'question').map(x => x.question_id));
     const question_id = newId(id => known.has(id) || vault[id]);
     const t = now();
-    vault[question_id] = { text: v.text, options: v.options };
+    vault[question_id] = { text: v.text, options: v.options, ...(v.locales ? { locales: v.locales } : {}) };
     vaultSave(io, vault); // texts first: a journaled question always has its text
     const rec = io.state.append({ type: 'question', question_id, task_id: v.task_id, text_len: v.text.length, option_lens: v.options.map(o => o.length), allow_free: v.allow_free,
       created_at: new Date(t).toISOString(), expires_at: new Date(t + timeoutMs(settings)).toISOString() });
     ev.push(['question.asked', { question_id, task_id: v.task_id, text: v.text, options: v.options, allow_free: v.allow_free, expires_at: rec.expires_at }]);
-    return { res: { question: view({ question_id, task_id: v.task_id, text: v.text, options: v.options, allow_free: v.allow_free, created_at: rec.created_at, expires_at: rec.expires_at, state: 'pending', answer: null }) } };
+    return { res: { question: view({ question_id, task_id: v.task_id, text: v.text, options: v.options, locales: v.locales || null, allow_free: v.allow_free, created_at: rec.created_at, expires_at: rec.expires_at, state: 'pending', answer: null }) } };
   });
 }
 
@@ -248,4 +277,4 @@ async function sweep(io) {
   return r.ev.map(e => e[1].question_id);
 }
 
-module.exports = { withLock, LIMITS, ID_RE, validateAsk, validateAnswer, source, fold, pending, foldIO, pendingIO, vaultLoad, isExpired, view, ask, answer, cancel, sweep, find, lookup, now, DEFAULT_TIMEOUT_MIN };
+module.exports = { withLock, LIMITS, LOCALES, validateLocales, ID_RE, validateAsk, validateAnswer, source, fold, pending, foldIO, pendingIO, vaultLoad, isExpired, view, ask, answer, cancel, sweep, find, lookup, now, DEFAULT_TIMEOUT_MIN };

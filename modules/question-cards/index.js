@@ -148,7 +148,7 @@ module.exports = {
     { method: 'GET', path: '/questions', handler: listPending, description: 'pending questions' },
     { method: 'GET', path: '/questions/recent', handler: listRecent, description: 'last 20 answered, cancelled or expired questions' },
     { method: 'GET', path: '/questions/:id', handler: getOne, description: 'one question with its state and answer' },
-    { method: 'POST', path: '/questions', handler: postAsk, description: 'ask: body {text, options[2-6], allow_free?, task_id?}' },
+    { method: 'POST', path: '/questions', handler: postAsk, description: 'ask: body {text, options[2-6], allow_free?, task_id?, locales?: {"zh-TW": {text, options[same count]}}}' },
     { method: 'POST', path: '/questions/:id/answer', handler: postAnswer, description: 'answer: body {choice?: number|option text, text?}' },
     { method: 'POST', path: '/questions/:id/cancel', handler: postCancel, description: 'withdraw a pending question' },
   ],

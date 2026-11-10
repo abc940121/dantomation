@@ -4,7 +4,7 @@ Risky actions stop and ask you yes or no instead of running. The agent's call is
 
 ## When to turn it on
 
-Turn it on when you let the harness run unattended but want the last word on a few actions that are legitimate yet hard to take back: pushing commits, deleting files outside the task folder, installing packages, publishing, calling paid APIs. Leave it off if you prefer those to run without asking, or if you rely on `guard-base` alone.
+Turn it on when you let the harness run unattended but want the last word on a few actions that are legitimate yet hard to take back: deleting files outside the task folder, installing packages, calling paid APIs. Leave it off if you prefer those to run without asking, or if you rely on `guard-base` alone.
 
     "modules": { "approval-cards": true }
 
@@ -37,7 +37,7 @@ Unclear never approves. The card stays pending and `status` says the last answer
 
 ## Risky list (data, extendable)
 
-Defaults are in `default-risky.json`: `git push`; deleting files outside the task folder; package installs (npm, pnpm, yarn, pip, winget, choco, apt, brew, cargo, go); anything that publishes (`gh release`, `gh repo`, `npm publish`, `docker push`); calls to well-known paid API hosts, by URL or bare host name (shell or fetch tool, so curl, wget, `Invoke-WebRequest`, Python and Node one-liners all count); and the OpenAI and Anthropic SDKs or CLIs used from the shell. It is pattern matching, so a call that hides the host or the SDK name gets through. Extend or trim in your config, like the private rules:
+Defaults are in `default-risky.json`: deleting files outside the task folder; package installs (npm, pnpm, yarn, pip, winget, choco, apt, brew, cargo, go); calls to well-known paid API hosts, by URL or bare host name (shell or fetch tool, so curl, wget, `Invoke-WebRequest`, Python and Node one-liners all count); and the OpenAI and Anthropic SDKs or CLIs used from the shell. It is pattern matching, so a call that hides the host or the SDK name gets through. Extend or trim in your config, like the private rules:
 
     "approval_cards": {
       "timeout_minutes": 10,
@@ -66,7 +66,7 @@ Who may call the routes (the owner only) is the server's job.
 
 ## Known limits
 
-- **A pattern list, not a sandbox.** A risky action spelled in a way the patterns do not match (a script that pushes, a renamed tool, a variable holding the command) is not held. The cards are a convenience for honest agents, not containment.
+- **A pattern list, not a sandbox.** A risky action spelled in a way the patterns do not match (a script that spends, a renamed tool, a variable holding the command) is not held. The cards are a convenience for honest agents, not containment.
 - **Answering is protected by convention.** The answer verb refuses when `HARNESS_TASK_ID` is set and the module blocks agent commands that name `taskmote`/`harness` followed by `do yes`, `do no` or `answer`. An agent that bypasses the guard (guard-base off, or an obfuscated command) could answer its own card.
 - Delete detection resolves path arguments textually. Wildcards and paths held in variables count as outside (it asks); a symlink inside the task folder that points outside is not seen.
 - Only calls that reach the guard are covered, and only inside an engine run. Calls made by you in your own shell are never asked about.

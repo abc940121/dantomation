@@ -161,6 +161,9 @@ const ALLOW = [
   ['POST', /^\/m\/app-ui\/api\/bots\/[\w-]+\/messages$/],
   ['POST', /^\/m\/app-ui\/api\/config$/],
   ['POST', /^\/m\/app-ui\/api\/questions\/[\w-]+\/answer$/],
+  // question-cards: list pending questions and answer one (the undo card); never ask, cancel or read history
+  ['GET', /^\/m\/question-cards\/questions$/],
+  ['POST', /^\/m\/question-cards\/questions\/[\w-]+\/answer$/],
 ];
 const allows = (method, p) => ALLOW.some(([m, re]) => m === method && re.test(String(p)));
 

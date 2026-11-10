@@ -2,10 +2,10 @@
 'use strict';
 // bin/taskmote-mcp.js, Taskmote's own MCP stdio server (ask_owner, queue_task, task_status, undo_task,
 // digest, search_journal). Spawns the real server against temp dirs and the fake engine:
-//   a. initialize, ping, tools/list (four read-only tools by default, six with --allow-write; --no-ask), unknown tool / method errors
+//   a. initialize, ping, tools/list (all six tools with no flag; --allow-write / --no-ask / env flag are accepted no-ops), unknown tool / method errors
 //   b. happy paths: queue_task -> task_status -> search_journal -> digest -> undo_task;
 //      ask_owner answered through `taskmote ask answer`, and ask_owner timing out as {answered:false}
-//   c. undo_task owner card (Undo / Keep / timeout / cards off) and while the executor lock is held: blocked, nothing changed
+//   c. undo_task undoes at once then posts an info card (en + zh-TW), cards off still undoes; executor lock held: blocked, nothing changed
 //   d. modules off: each module-backed tool answers with text naming the module to enable; no crash
 // Runs in any mode: it writes its own configs in a temp dir.
 const fs = require('fs');
@@ -61,7 +61,7 @@ async function until(fn, ms = 15000) { const end = Date.now() + ms; for (;;) { c
 async function main() {
   const ON = { 'guard-base': true, checkpoint: true, 'question-cards': true, digest: true, search: true };
   const { env } = mkEnv('on', ON);
-  const s = startServer(env, ['--allow-write']);
+  const s = startServer(env, ['--allow-write']); // the flag is a no-op; the other servers below run without it
 
   // a. protocol
   const init = await s.call('initialize', { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 't', version: '1' } });
@@ -69,32 +69,24 @@ async function main() {
   check('ping answers', (await s.call('ping', {})).result !== undefined);
   const list = await s.call('tools/list', {});
   const names = (list.result.tools || []).map(t => t.name).sort();
-  check('tools/list with --allow-write: the six tools, each with an inputSchema', JSON.stringify(names) === JSON.stringify(['ask_owner', 'digest', 'queue_task', 'search_journal', 'task_status', 'undo_task']) && list.result.tools.every(t => t.inputSchema && t.inputSchema.type === 'object' && t.description), names);
+  check('tools/list: the six tools, each with an inputSchema', JSON.stringify(names) === JSON.stringify(['ask_owner', 'digest', 'queue_task', 'search_journal', 'task_status', 'undo_task']) && list.result.tools.every(t => t.inputSchema && t.inputSchema.type === 'object' && t.description), names);
   const unk = await s.call('tools/call', { name: 'nope', arguments: {} });
   check('unknown tool: JSON-RPC error -32602', unk.error && unk.error.code === -32602, unk);
   const unm = await s.call('nope', {});
   check('unknown method: JSON-RPC error -32601', unm.error && unm.error.code === -32601, unm);
 
-  // default (read-only), --no-ask, env flag
+  // no flag, old flags: every tool is always listed
+  const ALL = ['ask_owner', 'digest', 'queue_task', 'search_journal', 'task_status', 'undo_task'];
   const ro = startServer(env);
   const roNames = ((await ro.call('tools/list', {})).result.tools || []).map(t => t.name).sort();
-  check('default tools/list: 4 read-only tools', JSON.stringify(roNames) === JSON.stringify(['ask_owner', 'digest', 'search_journal', 'task_status']), roNames);
-  for (const w of [['queue_task', { request: 'x' }], ['undo_task', { task_id: 't1' }]]) {
-    const r = await ro.tool(w[0], w[1]);
-    check(`${w[0]} without --allow-write: isError telling to restart with --allow-write`, r.err && /--allow-write/.test(r.text), r);
-  }
-  check('write tool call without the flag changed nothing', !journal(env).some(r => r.type === 'task_start' || r.type === 'queue_add'));
+  check('no flag: all six tools listed', JSON.stringify(roNames) === JSON.stringify(ALL), roNames);
   ro.stop();
-  const na = startServer(env, ['--allow-write', '--no-ask']);
-  const naNames = ((await na.call('tools/list', {})).result.tools || []).map(t => t.name).sort();
-  check('--no-ask removes ask_owner', !naNames.includes('ask_owner') && naNames.length === 5, naNames);
-  const naCall = await na.tool('ask_owner', { question: 'q', choices: ['a', 'b'] });
-  check('--no-ask: ask_owner call is an error', naCall.err && /--no-ask/.test(naCall.text), naCall);
-  na.stop();
-  const ne = startServer({ ...env, TASKMOTE_MCP_WRITE: '1' });
-  const neNames = ((await ne.call('tools/list', {})).result.tools || []).map(t => t.name);
-  check('env TASKMOTE_MCP_WRITE=1 enables the 2 write tools', neNames.length === 6, neNames);
-  ne.stop();
+  for (const [label, argv, e2] of [['--no-ask', ['--no-ask'], env], ['env TASKMOTE_MCP_WRITE=1', [], { ...env, TASKMOTE_MCP_WRITE: '1' }]]) {
+    const x = startServer(e2, argv);
+    const xn = ((await x.call('tools/list', {})).result.tools || []).map(t => t.name).sort();
+    check(`${label} is accepted and changes nothing: all six tools`, JSON.stringify(xn) === JSON.stringify(ALL), xn);
+    x.stop();
+  }
 
   // b. queue_task -> task_status -> search -> digest -> undo
   const wd = path.join(tmp, 'on', 'wd');
@@ -139,27 +131,14 @@ async function main() {
   check('undo_task: a running task blocks it, no card is sent, nothing changes', !blocked.err && blocked.json.blocked === true && blocked.json.undone === false && undoCount() === u0 && cardCount() === c0, blocked);
   holder.kill();
   await sleep(300);
-  // answer the next undo card with choice n (1 = Undo, 2 = Keep); returns the card record
-  const answerCard = async n => {
-    const seen = cardCount();
-    const rec = await until(() => { const c = journal(env).filter(r => r.type === 'question'); return c.length > seen ? c[c.length - 1] : null; });
-    if (!rec) return null;
-    spawnSync(process.execPath, [path.join(ROOT, 'bin', 'taskmote.js'), 'ask', 'answer', rec.question_id, String(n)], { env, encoding: 'utf8' });
-    return rec;
-  };
-  const keepP = s.tool('undo_task', { task_id: tid, timeout_s: 30 });
-  const keepCard = await answerCard(2);
-  const keep = await keepP;
-  check('undo_task: card text names the task and the folder', keepCard && cardText(keepCard.question_id).startsWith(`Undo task ${tid} ("write the zebra report")? Its folder goes back`), keepCard);
-  check('undo_task: answered Keep changes nothing', !keep.err && keep.json.undone === false && keep.json.reason === 'owner did not approve' && undoCount() === u0, keep);
-  const toU = await s.tool('undo_task', { task_id: tid, timeout_s: 0.4 });
-  check('undo_task: no answer in time changes nothing', !toU.err && toU.json.undone === false && toU.json.reason === 'owner did not approve' && undoCount() === u0, toU);
-  const unP = s.tool('undo_task', { task_id: tid, timeout_s: 30 });
-  await answerCard(1);
-  const un = await unP;
-  check('undo_task: answered Undo restores, with removed_files and an undo_ref', !un.err && un.json.undone === true && typeof un.json.removed_files === 'number' && un.json.undo_ref && undoCount() === u0 + 1, un);
-  const decisions = journal(env).filter(r => r.type === 'undo_card').map(r => r.answer);
-  check('undo_task: each decision journaled as undo_card', JSON.stringify(decisions) === JSON.stringify(['Keep', 'no answer', 'Undo']), decisions);
+  const un = await s.tool('undo_task', { task_id: tid });
+  check('undo_task: undoes at once with no owner answer, with removed_files and an undo_ref', !un.err && un.json.undone === true && typeof un.json.removed_files === 'number' && un.json.undo_ref && undoCount() === u0 + 1, un);
+  const info = await until(() => { const c = journal(env).filter(r => r.type === 'question'); return c.length > c0 ? c[c.length - 1] : null; });
+  check('undo_task: an info card is posted afterwards, naming the task', info && cardText(info.question_id).startsWith(`Task ${tid} ("write the zebra report") was undone`), info);
+  const cardLoc = id => { try { return JSON.parse(fs.readFileSync(path.join(env.HARNESS_STATE_DIR, 'm', 'question-cards', 'vault.json'), 'utf8'))[id].locales['zh-TW']; } catch { return null; } };
+  const zhc = info && cardLoc(info.question_id);
+  check('undo_task: the info card also carries zh-TW text', zhc && zhc.text.startsWith(`任務 ${tid}（「write the zebra report」）已復原`) && zhc.options.length === 2, zhc);
+  check('undo_task: the notice is journaled and no undo_card question was asked', journal(env).some(r => r.type === 'undo_notice' && r.task_id === tid) && !journal(env).some(r => r.type === 'undo_card'));
   const unx = await s.tool('undo_task', { task_id: 'tnope' });
   check('undo_task: unknown task is a clear error', unx.err && /no task/.test(unx.text), unx);
 
@@ -181,7 +160,7 @@ async function main() {
   const nc = mkEnv('nocards', { 'guard-base': true, checkpoint: true, 'question-cards': false });
   const ncs = startServer(nc.env, ['--allow-write']);
   const ncr = await ncs.tool('undo_task', { task_id: 't1' });
-  check('undo_task: question-cards off refuses, naming it (never undoes without a card)', ncr.err && ncr.text.includes('"question-cards"') && /Enable it/.test(ncr.text), ncr);
+  check('undo_task: question-cards off no longer blocks it (only the owner notice needs cards); it gets as far as the task lookup', ncr.err && /no task/.test(ncr.text) && !ncr.text.includes('"question-cards"'), ncr);
   ncs.stop();
   const off = mkEnv('off', { 'guard-base': true, checkpoint: false });
   const o = startServer(off.env, ['--allow-write']);

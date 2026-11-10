@@ -49,7 +49,7 @@ Set `TASKMOTE_DEMO_AUTO=yes` (or `no`) to answer the card without the browser.
 
 ## Why
 
-Coding agents are good at doing things, but they are less good at stopping cleanly when your laptop sleeps, telling you honestly whether a test passed, or waiting for you before they `git push`. Taskmote is a small wrapper around Claude Code that handles those parts: it keeps a crash-safe journal, gives one task one executor, takes a checkpoint before every change, and stops risky actions until you say yes.
+Coding agents are good at doing things, but they are less good at stopping cleanly when your laptop sleeps, telling you honestly whether a test passed, or waiting for you before they spend money. Taskmote is a small wrapper around Claude Code that handles those parts: it keeps a crash-safe journal, gives one task one executor, takes a checkpoint before every change, and stops risky actions until you say yes.
 
 ## What it is
 
@@ -119,7 +119,7 @@ On Windows, `bin\taskmote.cmd` does the same; put `bin` on your PATH to type `ta
 ## Features
 
 - **Undo anything the agent changed.** `checkpoint` snapshots before each change; `undo` and `restore` are owner-only.
-- **Risky actions wait for you.** With `approval-cards`, a `git push`, a delete outside the task folder, an install or a paid API call stops until you answer `do yes` or `do no`. No answer in 10 minutes counts as no.
+- **Risky actions wait for you.** With `approval-cards`, a delete outside the task folder, an install or a paid API call stops until you answer `do yes` or `do no`. No answer in 10 minutes counts as no.
 - **Honest replies.** `tripwires` flags a reply that claims "tests pass" when the run exited with an error, and with `"tripwires": {"mode": "block"}` in the config it holds that reply back; `claim-audit` checks "done" claims against the journal.
 - **Chat from your phone.** `chat-ui`/`app-ui` with `device-pairing` gives one-time codes and per-device tokens you can revoke.
 - **Voice.** `voice` and `voice-chat` add hands-free turns, including answering approval cards by voice.
@@ -129,29 +129,27 @@ On Windows, `bin\taskmote.cmd` does the same; put `bin` on your PATH to type `ta
 
 `bin/taskmote-mcp.js` is an MCP stdio server. Any Claude Code session, or other MCP client, can then call what Claude Code does not have: cards to your phone, the task queue, undo and the journal.
 
-It is read-only by default: with no flag it lists only `task_status`, `search_journal`, `digest` and `ask_owner`. Anything that can change things is opt-in. Install it for every project of yours (user-wide) or for one project (the default scope):
+Every tool is listed and works with no flag. The only things that still stop for your answer are the product red lines: spending money, deleting outside the task folder and touching secrets. Install it for every project of yours (user-wide) or for one project (the default scope):
 
 ```sh
 # user-wide
 claude mcp add --scope user taskmote -- node <path-to-repo>/bin/taskmote-mcp.js
 # this project only (default project scope)
 claude mcp add taskmote -- node <path-to-repo>/bin/taskmote-mcp.js
-# read-write: also lists queue_task and undo_task
-claude mcp add taskmote -- node <path-to-repo>/bin/taskmote-mcp.js --allow-write
 ```
 
-`--allow-write` (or the environment variable `TASKMOTE_MCP_WRITE=1`) adds `queue_task` and `undo_task`; calling either without it returns an error that says to restart with `--allow-write`. `--no-ask` drops `ask_owner` for a fully read-only install.
+`--allow-write`, `--no-ask` and the environment variable `TASKMOTE_MCP_WRITE=1` are still accepted so older launch commands keep working, but they no longer change anything.
 
-`undo_task` always asks you on the phone first, whoever queued the task: a card "Undo task ... ?" with Undo / Keep. Only Undo proceeds; Keep, no answer in time (`timeout_s`, default 600) or `question-cards` being off changes nothing. `queue_task` runs through the same path as `taskmote do`, so the same guards, approval cards and spend counting apply as for a typed command.
+`undo_task` undoes at once, whoever queued the task, and returns the result right away; afterwards it posts an informational card (English and 繁中) to your phone, which needs no answer. If `question-cards` is off the undo still happens, just without the card. `queue_task` runs through the same path as `taskmote do`, so the same guards, approval cards and spend counting apply as for a typed command.
 
 | Tool | What it does | Needs module | Listed |
 |---|---|---|---|
-| `ask_owner` | Ask a question with 2 to 6 choices on your phone and wait. No answer in time returns `{"answered":false}`, never an error. | `question-cards` | default (not with `--no-ask`) |
-| `task_status` | One task, or the recent tasks, from the journal. | none | default |
-| `digest` | The while-you-were-away summary as JSON (honours `include_titles`). | `digest` | default |
-| `search_journal` | Full-text search over past tasks, messages and rooms. | `search` | default |
-| `queue_task` | Queue a task the way `taskmote do` does and return its id. `cwd` applies only when no server is running. | none | `--allow-write` |
-| `undo_task` | Put a task's folder back, like the Undo button, after you answer Undo on a phone card. If a task is running it returns `blocked` and sends no card. | `checkpoint`, `question-cards` | `--allow-write` |
+| `ask_owner` | Ask a question with 2 to 6 choices on your phone and wait. No answer in time returns `{"answered":false}`, never an error. | `question-cards` | always |
+| `task_status` | One task, or the recent tasks, from the journal. | none | always |
+| `digest` | The while-you-were-away summary as JSON (honours `include_titles`). | `digest` | always |
+| `search_journal` | Full-text search over past tasks, messages and rooms. | `search` | always |
+| `queue_task` | Queue a task the way `taskmote do` does and return its id. `cwd` applies only when no server is running. | none | always |
+| `undo_task` | Put a task's folder back, like the Undo button, at once, then sends you an info card. If a task is running it returns `blocked` and changes nothing. | `checkpoint` (`question-cards` for the notice) | always |
 
 A tool whose module is off answers with text naming the module to turn on. The separate `bin/approve-mcp.js` permission-prompt server is unchanged.
 

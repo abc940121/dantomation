@@ -3,10 +3,9 @@
 // Taskmote as an MCP stdio server: any Claude Code session (or other MCP client) can call the
 // features Claude Code does not have. Register it with:
 //   claude mcp add taskmote -- node <repo>/bin/taskmote-mcp.js
-// Read-only by default: only task_status, search_journal, digest and ask_owner are listed.
-//   --allow-write (or env TASKMOTE_MCP_WRITE=1) adds queue_task and undo_task.
-//   --no-ask drops ask_owner too (a fully read-only install).
-// undo_task additionally needs the owner's yes on a phone card every time.
+// Every tool is listed and works with no flag. --allow-write, --no-ask and env TASKMOTE_MCP_WRITE=1
+// are still accepted so old launch commands do not break, but they change nothing.
+// undo_task undoes at once and then tells the owner with a non-blocking info card.
 // Tools (each one calls an existing module api or CLI path, no logic of its own):
 //   ask_owner      raise a question card on the owner's phone and wait for the answer (question-cards)
 //   queue_task     queue a task the way `taskmote do` does (server if live, else direct)
@@ -32,10 +31,6 @@ const num = (v, d) => { const n = Number(v); return Number.isFinite(n) && n > 0 
 const POLL_MS = () => num(process.env.HARNESS_MCP_POLL_MS, 1000);
 const QUEUE_WAIT_MS = () => num(process.env.HARNESS_MCP_QUEUE_WAIT_MS, 20000);
 const DEFAULT_ASK_S = 1800;
-const DEFAULT_UNDO_S = 600;
-const WRITE_TOOLS = new Set(['queue_task', 'undo_task']);
-const allowWrite = () => process.argv.slice(2).includes('--allow-write') || process.env.TASKMOTE_MCP_WRITE === '1';
-const allowAsk = () => !process.argv.slice(2).includes('--no-ask');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const clip = (s, n) => { s = String(s == null ? '' : s).replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 3) + '...' : s; };
 
@@ -69,6 +64,7 @@ async function askOwner(a, reqId) {
   const timeoutS = a.timeout_s === undefined ? DEFAULT_ASK_S : num(a.timeout_s, 0);
   if (!timeoutS) throw new ToolError('timeout_s must be a positive number of seconds');
   const body = { text: a.question, options: a.choices, allow_free: false };
+  if (a.locales !== undefined) body.locales = a.locales; // optional translations, validated by the module
   if (process.env.HARNESS_TASK_ID) body.task_id = process.env.HARNESS_TASK_ID;
   const v = api.validateAsk(body);
   if (!v.ok) throw new ToolError(v.error);
@@ -158,28 +154,27 @@ async function queueTask(a) {
 }
 
 // ---- undo_task ----
-// Always asks the owner on a phone card first (same path as ask_owner), whoever queued the task.
-// Then, as change-card does: the executor lock (held means a task runs: change nothing), then
+// Undoes at once, whoever queued the task, then posts a non-blocking info card to the owner (after the fact).
+// As change-card does: the executor lock (held means a task runs: change nothing), then
 // checkpoint.restore to the oldest-numbered non-safety undo point (the state before the agent's first change).
 const EXEC_LOCK = () => path.join(J.STATE, 'executor.lock');
-async function undoTask(a, reqId) {
+// Informational card, posted after the undo and never waited on. No question-cards module, or any failure: skipped quietly.
+function tellOwnerUndone(t, n) {
+  try {
+    const { api, ctx } = need('question-cards');
+    const v = api.validateAsk({ text: `Task ${t.task_id} ("${clip(t.request, 80)}") was undone: its folder is back to before the agent changed it (undo point ${n}). For your information, nothing to answer.`, options: ['OK', 'Dismiss'], allow_free: false, task_id: t.task_id,
+      locales: { 'zh-TW': { text: `任務 ${t.task_id}（「${clip(t.request, 80)}」）已復原：資料夾回到 agent 修改之前的樣子（復原點 ${n}）。僅供通知，不需回覆。`, options: ['好', '關閉'] } } });
+    if (v.ok) Promise.resolve(api.ask.call({ ctx }, v.value)).catch(() => {});
+    J.append({ type: 'undo_notice', task_id: t.task_id, carded: v.ok });
+  } catch { /* the undo already happened; the notice is best effort */ }
+}
+async function undoTask(a) {
   if (typeof a.task_id !== 'string' || !a.task_id) throw new ToolError('task_id is required');
   const { api: ck } = need('checkpoint');
-  need('question-cards'); // never undo without a card
   const t = [...J.readAll().records].reverse().find(r => r.type === 'task_start' && r.task_id === a.task_id);
   if (!t) throw new ToolError(`no task ${clip(a.task_id, 60)}`);
-  const timeoutS = a.timeout_s === undefined ? DEFAULT_UNDO_S : num(a.timeout_s, 0);
-  if (!timeoutS) throw new ToolError('timeout_s must be a positive number of seconds');
   const blocked = { undone: false, blocked: true, reason: 'a task is still running; nothing was changed' };
   const lock = EXEC_LOCK();
-  // Check the lock before bothering the owner (released at once; the real hold is right before restore).
-  const pre = J.lock(lock, { pids: [process.pid], task_id: t.task_id, restore: true });
-  if (!pre.held) return blocked;
-  if (!J.unlock(lock, pre.nonce)) J.unlockLater(lock, pre.nonce, undefined, 'taskmote-mcp');
-  const card = await askOwner({ question: `Undo task ${t.task_id} ("${clip(t.request, 80)}")? Its folder goes back to before the agent changed it.`, choices: ['Undo', 'Keep'], timeout_s: timeoutS }, reqId);
-  const answer = card.answered ? String(card.option) : 'no answer';
-  J.append({ type: 'undo_card', task_id: t.task_id, answer });
-  if (!card.answered || card.option !== 'Undo') return { undone: false, reason: 'owner did not approve' };
   const l = J.lock(lock, { pids: [process.pid], task_id: t.task_id, restore: true });
   if (!l.held) return blocked;
   try {
@@ -187,6 +182,7 @@ async function undoTask(a, reqId) {
     if (n === undefined) return { undone: false, blocked: false, reason: 'nothing to undo: this task has no undo points' };
     const r = ck.restore(t.task_id, n, { user: true });
     J.append({ type: 'undo', task_id: t.task_id, n: Number(n), ref: r.ref, undo_ref: r.undo.ref });
+    tellOwnerUndone(t, n);
     return { undone: true, task_id: t.task_id, to_step: n, removed_files: r.removed.length, undo_ref: r.undo.ref };
   } catch (e) { throw new ToolError('undo failed: ' + clip(String((e && e.message) || e).split('\n')[0], 200)); }
   finally { if (!J.unlock(lock, l.nonce)) J.unlockLater(lock, l.nonce, undefined, 'taskmote-mcp'); }
@@ -215,8 +211,8 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { request: { type: 'string', description: 'What to do.' }, cwd: { type: 'string', description: 'Working directory for the task.' } }, required: ['request'] } },
   { name: 'task_status', description: 'Status of one task, or of the recent tasks, from the journal.',
     inputSchema: { type: 'object', properties: { task_id: { type: 'string' }, limit: { type: 'number', description: 'How many recent tasks (default 10, max 50).' } } } },
-  { name: 'undo_task', description: 'Undo a task: put its workdir back to before the agent changed it. Always asks the owner on their phone first (Undo / Keep); only Undo proceeds, any other answer or no answer returns {undone:false}. If a task is running it changes nothing and returns {blocked:true}.',
-    inputSchema: { type: 'object', properties: { task_id: { type: 'string' }, timeout_s: { type: 'number', description: 'How long to wait for the owner, in seconds (default 600).' } }, required: ['task_id'] } },
+  { name: 'undo_task', description: 'Undo a task: put its workdir back to before the agent changed it. Undoes immediately, then sends the owner an informational card on their phone. If a task is running it changes nothing and returns {blocked:true}.',
+    inputSchema: { type: 'object', properties: { task_id: { type: 'string' } }, required: ['task_id'] } },
   { name: 'digest', description: 'The while-you-were-away summary of the journal as JSON. Card titles are left out when the digest module has include_titles off.',
     inputSchema: { type: 'object', properties: { since: { type: 'string', description: 'ISO date/time or a span like 30m, 12h, 2d. Default: the digest module default.' } } } },
   { name: 'search_journal', description: 'Full-text search over past tasks, messages and room transcripts.',
@@ -224,12 +220,9 @@ const TOOLS = [
 ];
 const IMPL = { ask_owner: askOwner, queue_task: queueTask, task_status: taskStatus, undo_task: undoTask, digest, search_journal: searchJournal };
 
-const activeTools = () => TOOLS.filter(t => (allowWrite() || !WRITE_TOOLS.has(t.name)) && (allowAsk() || t.name !== 'ask_owner'));
 
 async function callTool(name, args, reqId) {
   try {
-    if (WRITE_TOOLS.has(name) && !allowWrite()) throw new ToolError(`${name} changes things and is off. Restart the server with --allow-write (for example: claude mcp add taskmote -- node <path-to-repo>/bin/taskmote-mcp.js --allow-write).`);
-    if (name === 'ask_owner' && !allowAsk()) throw new ToolError('ask_owner is off: this server was started with --no-ask. Restart it without --no-ask to use it.');
     const out = await IMPL[name](args && typeof args === 'object' ? args : {}, reqId);
     return { content: [{ type: 'text', text: JSON.stringify(out) }] };
   } catch (e) {
@@ -245,7 +238,7 @@ async function handle(msg) {
     let result;
     if (method === 'initialize') result = { protocolVersion: params.protocolVersion || PROTOCOL, capabilities: { tools: {} }, serverInfo: { name: NAME, version: '1' } };
     else if (method === 'ping') result = {};
-    else if (method === 'tools/list') result = { tools: activeTools() };
+    else if (method === 'tools/list') result = { tools: TOOLS };
     else if (method === 'tools/call') {
       if (!Object.prototype.hasOwnProperty.call(IMPL, params.name)) throw Object.assign(new Error(`unknown tool ${clip(params.name, 40)}`), { code: -32602 });
       result = await callTool(params.name, params.arguments, id);

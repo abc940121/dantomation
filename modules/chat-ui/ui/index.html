@@ -10,32 +10,42 @@
 <body>
 <div id="app">
   <header id="top">
-    <h1>Chat</h1>
-    <select id="room-pick" aria-label="Room" hidden></select>
+    <h1 data-i18n="title">Chat</h1>
+    <select id="room-pick" aria-label="Room" data-i18n-aria-label="room.aria" hidden></select>
     <span id="claims-badge" class="badge" hidden></span>
     <button id="waiting" class="badge warn" type="button" hidden></button>
     <span id="conn" class="conn" data-state="connecting">connecting</span>
+    <button id="lang-btn" class="badge" type="button" aria-label="Change language" data-i18n="lang.change" data-i18n-aria-label="lang.change.aria">Language</button>
   </header>
-  <nav id="roster" aria-label="Bots"></nav>
+  <nav id="roster" aria-label="Bots" data-i18n-aria-label="bots.aria"></nav>
+  <section id="questions" aria-live="polite"></section>
   <main id="thread" aria-live="polite"></main>
   <form id="composer" autocomplete="off">
-    <div id="targets" role="group" aria-label="Send to"></div>
+    <div id="targets" role="group" aria-label="Send to" data-i18n-aria-label="send.to.aria"></div>
     <div class="row">
-      <textarea id="text" rows="2" placeholder="Message" aria-label="Message"></textarea>
-      <button id="send" type="submit">Send</button>
+      <textarea id="text" rows="2" placeholder="Message" aria-label="Message" data-i18n-placeholder="message" data-i18n-aria-label="message.aria"></textarea>
+      <button id="send" type="submit" data-i18n="send">Send</button>
     </div>
     <p id="send-msg" class="hint" role="status"></p>
   </form>
+  <section id="lang-gate" hidden>
+    <div class="lang-box">
+      <h2>Choose your language / 請選擇語言</h2>
+      <button type="button" data-lang="en" lang="en">English</button>
+      <button type="button" data-lang="zh-TW" lang="zh-TW">繁體中文</button>
+    </div>
+  </section>
   <section id="auth" hidden>
     <form id="auth-form">
-      <h2>Pair this device</h2>
-      <p class="hint">Type the six-digit pairing code from <code>node bin/harness.js device pair</code> (or scan its QR). The deprecated alternative is the owner token from <code>taskmote token new</code>; prefer pairing. Either is kept in this browser only.</p>
+      <h2 data-i18n="auth.heading">Pair this device</h2>
+      <p class="hint" data-i18n="auth.hint">Type the six-digit pairing code from "node bin/harness.js device pair" (or scan its QR). The deprecated alternative is the owner token from "taskmote token new"; prefer pairing. Either is kept in this browser only.</p>
       <p id="pair-msg" class="hint" role="status"></p>
-      <input id="token" type="password" autocomplete="off" aria-label="Token">
-      <button type="submit">Save</button>
+      <input id="token" type="password" autocomplete="off" aria-label="Token" data-i18n-aria-label="auth.token.aria">
+      <button type="submit" data-i18n="auth.save">Save</button>
     </form>
   </section>
 </div>
+<script src="i18n.js"></script>
 <script src="state.js"></script>
 <script src="rooms.js"></script>
 <script src="app.js"></script>
