@@ -7,6 +7,7 @@ const crypto = require('crypto');
 
 const ID_RE = /^r-[0-9a-f]{8}$/;
 const NAME_MAX = 40, PERSONA_MAX = 4000;
+const ENGINES = ['claude', 'codex'];
 const CTRL = /[\u0000-\u001f\u007f]/;
 const CTRL_KEEP_NL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
 
@@ -31,6 +32,13 @@ function checkPersona(v) {
   if (len(p) > PERSONA_MAX) throw new RoleError(`persona is too long (max ${PERSONA_MAX} characters)`);
   if (CTRL_KEEP_NL.test(p)) throw new RoleError('persona contains control characters');
   return p;
+}
+
+// engine: which agent runs the role's turns. Absent in older records, which means "claude".
+function checkEngine(v) {
+  const e = typeof v === 'string' ? v.trim().toLowerCase() : '';
+  if (!ENGINES.includes(e)) throw new RoleError(`engine must be one of: ${ENGINES.join(', ')}`);
+  return e;
 }
 
 function createStore(dir) {
@@ -64,23 +72,24 @@ function createStore(dir) {
     all: () => read().map(copy),
     list: () => live(read()).map(copy),
     get(key) { const r = find(read(), key); return r ? copy(r) : null; },
-    create({ name, persona } = {}) {
-      const n = checkName(name), p = checkPersona(persona);
+    create({ name, persona, engine } = {}) {
+      const n = checkName(name), p = checkPersona(persona), e = engine === undefined || engine === null ? 'claude' : checkEngine(engine);
       const roles = read();
       if (taken(roles, n)) throw new RoleError(`a role named "${n}" already exists`);
       let id; do { id = 'r-' + crypto.randomBytes(4).toString('hex'); } while (roles.some(r => r.id === id));
       const now = new Date().toISOString();
-      const rec = { id, name: n, persona: p, kind: 'session', created_at: now, updated_at: now };
+      const rec = { id, name: n, persona: p, kind: 'session', engine: e, created_at: now, updated_at: now };
       roles.push(rec); write(roles);
       return copy(rec);
     },
     update(key, patch = {}) {
       const roles = read(), r = need(roles, key);
-      if (patch.name === undefined && patch.persona === undefined) throw new RoleError('give a new name and/or persona');
+      if (patch.name === undefined && patch.persona === undefined && patch.engine === undefined) throw new RoleError('give a new name, persona and/or engine');
       const n = patch.name === undefined ? r.name : checkName(patch.name);
       const p = patch.persona === undefined ? r.persona : checkPersona(patch.persona);
+      const e = patch.engine === undefined ? (r.engine || 'claude') : checkEngine(patch.engine);
       if (taken(roles, n, r.id)) throw new RoleError(`a role named "${n}" already exists`);
-      Object.assign(r, { name: n, persona: p, updated_at: new Date().toISOString() });
+      Object.assign(r, { name: n, persona: p, engine: e, updated_at: new Date().toISOString() });
       write(roles);
       return copy(r);
     },
@@ -93,4 +102,4 @@ function createStore(dir) {
   };
 }
 
-module.exports = { createStore, RoleError, ID_RE, NAME_MAX, PERSONA_MAX };
+module.exports = { createStore, RoleError, ID_RE, ENGINES, NAME_MAX, PERSONA_MAX };

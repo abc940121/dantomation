@@ -22,3 +22,7 @@
 8. Journal notes carry id and name only, never the persona text.
 9. Work folder for a new bot id is created automatically (ensureWorkdir on the
    first task); nothing extra is needed.
+10. Engine per role: `engine` is "claude" (also when the field is missing) or "codex". The module answers
+    `chooseEngine` with the key "codex"; the owner adds one config `engines` entry (turn engine, plain stdout). The core
+    is untouched. `engines/codex.js` is a plain script: Codex session id in module state (not the work folder), resume with
+    one fresh retry, sandbox and approval policy as `-c` overrides because `codex exec resume` has no `-s`.
