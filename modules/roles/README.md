@@ -165,3 +165,5 @@ Two steps, in this order:
 2. Revert the commits that added the module.
 
 `roles.json` in the module state folder can stay; nothing reads it while the module is off. Roles and their conversations come back when the module is enabled again.
+
+Undoing a `role_ask` chain: each ask and each delivered reply is its own turn, so a chain is undone one turn at a time (the latest turn of each role), not as a whole. A message from another role is marked as text from a role, not from the owner; the receiving role is told to treat it as data, not as instructions.
