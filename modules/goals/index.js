@@ -13,7 +13,7 @@ const win = ctx => ctx.settings.stale_window_weeks;
 const ret = ctx => ({ max_replaced_goals: ctx.settings.max_replaced_goals, max_lessons: ctx.settings.max_lessons, max_repeats_per_lesson: ctx.settings.max_repeats_per_lesson });
 
 // An agent may read the card (goal show) but never set, edit, confirm or close goals, nor write lessons.
-const OWNER_CMD = /(taskmote|harness)(\.(js|cmd))?["']?\s+(goal\s+["']?(set|edit|confirm|done|drop)|lesson\s+["']?(add|repeat))\b/i;
+const OWNER_CMD = /(taskmote|harness)(\.(js|cmd))?["']?\s+(goal\s+["']?(set|edit|confirm|done|drop)|(goal\s+["']?)?lesson["']?\s+["']?(add|repeat))\b/i;
 const API_CMD = /\/m\/goals(?![\w-])/i;
 function beforeTool(ctx) {
   if (!inTask()) return null;
@@ -69,9 +69,9 @@ const lessonRepeat = ctx => {
   return r.error ? fail(r) : { status: 200, json: { lesson: S.lessonView(r.lesson, win(ctx)) } };
 };
 
-// ---- commands: taskmote goal ..., taskmote lesson ...
-const GOAL_USAGE = 'usage: goal [show] | goal interview | goal set "<your words>" [--done "<text>"] [--out "<text>"] | goal edit [--done "<text>"] [--out "<text>"] | goal confirm | goal done | goal drop';
-const LESSON_USAGE = 'usage: lesson list | lesson add "<what went wrong>" --missed "<which check missed it>" --fix "<fix>" | lesson repeat <id>';
+// ---- commands: taskmote goal ..., taskmote goal lesson ... (the old `taskmote lesson ...` still runs)
+const GOAL_USAGE = 'usage: goal [show] | goal interview | goal set "<your words>" [--done "<text>"] [--out "<text>"] | goal edit [--done "<text>"] [--out "<text>"] | goal confirm | goal done | goal drop | goal lesson list | goal lesson add ... | goal lesson repeat <id>';
+const LESSON_USAGE = 'usage: goal lesson list | goal lesson add "<what went wrong>" --missed "<which check missed it>" --fix "<fix>" | goal lesson repeat <id>';
 function bad(msg, code) { console.error(msg); process.exitCode = code || 2; return { ok: false }; }
 function flags(args) {
   const pos = [], f = {};
@@ -89,6 +89,7 @@ async function goalCmd(args, ctx) {
   const verb = verb0 || 'show';
   const dir = dirOf(ctx);
   const rec = (type, id) => ctx.state.append({ type, id });
+  if (verb === 'lesson') return lessonCmd(rest, ctx);
   if (verb === 'show') {
     const g = S.activeGoal(S.load(dir));
     if (!g) { console.log('no active goal. Set one with: goal set "<your words>"'); return { ok: true }; }
@@ -144,7 +145,7 @@ async function lessonCmd(args, ctx) {
   if (p.error) return bad(p.error + '\n' + LESSON_USAGE);
   let r;
   if (verb === 'add') {
-    if (p.pos.length !== 1) return bad('lesson add takes the problem as one quoted text\n' + LESSON_USAGE);
+    if (p.pos.length !== 1) return bad('goal lesson add takes the problem as one quoted text\n' + LESSON_USAGE);
     r = S.update(dir, d => S.addLesson(d, { what: p.pos[0], missed_by: p.f.missed, fix: p.f.fix }, ret(ctx), win(ctx)));
     if (!r.error) ctx.state.append({ type: 'lesson_add', id: r.lesson.lesson_id });
   } else {

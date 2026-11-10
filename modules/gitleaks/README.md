@@ -13,7 +13,7 @@ Off by default. Install gitleaks yourself and put it on `PATH` (or set `gitleaks
 - `git commit` (a shell call containing it, also in `a && b` chains, `git -C dir ...`): `gitleaks git --staged`.
 - `git push`: `gitleaks git --log-opts="HEAD --not --remotes"` (commits no remote has yet).
 - Both with `--report-format json --report-path <temp file> --redact --no-banner --no-color --exit-code 1`; the temp report is deleted.
-- Verb: `node bin/harness.js scan` scans staged changes in the current folder; `scan <path>` or `scan --dir` runs `gitleaks dir`. Exit 0 clean, 1 findings, 2 could not scan. (`taskmote` forwards only its own fixed verbs, so there is no `taskmote scan` until the trunk forwards module verbs.)
+- Verb: `taskmote check secrets` scans staged changes in the current folder; `check secrets <path>` or `check secrets --dir` runs `gitleaks dir`. Exit 0 clean, 1 findings, 2 could not scan. The old spelling `taskmote scan` still runs and prints the new one.
 
 ## Settings (`gitleaks` section)
 

@@ -26,9 +26,11 @@ In your config: `"modules": { "goals": true }`. Optional section `goals`:
     taskmote goal edit [--done ".."] [--out ".."]   (clears the confirmation)
     taskmote goal confirm            needs done and out of scope
     taskmote goal [show] | done | drop
-    taskmote lesson add "<what went wrong>" --missed "<which check missed it>" --fix "<fix>"
-    taskmote lesson repeat <id>
-    taskmote lesson list             status (new | kept | stale) and weekly counts
+    taskmote goal lesson add "<what went wrong>" --missed "<which check missed it>" --fix "<fix>"
+    taskmote goal lesson repeat <id>
+    taskmote goal lesson list        status (new | kept | stale) and weekly counts
+
+The old spelling `taskmote lesson ...` still runs and prints the new one.
 
 ## Routes (owner access, under `/m/goals/`)
 

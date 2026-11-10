@@ -10,9 +10,11 @@ Off by default. Needs Node's `npx` and, the first time, network access to fetch 
 
 ## Use
 
-    taskmote usage                              daily table
-    taskmote usage session --since 2026-11-01   per-session table
-    taskmote usage monthly --json               raw ccusage JSON
+    taskmote check usage                              daily table
+    taskmote check usage session --since 2026-11-01   per-session table
+    taskmote check usage monthly --json               raw ccusage JSON
+
+The old spelling `taskmote usage ...` still runs and prints the new one.
 
 Route (owner only): `GET /m/ccusage/usage?report=daily&since=2026-11-01&until=2026-11-10` returns ccusage's JSON. If npx or ccusage cannot run you get a one-line hint and exit 1 (route: 503). The server is never affected.
 

@@ -21,7 +21,7 @@ const C = require('../lib/config');
 const M = require('../lib/modules');
 
 const HARNESS = path.join(__dirname, 'harness.js');
-const USAGE = 'usage: taskmote do "<request>" | do | status | undo [--to <n> | fork <n>] | ask ... | serve | token new [--worker] | <module verb>';
+const USAGE = 'usage: taskmote do "<request>" | do | status | undo [--to <n> | fork <n>] | ask ... | check secrets|usage ... | serve | token new [--worker] | <module verb>';
 const fail = (msg, code = 1) => { console.error(msg); process.exit(code); };
 
 // demo also runs before the config is read: it must not need, read or touch the owner's config or state.
@@ -112,6 +112,24 @@ async function api(info, method, p, body) {
 
 const clip = (s, n = 100) => { s = String(s || '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 3) + '...' : s; };
 
+// Old spellings (moved and dev verbs) are counted in their own file, not the journal; an alias with no hits in 14 days can be removed.
+const ALIAS_LOG = path.join(J.STATE, 'alias-hits.jsonl');
+const ALIAS_DAYS = 14;
+function aliasHit(v) {
+  try { fs.mkdirSync(J.STATE, { recursive: true }); fs.appendFileSync(ALIAS_LOG, JSON.stringify({ verb: v, at: new Date().toISOString() }) + '\n'); } catch { /* counting must never break the verb */ }
+}
+function aliasLine() {
+  let text = '';
+  try { text = fs.readFileSync(ALIAS_LOG, 'utf8'); } catch { /* no hits yet */ }
+  const since = Date.now() - ALIAS_DAYS * 86400000;
+  const n = {};
+  for (const l of text.split('\n')) {
+    let r; try { r = JSON.parse(l); } catch { continue; }
+    if (r && typeof r.verb === 'string' && Date.parse(r.at) >= since) n[r.verb] = (n[r.verb] || 0) + 1;
+  }
+  const list = Object.entries(n).sort((a, b) => b[1] - a[1]).map(([v, c]) => `${v} ${c}`).join(', ');
+  return `old spellings used (last ${ALIAS_DAYS} days): ${list || 'none'}`;
+}
 async function statusVerb() {
   const info = serverInfo();
   if (info) {
@@ -143,6 +161,7 @@ async function statusDirect() {
   lines.push(`modules on: ${all.filter(([, v]) => v).map(([k]) => k).join(', ') || 'none'}`);
   const off = all.filter(([, v]) => !v).map(([k]) => k);
   if (off.length) lines.push(`modules off: ${off.join(', ')}`);
+  lines.push(aliasLine());
   if (warn) lines.push(`warning: ${warn}`);
   if (torn) lines.push(`warning: journal has ${torn} torn line(s), skipped`);
   console.log(lines.join('\n'));
@@ -206,6 +225,14 @@ const askVerb = async args => {
   }
   return moduleVerb(['ask', ...args], 'question');
 };
+// Checks live under `taskmote check`: secrets runs the gitleaks module's scan, usage runs the ccusage module's report.
+const CHECK_USAGE = 'usage: taskmote check secrets [path] [--dir] | check usage [daily|monthly|session] [--since <date>] [--until <date>] [--json]';
+const CHECK = { secrets: 'scan', usage: 'usage' };
+const checkVerb = async args => {
+  const [v, ...a] = args;
+  if (!Object.prototype.hasOwnProperty.call(CHECK, v || '')) fail(CHECK_USAGE, 2);
+  return moduleVerb(a, CHECK[v]);
+};
 // Trunk verbs are looked up first (own keys only), so a module can never shadow them.
 const TRUNK = { do: doVerb, status: statusVerb, undo: undoVerb,
   dev: devVerb,
@@ -219,13 +246,13 @@ const TRUNK = { do: doVerb, status: statusVerb, undo: undoVerb,
 // It is not a trunk verb, so `preset` alone still needs the presets module and `preset persona` needs bot-persona.
 const presetPersona = verb === 'preset' && rest[0] === 'persona';
 const run = Object.prototype.hasOwnProperty.call(TRUNK, verb) ? TRUNK[verb] : (verb && moduleVerb);
-// `ask` is a fixed line too, not a trunk verb: it routes to question-cards or claim-audit and is checked before any module verb.
-const go = verb === 'ask' ? askVerb : presetPersona ? (a => moduleVerb(a.slice(1), 'persona')) : run;
+// `ask` and `check` are fixed lines too, not trunk verbs: they route to modules and are checked before any module verb.
+const go = verb === 'ask' ? askVerb : verb === 'check' ? checkVerb : presetPersona ? (a => moduleVerb(a.slice(1), 'persona')) : run;
 const MOVED = { restore: 'taskmote undo --to <n> <task>', fork: 'taskmote undo fork', question: 'taskmote ask', answer: 'taskmote do yes | do no',
   'claim-questions': 'taskmote ask claims <task>', 'claim-answer': 'taskmote ask claims <task> answer "<answer 1>" ...',
   pair: 'taskmote device pair', devices: 'taskmote device list', revoke: 'taskmote device revoke <id>',
-  persona: 'taskmote preset persona' };
-if (Object.prototype.hasOwnProperty.call(MOVED, verb)) console.error(`note: "taskmote ${verb}" is now "${MOVED[verb]}"; the old spelling still works for now.`);
-if (DEV.includes(verb)) console.error(`note: "taskmote ${verb}" is now "taskmote dev ${verb}"; the old spelling still works for now.`);
+  persona: 'taskmote preset persona', lesson: 'taskmote goal lesson', scan: 'taskmote check secrets', usage: 'taskmote check usage' };
+if (Object.prototype.hasOwnProperty.call(MOVED, verb)) { aliasHit(verb); console.error(`note: "taskmote ${verb}" is now "${MOVED[verb]}"; the old spelling still works for now.`); }
+if (DEV.includes(verb)) { aliasHit(verb); console.error(`note: "taskmote ${verb}" is now "taskmote dev ${verb}"; the old spelling still works for now.`); }
 if (!go) fail(USAGE, 2);
 else go(rest).catch(e => fail(`taskmote: ${e && e.stack || e}`, 1));

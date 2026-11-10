@@ -2,7 +2,7 @@
 // gitleaks: thin wrapper around the separate `gitleaks` program (MIT, not bundled, no code copied).
 // beforeTool: a `git commit` / `git push` shell call in a repo runs a scan first and blocks with
 // "rule id, file, line" when findings exist (never the secret: --redact, and we print three fields).
-// Verb: `scan [path] [--dir]` (via bin/harness.js). Off by default.
+// Verb: `taskmote check secrets [path] [--dir]` (the module's `scan` command). Off by default.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -95,7 +95,7 @@ async function beforeTool({ tool, ti, cwd, settings, state, signal }) {
   return ['secret_scan', `git ${c.op} not scanned: ${r.detail}. ${r.status === 'missing' ? 'Ask the owner to install gitleaks (do not install it yourself), or to set gitleaks.on_missing to "allow".' : 'Fix the scan and retry.'}`];
 }
 
-// harness.js scan [path] [--dir] (taskmote forwards only its fixed verbs, so this needs trunk help to be `taskmote scan`): no path = staged changes of the repo in the current folder;
+// taskmote check secrets [path] [--dir] (the old `taskmote scan` still runs): no path = staged changes of the repo in the current folder;
 // a path or --dir scans files (gitleaks dir). Exit 0 clean, 1 findings, 2 could not scan.
 async function scan(args, ctx) {
   const s = ctx.settings;

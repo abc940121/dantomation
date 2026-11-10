@@ -174,6 +174,8 @@ const T0 = Date.parse('2030-01-07T12:00:00Z'); // a Monday
     const guard = (tool, command, env) => { const old = process.env.HARNESS_TASK_ID; if (env) process.env.HARNESS_TASK_ID = 't1'; else delete process.env.HARNESS_TASK_ID; return M.beforeTool(reg.mods, { tool, ti: { command }, input: {} }).finally(() => { if (old === undefined) delete process.env.HARNESS_TASK_ID; else process.env.HARNESS_TASK_ID = old; }); };
     check('guard: agent confirm blocked', !!(await guard('Bash', 'node bin/harness.js goal confirm', true)));
     check('guard: agent lesson add blocked', !!(await guard('Bash', 'taskmote lesson add "x" --missed y --fix z', true)));
+    check('guard: agent goal lesson add blocked', !!(await guard('Bash', 'taskmote goal lesson add "x" --missed y --fix z', true)) && !!(await guard('Bash', 'taskmote goal "lesson" repeat l-000000000000', true)));
+    check('guard: agent goal lesson list allowed', (await guard('Bash', 'taskmote goal lesson list', true)) === null);
     check('guard: agent server call blocked', !!(await guard('Bash', 'curl http://127.0.0.1:1/m/goals/goal', true)));
     check('guard: agent goal show allowed', (await guard('Bash', 'taskmote goal show', true)) === null);
     check('guard: owner (no task) allowed', (await guard('Bash', 'taskmote goal confirm', false)) === null);
@@ -206,17 +208,19 @@ const T0 = Date.parse('2030-01-07T12:00:00Z'); // a Monday
     check('cmd goal set with two texts exits 2', p.status === 2);
     p = run('lesson', ['add', 'Skipped the tests', '--missed', 'no test gate']);
     check('cmd lesson add without --fix exits 3', p.status === 3 && /fix is required/.test(p.stderr), p.stdout + p.stderr);
-    p = run('lesson', ['add', 'Skipped the tests', '--missed', 'no test gate', '--fix', 'run tests before done']);
-    check('cmd lesson add', p.status === 0 && /added l-[0-9a-f]{12}/.test(p.stdout), p.stdout + p.stderr);
+    p = run('goal', ['lesson', 'add', 'Skipped the tests', '--missed', 'no test gate', '--fix', 'run tests before done']);
+    check('cmd goal lesson add', p.status === 0 && /added l-[0-9a-f]{12}/.test(p.stdout), p.stdout + p.stderr);
     const lid = (p.stdout.match(/l-[0-9a-f]{12}/) || [])[0];
     p = run('lesson', ['repeat', lid]);
     check('cmd lesson repeat', p.status === 0 && /counted a repeat/.test(p.stdout), p.stdout + p.stderr);
-    p = run('lesson', ['list']);
-    check('cmd lesson list shows status and weekly counts', p.status === 0 && p.stdout.includes(lid) && /\[new\]/.test(p.stdout) && /repeats 1/.test(p.stdout), p.stdout);
+    const oldp = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'taskmote.js'), 'lesson', 'repeat', lid], { env, encoding: 'utf8', timeout: 30000 });
+    check('old spelling taskmote lesson repeat still runs and prints the new one', oldp.status === 0 && /counted a repeat/.test(oldp.stdout) && /now "taskmote goal lesson"/.test(oldp.stderr), oldp.stdout + oldp.stderr);
+    p = run('goal', ['lesson', 'list']);
+    check('cmd goal lesson list shows status and weekly counts', p.status === 0 && p.stdout.includes(lid) && /\[new\]/.test(p.stdout) && /repeats 2/.test(p.stdout), p.stdout);
     p = run('lesson', ['add', 'x', '--missed', 'y', '--fix', 'z'], { HARNESS_TASK_ID: 'task-x' });
     check('cmd lesson add inside a task exits 6', p.status === 6);
-    p = run('lesson', ['repeat', 'nope']);
-    check('cmd lesson repeat with a bad id exits 2', p.status === 2);
+    p = run('goal', ['lesson', 'repeat', 'nope']);
+    check('cmd goal lesson repeat with a bad id exits 2 with the new usage', p.status === 2 && /usage: goal lesson list/.test(p.stderr), p.stderr);
     p = run('lesson', ['repeat', 'l-000000000000']);
     check('cmd lesson repeat unknown id exits 3', p.status === 3);
 

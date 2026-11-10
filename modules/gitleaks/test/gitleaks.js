@@ -134,6 +134,14 @@ const run = (reg, cmd, extra = {}) => M.beforeTool(reg.mods, { tool: 'Bash', ti:
     v = verb('clean', ['--dir']);
     check('scan verb --dir: clean exit 0 and uses gitleaks dir', v.status === 0 && /^dir /m.test(fs.readFileSync(LOG, 'utf8').split('\n').filter(Boolean).pop()), `${v.status} ${v.stderr}`);
     v = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'harness.js'), 'scan'], { cwd: tmp, encoding: 'utf8', env: { ...process.env, PATH: EMPTY, HARNESS_CONFIG: cfg, HARNESS_STATE_DIR: path.join(tmp, 'vstate'), HARNESS_LOG_DIR: path.join(tmp, 'vlogs') } });
+    const tm = (args, mode) => spawnSync(process.execPath, [path.join(ROOT, 'bin', 'taskmote.js'), ...args], { cwd: tmp, encoding: 'utf8',
+      env: { ...process.env, PATH: bin + path.delimiter + PATH0, GL_STUB_MODE: mode, HARNESS_CONFIG: cfg, HARNESS_STATE_DIR: path.join(tmp, 'vstate'), HARNESS_LOG_DIR: path.join(tmp, 'vlogs') } });
+    const cs = tm(['check', 'secrets'], 'leak');
+    check('taskmote check secrets: findings exit 1, no move note', cs.status === 1 && /fake-rule\tsrc\/app\.txt:7/.test(cs.stdout) && !/note:/.test(cs.stderr), `${cs.status} ${cs.stdout}${cs.stderr}`);
+    const os1 = tm(['scan'], 'clean');
+    check('old spelling taskmote scan still runs and prints the new one', os1.status === 0 && /now "taskmote check secrets"/.test(os1.stderr), `${os1.status} ${os1.stderr}`);
+    const cb = tm(['check', 'nope'], 'clean');
+    check('taskmote check <unknown> prints check usage, exit 2', cb.status === 2 && /usage: taskmote check secrets/.test(cb.stderr), `${cb.status} ${cb.stderr}`);
     check('scan verb: missing binary exits 2', v.status === 2 && /could not scan/.test(v.stderr), `${v.status} ${v.stderr}`);
   } catch (e) { check('no exception', false, e.stack); }
   finally { process.env.PATH = PATH0; try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* slow stub may still hold the folder */ } }

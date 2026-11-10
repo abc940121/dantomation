@@ -77,6 +77,20 @@ const SESS = { sessions: [{ sessionId: 'abcdef123456', lastActivity: '2026-01-02
     api.setRunner(async () => ({ code: null, error: 'timed out after 5 ms' }));
     const slow = await api.report('daily', {}, settings);
     check('timeout says it timed out and names timeout_ms, not the install hint', !slow.ok && /timed out after 5 ms/.test(slow.error) && /timeout_ms/.test(slow.error) && !/could not run/.test(slow.error), slow.error);
+
+    // taskmote check usage, as a child process; a bad option is refused before ccusage would run (no npx, no network)
+    const cfg = path.join(tmp, 'config.json');
+    fs.writeFileSync(cfg, JSON.stringify({ modules: { ccusage: true } }));
+    const { spawnSync } = require('child_process');
+    const env = { ...process.env, HARNESS_CONFIG: cfg, HARNESS_STATE_DIR: path.join(tmp, 'vstate'), HARNESS_LOG_DIR: path.join(tmp, 'vlogs') };
+    delete env.HARNESS_TASK_ID;
+    const tm = args => spawnSync(process.execPath, [path.join(ROOT, 'bin', 'taskmote.js'), ...args], { cwd: tmp, encoding: 'utf8', env, timeout: 30000 });
+    const cu = tm(['check', 'usage', '--bogus']);
+    check('taskmote check usage reaches ccusage (bad option exits 2), no move note', cu.status === 2 && /unknown option --bogus/.test(cu.stderr) && !/note:/.test(cu.stderr), `${cu.status} ${cu.stderr}`);
+    const ou = tm(['usage', '--bogus']);
+    check('old spelling taskmote usage still runs and prints the new one', ou.status === 2 && /unknown option --bogus/.test(ou.stderr) && /now "taskmote check usage"/.test(ou.stderr), `${ou.status} ${ou.stderr}`);
+    const st = tm(['status']);
+    check('status counts the old-spelling hit, not the new spelling', st.status === 0 && /old spellings used \(last 14 days\): usage 1$/m.test(st.stdout), st.stdout);
   } catch (e) { check('no exception', false, e.stack); }
   finally { fs.rmSync(tmp, { recursive: true, force: true }); }
   const n = results.filter(Boolean).length;

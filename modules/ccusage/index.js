@@ -94,12 +94,12 @@ module.exports = {
   priority: 90,
   dependsOn: [],
 
-  // `taskmote usage [daily|monthly|session] [--since D] [--until D] [--json]`
+  // `taskmote check usage [daily|monthly|session] [--since D] [--until D] [--json]`
   commands: {
     async usage(args, ctx) {
-      if (process.env.HARNESS_TASK_ID) { console.error('usage: owner only; not available inside a task'); return { handled: true, code: 2 }; }
+      if (process.env.HARNESS_TASK_ID) { console.error('check usage: owner only; not available inside a task'); return { handled: true, code: 2 }; }
       const o = parseArgs(args);
-      if (o.error) { console.error(`usage: ${o.error}. Use: usage [daily|monthly|session] [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--json]`); return { handled: true, code: 2 }; }
+      if (o.error) { console.error(`usage: ${o.error}. Use: taskmote check usage [daily|monthly|session] [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--json]`); return { handled: true, code: 2 }; }
       const r = await report(o.kind, o, ctx.settings);
       if (!r.ok) { console.error(r.error); return { handled: true, code: 1 }; }
       console.log(o.json ? JSON.stringify(r.data, null, 2) : table(r.data));
