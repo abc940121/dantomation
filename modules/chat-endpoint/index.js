@@ -1,7 +1,7 @@
 'use strict';
 // chat-endpoint: an engine for rooms members that talks to an OpenAI-style chat URL.
 // Off by default. Needs the rooms module. See README.md.
-const { makeDeliver } = require('./endpoint');
+const { makeDeliver, busyLines } = require('./endpoint');
 
 module.exports = {
   contract: 2,
@@ -10,6 +10,7 @@ module.exports = {
   runsOn: 'main',
   dependsOn: ['rooms'],
   provides: { engines: [{ id: 'chat-endpoint', description: 'a rooms member with engine "chat-endpoint" is answered by its endpoint block' }] },
+  statusLines: Jn => { try { return busyLines(Jn.readAll().records); } catch { return []; } },
   jobs: [{
     id: 'register',
     start(ctx) { return ctx.api('rooms').registerDeliverer('chat-endpoint', makeDeliver(ctx)); },

@@ -41,6 +41,22 @@ function allTokens(ctx) {
   } catch { return []; }
 }
 
+// Status: a member whose last BUSY_STREAK real calls were all busy or timed out gets one line,
+// so a pass that keeps repeating is never silent. Real calls are the records that carry `ms`.
+const BUSY_STREAK = 3;
+function busyLines(records) {
+  const runs = new Map(); // member -> { n, since }
+  for (const r of records) {
+    if (!r || r.type !== 'chat_endpoint_call' || typeof r.ms !== 'number' || typeof r.member !== 'string') continue;
+    const pass = r.skipped === 'busy' || r.skipped === 'timeout';
+    const cur = runs.get(r.member);
+    runs.set(r.member, pass ? { n: (cur ? cur.n : 0) + 1, since: cur && cur.n ? cur.since : r.ts } : { n: 0, since: null });
+  }
+  const out = [];
+  for (const [m, s] of runs) if (s.n >= BUSY_STREAK) out.push(`chat-endpoint: ${m} has not answered its last ${s.n} calls (busy or timeout) since ${s.since || 'unknown'}`);
+  return out;
+}
+
 function makeDeliver(ctx, deps = {}) {
   const doFetch = deps.fetch || globalThis.fetch;
   const now = deps.now || Date.now;
@@ -141,6 +157,9 @@ function makeDeliver(ctx, deps = {}) {
     };
     if (signal) signal.addEventListener('abort', onAbort, { once: true });
     try {
+      // Which senses this channel has, so the remote side never claims to have heard or seen what it did not.
+      const senses = { text: true, ear: !!trigger && trigger.input === 'voice_transcript', eyes: false };
+      if (e.senses && typeof e.senses === 'object') for (const k of Object.keys(senses)) if (typeof e.senses[k] === 'boolean') senses[k] = e.senses[k];
       const body = {
         model: String(e.model || 'default'), stream: false, user: session, session_id: session, member_id: memberId, via: via || null,
         messages: [{ role: 'user', content: outPrompt }], lines: outLines.map(({ id, speaker, is_bot, text }) => ({ id, speaker, is_bot, text })),
@@ -149,7 +168,7 @@ function makeDeliver(ctx, deps = {}) {
         prev_turns: prevTurns, hop: trig ? trig.hop : 0,
         msg_id: trig ? trig.id : null, ts: trig && trigger.ts ? trigger.ts : null,
         mention_type: MENTION_TYPE[via] || 'direct', type: trigger && trigger.input === 'voice_transcript' ? 'voice_transcript' : 'text',
-        text_len: trig ? trig.text.length : 0, ...(truncated ? { truncated: true } : {}),
+        senses, text_len: trig ? trig.text.length : 0, ...(truncated ? { truncated: true } : {}),
       };
       let res;
       try { res = await post(body, ctl.signal); } catch (err) {
@@ -163,6 +182,8 @@ function makeDeliver(ctx, deps = {}) {
         return false;
       };
       if (late()) return '';
+      // A busy endpoint (429/503) is a normal pass: nothing is posted, no unavailable line.
+      if (res.status === 429 || res.status === 503) { rec.outcome = 'busy'; note({ room, member: member.id, ok: true, status: res.status, skipped: 'busy', ms: now() - t0 }); return ''; }
       if (res.status < 200 || res.status > 299) return down('http ' + res.status);
       let raw;
       try { raw = await res.text(); } catch {
@@ -175,6 +196,7 @@ function makeDeliver(ctx, deps = {}) {
       let j;
       try { j = JSON.parse(raw); } catch { return down('reply is not json'); }
       if (!j || typeof j !== 'object') return down('bad reply');
+      if (j.busy === true) { rec.outcome = 'busy'; note({ room, member: member.id, ok: true, status: res.status, skipped: 'busy', ms: now() - t0 }); return ''; }
       if (j.no_reply === true) { rec.outcome = 'no_reply'; note({ room, member: member.id, ok: true, status: res.status, no_reply: true, ms: now() - t0 }); return ''; }
       const c0 = j.choices && j.choices[0] && j.choices[0].message;
       const text = typeof j.reply_text === 'string' ? j.reply_text : (c0 && typeof c0.content === 'string' ? c0.content : null);
@@ -194,7 +216,7 @@ function makeDeliver(ctx, deps = {}) {
       rec.outcome = 'ok'; rec.reply_len = inc.text.length; rec.would_reply = inc.text.trim().length > 0;
       note({ room, member: member.id, ok: true, status: res.status, prompt_len: outPrompt.length, reply_len: inc.text.length,
         withheld_lines: total(hitsOut), redacted: total(inc.hits), voice_ignored: typeof j.voice === 'string' && !voice, ms: now() - t0 });
-      return { text: inc.text, voice, emotion: typeof j.emotion === 'string' ? j.emotion : null };
+      return { text: inc.text, voice, emotion: typeof j.emotion === 'string' ? j.emotion : null, intensity: typeof j.intensity === 'number' && Number.isFinite(j.intensity) ? j.intensity : null };
     } finally {
       clearTimeout(timer);
       if (signal) signal.removeEventListener('abort', onAbort);
@@ -230,4 +252,4 @@ function makeDeliver(ctx, deps = {}) {
   };
 }
 
-module.exports = { makeDeliver, targetUrl, tokenFor };
+module.exports = { busyLines, makeDeliver, targetUrl, tokenFor };

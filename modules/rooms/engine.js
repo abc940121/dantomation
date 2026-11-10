@@ -97,12 +97,16 @@ function createEngine({ rooms, store, deliver, now = Date.now, humanLabel = 'hum
     // The owner may have started speaking while the reply was coming: wait (bounded) for the floor, then recheck gen.
     const floorT0 = now();
     while (now() < s.floorUntil && turn.gen === s.gen && now() - floorT0 < 20000) await sleep(25);
-    if (now() < s.floorUntil && turn.gen === s.gen) return refuse(member, 'floor');
-    if (turn.gen !== s.gen) return refuse(member, 'stale'); // the human spoke meanwhile: nothing stale is delivered
+    // A dropped engine reply leaves a journal record (never its text) so the member's side can see it was dropped.
+    const dropped = (reason, why) => { if (member.engine) store.append({ type: 'room_event', kind: 'reply_dropped', event: 'reply_dropped', room: r.id, member: member.id, reason: why, at: new Date(now()).toISOString() }); return refuse(member, reason); };
+    if (now() < s.floorUntil && turn.gen === s.gen) return dropped('floor', 'floor_held');
+    if (turn.gen !== s.gen) return dropped('stale', 'human_spoke'); // the human spoke meanwhile: nothing stale is delivered
     let cue = null;
     if (raw && typeof raw === 'object') { // { text, voice?, emotion? } from an engine
       // A reply voice is kept only if it is the member's own configured voice; otherwise ignored.
       cue = { voice: member.voice && raw.voice === member.voice ? member.voice : null, emotion: typeof raw.emotion === 'string' && EMOTIONS.has(raw.emotion) ? raw.emotion : null };
+      // intensity rides with a kept emotion only: a finite number, clamped to [0,1]
+      cue.intensity = cue.emotion && typeof raw.intensity === 'number' && Number.isFinite(raw.intensity) ? Math.min(1, Math.max(0, raw.intensity)) : null;
       raw = raw.text;
     }
     if (isPass(raw)) return refuse(member, 'pass');
@@ -118,7 +122,7 @@ function createEngine({ rooms, store, deliver, now = Date.now, humanLabel = 'hum
     const humanTurn = !!(trigger && trigger.kind === 'human');
     const meta = keep ? {} : { text_kept: false, text_len: text.length };
     const rec = store.append({ type: 'room_msg', room: r.id, speaker: member.id, kind: 'bot', text: keep ? text : '', reply_to: turn.trigger,
-      memory_for: memoryFor(r, { speaker: member.id, humanTurn }), ...meta, ...(keep && cue && cue.emotion ? { emotion: cue.emotion } : {}), ...(cue && cue.voice ? { voice: cue.voice } : {}) });
+      memory_for: memoryFor(r, { speaker: member.id, humanTurn }), ...meta, ...(keep && cue && cue.emotion ? { emotion: cue.emotion, ...(cue.intensity !== null ? { intensity: cue.intensity } : {}) } : {}), ...(cue && cue.voice ? { voice: cue.voice } : {}) });
     if (!keep) { live.set(rec.id, text); if (live.size > 200) live.delete(live.keys().next().value); }
     s.budget.record(member.id, text);
     if (turn.hop === 0) { // at most one follow-up hop: replies to a hop turn wake nobody
@@ -169,7 +173,7 @@ function createEngine({ rooms, store, deliver, now = Date.now, humanLabel = 'hum
       if (!room(roomId)) throw new Error('unknown room');
       const all = transcript(roomId);
       const i = since ? all.findIndex(m => m.id === since) : -1;
-      return all.slice(i + 1).map(m => ({ id: m.id, ts: m.ts, speaker: m.speaker, label: labelOf(roomId, m.speaker), kind: m.kind, text: m.text, ...(m.emotion ? { emotion: m.emotion } : {}) }));
+      return all.slice(i + 1).map(m => ({ id: m.id, ts: m.ts, speaker: m.speaker, label: labelOf(roomId, m.speaker), kind: m.kind, text: m.text, ...(m.emotion ? { emotion: m.emotion, ...(typeof m.intensity === 'number' ? { intensity: m.intensity } : {}) } : {}) }));
     },
     // Read-only view for UIs: who is answering, who waits, the lead and whether the owner holds the floor.
     status(roomId) {

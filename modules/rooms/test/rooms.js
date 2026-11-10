@@ -345,6 +345,10 @@ const idLines = p => p.split('\n').filter(l => l.startsWith('- [id='));
     check('emotion: a value outside the allowlist is ignored', !('emotion' in bad.store.all().find(r => r.speaker === 'ex')));
     const nj = mk(false, 'happy'); await nj.eng.say('dev', '@Ex a');
     const rec = nj.store.all().find(r => r.speaker === 'ex');
+    const mi = v => { const store = mem(); const eng = createEngine({ rooms: { dev: { members: [{ id: 'ann', name: 'Ann' }, { id: 'ex', name: 'Ex', engine: 'x', endpoint: { journal_text: true } }] } }, store, deliver: async a => (a.member.id === 'ex' ? { text: 'hello', emotion: 'calm', intensity: v } : '') }); return eng.say('dev', '@Ex a').then(() => store.all().find(r => r.speaker === 'ex')); };
+    check('intensity: kept, clamped to [0,1], non-finite dropped', (await mi(0.3)).intensity === 0.3 && (await mi(9)).intensity === 1 && (await mi(-2)).intensity === 0 && !('intensity' in await mi(NaN)) && !('intensity' in await mi(Infinity)) && !('intensity' in await mi('1')));
+    const ni = await (async () => { const store = mem(); const eng = createEngine({ rooms: { dev: { members: [{ id: 'ann', name: 'Ann' }, { id: 'ex', name: 'Ex', engine: 'x', endpoint: { journal_text: false } }] } }, store, deliver: async a => (a.member.id === 'ex' ? { text: 'hello', emotion: 'calm', intensity: 0.5 } : '') }); await eng.say('dev', '@Ex a'); return store.all().find(r => r.speaker === 'ex'); })();
+    check('intensity: never stored when the emotion is not kept', !('intensity' in ni));
     check('emotion: with journal_text false it is never persisted', rec && !('emotion' in rec) && rec.text === '' && !JSON.stringify(nj.store.all()).includes('happy'), rec);
   }
   {
@@ -359,6 +363,18 @@ const idLines = p => p.split('\n').filter(l => l.startsWith('- [id='));
     check('floor: still held after 20 s, the reply is dropped', r2.results.length === 1 && !r2.results[0].posted && r2.results[0].reason === 'floor' && !t2.messages('dev').some(m => m.speaker === 'ann'), r2.results);
     const t3 = createEngine({ rooms: rm(), store: mem(), deliver: async () => { t3.holdFloor('dev', true, 60000); setTimeout(() => t3.say('dev', 'new line'), 60); return 'stale'; } });
     const r3 = await t3.say('dev', '@ann go');
+    const dr = s => s.all().filter(x => x.type === 'room_event' && x.event === 'reply_dropped');
+    const exm = () => ({ dev: { members: [{ id: 'ex', name: 'Ex', engine: 'x', endpoint: { journal_text: true } }] } });
+    let ck = 1000000; const st4 = mem();
+    const t4 = createEngine({ rooms: exm(), store: st4, now: () => (ck += 1000), deliver: async () => { t4.holdFloor('dev', true, 1e9); return { text: 'SECRETDROP' }; } });
+    await t4.say('dev', '@ex go');
+    check('drop log: floor still held -> reply_dropped floor_held, no text', dr(st4).length === 1 && dr(st4)[0].reason === 'floor_held' && dr(st4)[0].kind === 'reply_dropped' && dr(st4)[0].member === 'ex' && dr(st4)[0].room === 'dev' && !!dr(st4)[0].at && !JSON.stringify(st4.all()).includes('SECRETDROP'), dr(st4));
+    const st5 = mem();
+    const t5 = createEngine({ rooms: exm(), store: st5, deliver: async () => { t5.holdFloor('dev', true, 60000); setTimeout(() => t5.say('dev', 'new line'), 60); return { text: 'SECRETDROP2' }; } });
+    await t5.say('dev', '@ex go');
+    check('drop log: human spoke meanwhile -> reply_dropped human_spoke, no text', dr(st5).some(x => x.reason === 'human_spoke') && !JSON.stringify(st5.all()).includes('SECRETDROP2'), dr(st5));
+    let ck6 = 1000000; const st6 = mem(); const t6 = createEngine({ rooms: rm(), store: st6, now: () => (ck6 += 1000), deliver: async () => { t6.holdFloor('dev', true, 1e9); return 'x'; } }); await t6.say('dev', '@ann go');
+    check('drop log: a non-engine member leaves no reply_dropped record', dr(st6).length === 0 && st6.all().some(x => x.type === 'room_turn_skipped'));
     check('floor: the generation changed while waiting, the reply is dropped', r3.results.some(x => x.reason === 'stale') && !t3.messages('dev').some(m => m.speaker === 'ann'), r3.results);
   }
   {

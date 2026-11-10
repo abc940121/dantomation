@@ -10,7 +10,7 @@ const path = require('path');
 const rooms = { api: require('../../../lib/modules').registry({ modules: { rooms: true } }).api('rooms') }; // modules reach each other through the registry, not by path
 const { createEngine } = rooms.api;
 const mod = require('../index');
-const { makeDeliver, targetUrl } = require('../endpoint');
+const { makeDeliver, targetUrl, busyLines } = require('../endpoint');
 const screen = require('../screen');
 
 let pass = 0, fail = 0;
@@ -250,10 +250,32 @@ function fake() {
     const r4 = t4.store.all().find(r => r.speaker === 'ex');
     check('reply: a voice that is not the configured one is ignored', r4 && !r4.voice, r4);
     check('reply: an invalid emotion is dropped', r4 && !r4.emotion);
+    const ints = [[0.4, 0.4], [7, 1], [-3, 0], ['0.5', undefined], [null, undefined]];
+    for (const [inp, want] of ints) {
+      const ti = setup(member({}, { journal_text: true }));
+      fk.set(() => ({ reply_text: 'tone', emotion: 'calm', intensity: inp }));
+      await ti.eng.say('dev', '@Example i'); await waitFor(() => ti.eng.messages('dev').some(m => m.speaker === 'ex'));
+      check('reply: intensity ' + JSON.stringify(inp) + ' -> ' + want, ti.store.all().find(r => r.speaker === 'ex').intensity === want, ti.store.all().find(r => r.speaker === 'ex'));
+    }
+    const tn = setup(member({}, { journal_text: true }));
+    fk.set(() => ({ reply_text: 'tone', emotion: 'bogus!', intensity: 0.5 }));
+    await tn.eng.say('dev', '@Example n'); await waitFor(() => tn.eng.messages('dev').some(m => m.speaker === 'ex'));
+    check('reply: intensity is dropped when emotion is dropped', !('intensity' in tn.store.all().find(r => r.speaker === 'ex')));
     const t5 = setup(member());
     fk.set(() => ({ no_reply: true }));
     await t5.eng.say('dev', '@Example e'); await sleep(60);
     check('no_reply posts nothing', !t5.store.all().some(r => r.speaker === 'ex' || r.speaker === 'system'));
+    for (const [label, resp] of [['http 503', { status: 503, body: { error: 'busy' } }], ['http 429', { status: 429, body: {} }], ['busy:true', { busy: true }]]) {
+      const tb = setup(member());
+      fk.set(() => resp);
+      await tb.eng.say('dev', '@Example b'); await sleep(60);
+      check('busy (' + label + ') is a pass: no reply, no unavailable line', !tb.store.all().some(r => r.speaker === 'ex' || r.speaker === 'system'));
+    }
+    const call = (m, skipped, ts) => ({ type: 'chat_endpoint_call', member: m, ms: 5, ok: true, ts, ...(skipped ? { skipped } : {}) });
+    check('status: 2 busy calls stay quiet', busyLines([call('h', 'busy', 't1'), call('h', 'timeout', 't2')]).length === 0);
+    const bl = busyLines([call('h', null, 't0'), call('h', 'busy', 't1'), call('h', 'timeout', 't2'), call('h', 'busy', 't3'), { type: 'chat_endpoint_call', member: 'h', ok: true, skipped: 'hop_too_deep' }]);
+    check('status: 3 busy/timeout calls in a row show one line with the start time', bl.length === 1 && /h has not answered its last 3 calls/.test(bl[0]) && bl[0].includes('t1'), bl);
+    check('status: one answered call clears the line', busyLines([call('h', 'busy', 't1'), call('h', 'busy', 't2'), call('h', 'busy', 't3'), call('h', null, 't4')]).length === 0);
   }
 
   // ---- fail closed
@@ -571,6 +593,14 @@ function fake() {
     n = fk.reqs.length;
     await t.eng.say('dev', '@Example from the mic', { type: 'voice_transcript' }); await waitFor(() => fk.reqs.length > n); await sleep(30);
     check('fields: a voice transcript line is type voice_transcript', sent().body.type === 'voice_transcript', sent().body.type);
+    check('senses: a voice transcript has ear true, eyes false', JSON.stringify(sent().body.senses) === JSON.stringify({ text: true, ear: true, eyes: false }), sent().body.senses);
+    n = fk.reqs.length;
+    await t.eng.say('dev', '@Example typed'); await waitFor(() => fk.reqs.length > n); await sleep(30);
+    check('senses: a typed line has ear false', sent().body.senses.ear === false && sent().body.senses.text === true && sent().body.senses.eyes === false, sent().body.senses);
+    const ts = setup(member({}, { senses: { eyes: true, ear: 'yes', smell: true } }));
+    n = fk.reqs.length;
+    await ts.eng.say('dev', '@Example cfg'); await waitFor(() => fk.reqs.length > n); await sleep(30);
+    check('senses: endpoint.senses booleans override, others and unknown keys ignored', JSON.stringify(sent().body.senses) === JSON.stringify({ text: true, ear: false, eyes: true }), sent().body.senses);
     n = fk.reqs.length;
     await t.eng.say('dev', '@Example ' + 'y'.repeat(2500)); await waitFor(() => fk.reqs.length > n); await sleep(30);
     const lb = sent().body;
