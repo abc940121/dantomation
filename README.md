@@ -153,7 +153,7 @@ claude mcp add taskmote -- node <path-to-repo>/bin/taskmote-mcp.js --allow-write
 | `queue_task` | Queue a task the way `taskmote do` does and return its id. `cwd` applies only when no server is running. | none | `--allow-write` |
 | `undo_task` | Put a task's folder back, like the Undo button, after you answer Undo on a phone card. If a task is running it returns `blocked` and sends no card. | `checkpoint`, `question-cards` | `--allow-write` |
 
-A tool whose module is off answers with text naming the module to turn on. The separate `bin/approve-mcp.js` permission-prompt server is unchanged. The MCP server replaces the `agent-tools` module's prompt text; do not turn both on.
+A tool whose module is off answers with text naming the module to turn on. The separate `bin/approve-mcp.js` permission-prompt server is unchanged.
 
 ## Modules
 
@@ -177,7 +177,6 @@ Every module is off by default, except the two safety modules `guard-base` and `
 | `rooms`, `chat-endpoint` | multi-bot rooms; a bot behind an OpenAI-style URL | sends room text to the URL you configure | off | ✓ |
 | `worker` | runs queued jobs on a second machine | one work folder on that machine; outbound HTTP | off | ✓ |
 | `ntfy` | push pings (task finished, blocked, approval waiting) to your phone | outbound HTTP POST to the ntfy server you configure; the topic is a secret: set it with `node bin/harness.js secret ntfy topic`, never written into config | off | |
-| `ccusage` | per-day / per-session Claude Code token and cost reports (runs the ccusage program via npx) | runs `npx`; reads Claude Code logs through it | off | |
 | `spend-count`, `claim-audit`, `engine-router`, `routines`, `search`, … | see each module's README | see its README | off | |
 
 Each module has its own `README.md` with its limits. To write one, copy [`modules/hello-stub`](modules/hello-stub/README.md).
@@ -185,6 +184,8 @@ Each module has its own `README.md` with its limits. To write one, copy [`module
 ### Removed modules
 
 `repo-map`, `memory-tiers`, `sop-pipeline` and `scaffold` were removed. They overlapped with Claude Code's own search, memory, skills and workflows. They are recoverable from the git tag `archive/modules-2026-11-10`, e.g. `git checkout archive/modules-2026-11-10 -- modules/<name>`.
+
+`task-grill`, `arena`, `ccusage` and `agent-tools` were removed too. Instead of `task-grill`, use a grilling skill with the MCP `ask_owner` tool. Instead of `arena`, use the pstack arena skill. Instead of `taskmote check usage`, run `npx ccusage` directly. Instead of `agent-tools`, use the MCP server (`bin/taskmote-mcp.js`). They are recoverable from the git tag `archive/convert-2026-11-10`, e.g. `git checkout archive/convert-2026-11-10 -- modules/<name>`.
 
 ## Security
 

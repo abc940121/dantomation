@@ -70,7 +70,6 @@ Every field but `contract` and `name` is optional, and every callback may be asy
 | [`worker`](../modules/worker/README.md) | provisional: pull-based worker for a second machine (outbound HTTP only) | off |
 | [`guard-private-rules`](../modules/guard-private-rules/README.md) | owner's rules file, self-protection of the config | off |
 | [`spend-count`](../modules/spend-count/README.md) | block a session over the spend limit | off |
-| [`ccusage`](../modules/ccusage/README.md) | per-day / per-session Claude Code token and cost reports (`taskmote check usage`) | off |
 | [`ntfy`](../modules/ntfy/README.md) | push pings to your phone through an ntfy server (`ntfy.server`, default `https://ntfy.sh`; topic is a secret: `harness.js secret ntfy topic`) | off |
 | [`gitleaks`](../modules/gitleaks/README.md) | runs the separate gitleaks program on agent commits and pushes; findings block (`gitleaks.scan_commit`, `scan_push`, `scan_timeout_ms` 4000, `on_missing` allow/block); `taskmote check secrets` scans on demand | off |
 | [`voice`](../modules/voice/README.md) | voice bridge, `voice_busy` block | off |

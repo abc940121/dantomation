@@ -1,9 +1,0 @@
-{
-  "suites": [
-    {
-      "label": "agent-tools",
-      "file": "test/agent-tools.js",
-      "needs": []
-    }
-  ]
-}

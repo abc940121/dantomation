@@ -1,9 +1,0 @@
-{
-  "suites": [
-    {
-      "label": "task-grill",
-      "file": "test/task-grill.js",
-      "needs": []
-    }
-  ]
-}
