@@ -47,11 +47,11 @@ for (const rel of ['lib/config.js', 'lib/modules.js', 'lib/preset.js', 'presets/
   const tm = (cfg, ...a) => spawnSync(process.execPath, [path.join(ROOT, 'bin', 'taskmote.js'), ...a], { env: { ...process.env, HARNESS_CONFIG: cfg, HARNESS_NO_SERVER: '1' }, encoding: 'utf8' });
   const proto = tm(off, 'constructor');
   res['taskmote constructor: usage, exit 2 (no prototype lookup)'] = proto.status === 2 && /usage:/.test(proto.stderr);
-  const sc = tm(cfgFile('scaffold-off', { modules: { ...OFF, scaffold: false } }), 'new-module', 'zz');
-  res['taskmote new-module with scaffold off names the module, exit 2'] = sc.status === 2 && /needs the scaffold module/.test(sc.stderr);
-  res['old top-level new-module names the new spelling'] = /is now "taskmote dev new-module"/.test(sc.stderr);
-  const dsc = tm(cfgFile('scaffold-off-dev', { modules: { ...OFF, scaffold: false } }), 'dev', 'new-module', 'zz');
-  res['taskmote dev new-module with scaffold off names the module, no old-spelling note'] = dsc.status === 2 && /needs the scaffold module/.test(dsc.stderr) && !/is now/.test(dsc.stderr);
+  const sc = tm(cfgFile('hello-off', { modules: { ...OFF, 'hello-stub': false } }), 'hello');
+  res['taskmote hello with hello-stub off names the module, exit 2'] = sc.status === 2 && /needs the hello-stub module/.test(sc.stderr);
+  res['old top-level hello names the new spelling'] = /is now "taskmote dev hello"/.test(sc.stderr);
+  const dsc = tm(cfgFile('hello-off-dev', { modules: { ...OFF, 'hello-stub': false } }), 'dev', 'hello');
+  res['taskmote dev hello with hello-stub off names the module, no old-spelling note'] = dsc.status === 2 && /needs the hello-stub module/.test(dsc.stderr) && !/is now/.test(dsc.stderr);
   const dv = tm(off, 'dev', 'nope');
   res['taskmote dev <unknown>: dev usage, exit 2'] = dv.status === 2 && /usage: taskmote dev </.test(dv.stderr);
   const hon = cfgFile('hello-on', { modules: { ...OFF, 'hello-stub': true } });

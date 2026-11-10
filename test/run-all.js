@@ -47,7 +47,6 @@ const CORE_SUITES = [
   ['integration', 'test/integration.js', ['chat-ui', 'approval-cards']],
   ['trunk-diff', 'test/trunk-diff.js', []],
   ['trunk-diff-test', 'test/trunk-diff.test.js', []],
-  ['scaffold', 'test/scaffold.test.js', []],
   ['alias', 'test/alias.test.js', []],
   ['demo', 'test/demo.js', ['guard-base', 'checkpoint', 'approval-cards', 'chat-ui']],
   ['combo-v1', 'test/combo-v1.js', [], true],

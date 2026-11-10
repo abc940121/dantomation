@@ -18,7 +18,7 @@ One file outside the repo: `HARNESS_CONFIG=<file>`, else `~/.harness/config.json
 
 ## v1 preset
 
-In v1: chat-ui, chat-endpoint, rooms, app-ui, voice, voice-chat, device-pairing, guard-base, guard-private-rules, tripwires, approval-cards, question-cards, notifications, worker, checkpoint, task-watchdog, task-board, memory-tiers, trace. Every other module stays off. `chat-endpoint` needs `rooms`, so both are in v1. `node test/combo-v1.js` loads the whole set together and runs one task through it.
+In v1: chat-ui, chat-endpoint, rooms, app-ui, voice, voice-chat, device-pairing, guard-base, guard-private-rules, tripwires, approval-cards, question-cards, notifications, worker, checkpoint, task-watchdog, task-board, trace. Every other module stays off. `chat-endpoint` needs `rooms`, so both are in v1. `node test/combo-v1.js` loads the whole set together and runs one task through it.
 
 ## Layers
 

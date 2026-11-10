@@ -157,13 +157,12 @@ A tool whose module is off answers with text naming the module to turn on. The s
 
 ## Modules
 
-Every module is off by default, except the two safety modules `guard-base` and `checkpoint` and the CLI helper modules `scaffold` and `presets`. `guard-base` is locked on: a config or preset that turns it off is refused, so `serve` will not start and every tool call is blocked until it is fixed. Turning `approval-cards` off is allowed, but `serve` warns that every red-line step will then be refused. "Can touch" is what the module itself reads or changes beyond the trunk.
+Every module is off by default, except the two safety modules `guard-base` and `checkpoint` and the CLI helper module `presets`. `guard-base` is locked on: a config or preset that turns it off is refused, so `serve` will not start and every tool call is blocked until it is fixed. Turning `approval-cards` off is allowed, but `serve` warns that every red-line step will then be refused. "Can touch" is what the module itself reads or changes beyond the trunk.
 
 | Module | What it does | Can touch | Default | In v1 |
 |---|---|---|---|---|
 | `guard-base` | blocks API keys, mass deletion, skipped git hooks, secret writes | nothing; it only blocks | on (locked) | ✓ |
 | `checkpoint` | snapshot before every change; `undo`/`restore` | the task folder (git snapshots) | on | ✓ |
-| `scaffold` | the `new-module` verb: skill folder to module folder | writes a new folder under `modules/` | on | |
 | `presets` | the `preset` verb: shows what a profile from `presets/` turns on | reads `presets/` and your config; writes nothing | on | |
 | `guard-private-rules` | your own red lines from a rules file | reads your rules file | off | ✓ |
 | `gitleaks` | runs the `gitleaks` program before git commit/push; blocks on findings | runs an external program you installed; reads the repo | off | |
@@ -171,7 +170,7 @@ Every module is off by default, except the two safety modules `guard-base` and `
 | `question-cards` | an agent asks you a multiple-choice question | its own state | off | ✓ |
 | `tripwires` | flags (or, in block mode, withholds) replies that contradict the exit code | engine output files of that turn | off | ✓ |
 | `task-watchdog` | flags stalled or looping tasks; can cancel them | the running task | off | ✓ |
-| `task-board`, `memory-tiers`, `trace`, `notifications` | task claims, memory, per-task timeline, inbox | their own state | off | ✓ |
+| `task-board`, `trace`, `notifications` | task claims, per-task timeline, inbox | their own state | off | ✓ |
 | `chat-ui`, `app-ui` | browser and phone chat | serves pages on the server address | off | ✓ |
 | `device-pairing` | pairing codes and per-device tokens | issues tokens that can reach the chat | off | ✓ |
 | `voice`, `voice-chat` | voice bridge and hands-free layer | microphone and speaker through the voice client | off | ✓ |
@@ -182,6 +181,10 @@ Every module is off by default, except the two safety modules `guard-base` and `
 | `spend-count`, `claim-audit`, `engine-router`, `routines`, `search`, … | see each module's README | see its README | off | |
 
 Each module has its own `README.md` with its limits. To write one, copy [`modules/hello-stub`](modules/hello-stub/README.md).
+
+### Removed modules
+
+`repo-map`, `memory-tiers`, `sop-pipeline` and `scaffold` were removed. They overlapped with Claude Code's own search, memory, skills and workflows. They are recoverable from the git tag `archive/modules-2026-11-10`, e.g. `git checkout archive/modules-2026-11-10 -- modules/<name>`.
 
 ## Security
 

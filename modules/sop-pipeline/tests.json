@@ -1,5 +1,0 @@
-{
-  "suites": [
-    { "label": "sop-pipeline", "file": "test/run.js", "needs": ["sop-pipeline"] }
-  ]
-}

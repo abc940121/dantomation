@@ -9,7 +9,6 @@
     "question-cards": true,
     "task-watchdog": true,
     "task-board": true,
-    "memory-tiers": true,
     "trace": true,
     "notifications": true,
     "chat-ui": true,

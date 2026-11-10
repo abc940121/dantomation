@@ -28,7 +28,7 @@ const C = require(path.join(ROOT, 'lib', 'config'));
 const J = require(path.join(ROOT, 'lib', 'journal'));
 
 const V1 = ['chat-ui', 'chat-endpoint', 'rooms', 'app-ui', 'voice', 'voice-chat', 'device-pairing', 'guard-base', 'guard-private-rules', 'tripwires',
-  'approval-cards', 'question-cards', 'notifications', 'worker', 'checkpoint', 'task-watchdog', 'task-board', 'memory-tiers', 'trace'];
+  'approval-cards', 'question-cards', 'notifications', 'worker', 'checkpoint', 'task-watchdog', 'task-board', 'trace'];
 const preset = P.read('v1');
 const ON = Object.keys(preset.modules).filter(m => preset.modules[m]);
 

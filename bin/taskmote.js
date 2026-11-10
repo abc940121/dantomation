@@ -209,7 +209,7 @@ async function moduleVerb(args, verb = process.argv[2]) {
 const [verb, ...rest] = process.argv.slice(2);
 // Builder and debugging verbs live under `taskmote dev <verb>` so a new user sees fewer commands.
 // The old top-level spelling still runs and says the new one.
-const DEV = ['hello', 'new-module', 'engine-router', 'repo-map', 'trace', 'watchdog'];
+const DEV = ['hello', 'engine-router', 'trace', 'watchdog'];
 const DEV_USAGE = `usage: taskmote dev <${DEV.join('|')}> ...`;
 const devVerb = async args => { const [v, ...a] = args; if (!DEV.includes(v)) fail(DEV_USAGE, 2); return moduleVerb(a, v); };
 // Questions live under `taskmote ask`: a bot asks the owner (question-cards), the owner lists and answers,

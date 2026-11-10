@@ -7,7 +7,6 @@
     "guard-private-rules": false,
     "checkpoint": true,
     "app-ui": false,
-    "scaffold": true,
     "presets": true
   },
   "modules_hook_timeout_ms": 5000,
