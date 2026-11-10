@@ -6,6 +6,7 @@ const path = require('path');
 const J = require('../../lib/journal');
 const { createStore, RoleError, ENGINES } = require('./store');
 const limits = require('./engines/limits');
+const ask = require('./ask');
 
 // api functions run with this.ctx when a module calls them (ctx.api) and without it when core does:
 // then the state folder is the same fixed path the loader gives this module.
@@ -38,6 +39,10 @@ const mcpTools = [
     description: 'List the current roles with id, name, persona, engine (claude, codex or opencode) and model, plus opencode_go_turns_today (how many OpenCode Go plan turns all roles used today). Use before changing or removing a role, or when the owner asks which roles exist.',
     inputSchema: { type: 'object', properties: {} },
     run: guard((a, ctx) => ({ roles: storeOfCtx(ctx).list().map(pub), opencode_go_turns_today: limits.goCount(ctx.state.dir) })) },
+  { name: 'role_ask',
+    description: 'Send a message to another role (or "main", the owner\'s main bot) and get its answer later, whatever engine either one runs on. It does NOT wait: it returns at once with queued:true, and the answer arrives as a new message in your own conversation when the other role has finished its turn. After calling it, end your turn right away: do not wait, do not poll, do not invent the answer. The role is an id or name from role_list. Refused for an unknown or archived role, yourself, a role already in the ask chain, or when the chain is too deep or too long; then answer with what you have. Only usable inside a role conversation, not from outside one.',
+    inputSchema: { type: 'object', properties: { role: { type: 'string', description: 'Role id or name, or "main".' }, message: { type: 'string', description: 'What to say or ask. Give the other role all the context it needs; it does not see your conversation.' } }, required: ['role', 'message'] },
+    run: guard((a, ctx) => ask.ask(a, ctx, askDeps)) },
 ];
 
 // The bot of a task, as bot-persona finds it: the task_start record, else HARNESS_BOT, else the default bot.
@@ -49,6 +54,9 @@ function botOfTask(taskId, config) {
   const b = config && config.bots;
   return bot || process.env.HARNESS_BOT || (Array.isArray(b) && b.length ? String(b[0] && b[0].id) : 'main');
 }
+
+const askDeps = { storeOfCtx, botOfTask };
+const sweepAsks = ctx => { try { ask.sweep(ctx, askDeps); } catch { /* retried by the next sweep */ } };
 
 module.exports = {
   contract: 2,
@@ -87,8 +95,15 @@ module.exports = {
     opencode_allow_bash: { type: 'boolean', default: false, description: 'let OpenCode roles run shell commands (denied by default; there is no sandbox, a command can reach anything the user can)' },
     opencode_allow_web: { type: 'boolean', default: true, description: 'let OpenCode roles use network tools (web fetch, web search); false denies every one of them in the per-run opencode.json' },
     opencode_timeout_s: { type: 'integer', default: 900, min: 1, max: 86400, description: 'seconds one OpenCode turn may run before its process tree is killed' },
+    ask_depth_cap: { type: 'integer', default: 3, min: 1, max: 10, description: 'role_ask: how many asks deep one chain may go (A asks B, B asks C is depth 2); past it the role is told to answer with what it has' },
+    ask_chain_cap: { type: 'integer', default: 12, min: 1, max: 1000, description: 'role_ask: most messages one ask chain may send in total' },
     go_daily_cap: { type: 'integer', default: 0, min: 0, max: 100000, description: 'OpenCode Go plan turns per day across all roles (0 = no cap); refuses with a bilingual reply when reached' },
   },
+
+  // role_ask return leg: a finished task may be the answer to an ask. The interval job also catches stopped or failed tasks
+  // (they may never emit task.end) and anything left over by a restart.
+  on: { 'task.end': (data, ctx) => sweepAsks(ctx) },
+  jobs: [{ id: 'ask-sweep', every: 5, description: 'deliver role_ask answers to the asking role', run: ctx => { sweepAsks(ctx); } }],
 
   stateVersion: 1,
   migrate() {},

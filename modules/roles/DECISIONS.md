@@ -40,3 +40,12 @@
 12. Daily turn cap for non-Claude engines: `engines/limits.js` counts turns per role and local day in module state.
     The engine scripts are separate processes, so they read `roles.daily_turn_cap` (default 200, 0 = off) from the config file
     themselves. A refused turn is a normal reply (exit 0) with a bilingual notice, so the owner sees it in chat.
+13. Roles talking to each other (`role_ask`) is asynchronous, a mailbox. A synchronous version (the tool waits for the answer)
+    cannot work: the executor runs one task at a time, so while the asking role waits inside its turn the target's task never
+    starts, and it also runs into the engines' MCP tool timeouts. So `role_ask` queues a `queue_add` for the target through the
+    journal (what the server does for a chat message, so no trunk change) and returns; `ask.js` records the ask in
+    `asks.json` and, once the target task is over (`task_done`, `queue_fail` or `queue_cancel` in the journal), queues the reply
+    into the asker's own thread. The return leg is driven by journal state from a module job plus `task.end`, because a stopped
+    task may never emit `task.end`, and a restart must not lose answers. The entry is marked delivered before the reply is queued
+    (reverted if queueing fails) under a lock directory, so delivery is once. Chain depth (3) and size (12) are capped, and loops
+    are refused, so two roles cannot talk forever. Engine tool timeouts are left alone.

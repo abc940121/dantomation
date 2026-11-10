@@ -125,6 +125,26 @@ Undo: `role_update {role, engine: "claude"}` (clear a model with `model: ""`), o
 `engines` table so every OpenCode role falls back to Claude. Deleting `opencode-session-*.json` starts a fresh conversation.
 The `roles-opencode-engine` suite tests the script with a fake opencode: `node modules/roles/test/opencode-engine.js`.
 
+## Roles talking to each other
+
+The tool `role_ask({ role, message })` lets one role (or the main bot, `"main"`) send a message to another role, whatever engine
+either one runs on (Claude, Codex, OpenCode). It does not wait. It checks the target, queues the message into the target's own
+conversation (the same journal record a chat message to that bot makes) and returns at once with `{ queued: true, task_id, to }`
+and a bilingual note telling the asking role to end its turn. When the target's task ends, the module queues the reply into the
+asker's own conversation as a new message headed `[角色「Y」的回覆 / reply from role "Y"]`, so the asker continues from there.
+
+- The target sees `[來自角色「X」的訊息 / message from role "X"]` and one line saying its answer is sent back automatically.
+- A reply is cut at 8000 characters (marked). A failed, stopped or cancelled target gives a short bilingual failure note instead.
+- Refused with a clear bilingual text: unknown or archived role, asking yourself, a role already in the chain (a loop), a chain
+  deeper than `roles.ask_depth_cap` (default 3), or more than `roles.ask_chain_cap` messages in one chain (default 12). The role is
+  told to answer with what it has. The reply-delivery turn counts as part of the same chain.
+- Only usable inside a role conversation (it needs the running task). Outside one it says to use the chat page.
+- State: `state/m/roles/asks.json`, one entry per ask keyed by the target task id (`from`, `to`, `depth`, `chain`, `asked_at`,
+  later `delivered_at`). Entries are marked, never deleted. Delivery is exactly once, also across a server restart: a module job
+  (every 5 seconds) and the `task.end` event sweep every finished, undelivered ask.
+- It needs the running server: in direct mode nothing runs the queued message.
+- The tests are `node modules/roles/test/ask.js` (suite `roles-ask`).
+
 ## Daily turn cap
 
 Roles on the Codex and OpenCode engines count their turns per role and local day in `state/m/roles/turns-<role id>.json`.

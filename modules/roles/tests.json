@@ -6,6 +6,11 @@
       "needs": []
     },
     {
+      "label": "roles-ask",
+      "file": "test/ask.js",
+      "needs": []
+    },
+    {
       "label": "roles-codex-engine",
       "file": "test/codex-engine.js",
       "needs": []

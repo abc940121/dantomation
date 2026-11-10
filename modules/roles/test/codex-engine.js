@@ -50,7 +50,7 @@ try {
   const argsRes = codex.buildArgs({ env: {}, cwd: '/w', outFile: '/o.txt', resumeId: 'abcd1234-aaaa' });
   check('resume turn: exec resume <id> - and no -C', argsRes.slice(0, 2).join() === 'exec,resume' && argsRes.slice(-2).join() === 'abcd1234-aaaa,-' && !argsRes.includes('-C'));
   const mcp = argsFresh.filter(a => a.startsWith('mcp_servers.'));
-  check('tools server attached with backslash-free paths and the task env', mcp.length === 3 && mcp[0].startsWith('mcp_servers.taskmote-tools.command=') && /taskmote-mcp\.js/.test(mcp[1]) && /HARNESS_TASK_ID="t1"/.test(mcp[2]) && /HARNESS_STATE_DIR="C:\/s"/.test(mcp[2]) && !mcp.join('').includes('\\\\'), mcp.join(' | '));
+  check('tools server attached with backslash-free paths and the task env', mcp.length === 4 && mcp[3] === 'mcp_servers.taskmote-tools.default_tools_approval_mode="approve"' && mcp[0].startsWith('mcp_servers.taskmote-tools.command=') && /taskmote-mcp\.js/.test(mcp[1]) && /HARNESS_TASK_ID="t1"/.test(mcp[2]) && /HARNESS_STATE_DIR="C:\/s"/.test(mcp[2]) && !mcp.join('').includes('\\\\'), mcp.join(' | '));
   check('event parser takes thread id and last agent message', (() => { const p = codex.parseEvents('{"type":"thread.started","thread_id":"abc"}\nnoise\n{"type":"item.completed","item":{"type":"agent_message","text":"one"}}\n{"type":"item.completed","item":{"type":"agent_message","text":"two"}}\n'); return p.id === 'abc' && p.last === 'two'; })());
   check('ROLES_CODEX_BIN resolves to node + the script', (() => { const e = codex.resolveCodex({ ROLES_CODEX_BIN: fake }); return e.bin === process.execPath && e.pre[0] === fake; })());
 

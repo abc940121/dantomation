@@ -53,7 +53,9 @@ function mcpOverrides(env, node) {
   if (env.HARNESS_TASK_ID) e.HARNESS_TASK_ID = env.HARNESS_TASK_ID;
   const tbl = '{' + Object.entries(e).map(([k, v]) => `${k}=${toml(fwd(v))}`).join(',') + '}';
   const p = 'mcp_servers.taskmote-tools';
-  return ['-c', `${p}.command=${toml(fwd(node))}`, '-c', `${p}.args=[${toml(fwd(path.join(ROOT, 'bin', 'taskmote-mcp.js')))}]`, '-c', `${p}.env=${tbl}`];
+  return ['-c', `${p}.command=${toml(fwd(node))}`, '-c', `${p}.args=[${toml(fwd(path.join(ROOT, 'bin', 'taskmote-mcp.js')))}]`, '-c', `${p}.env=${tbl}`,
+    // approval_policy "never" refuses a tool that would ask; the server's own tools run under Taskmote's guards instead.
+    '-c', `${p}.default_tools_approval_mode="approve"`];
 }
 
 // argv after the codex executable. The prompt comes on stdin ("-"). resume has no -s / -C, so the sandbox and the

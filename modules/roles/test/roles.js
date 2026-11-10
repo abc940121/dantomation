@@ -30,7 +30,7 @@ const throws = (fn) => { try { fn(); return null; } catch (e) { return e.message
     const { mods, meta } = M.load(cfg);
     const ctx = { state: meta.get('roles').state };
     const tools = Object.fromEntries(M.apiOf(mods, 'roles').mcpTools.map(t => [t.name, t]));
-    check('four tools offered', Object.keys(tools).sort().join() === 'role_create,role_list,role_remove,role_update');
+    check('five tools offered', Object.keys(tools).sort().join() === 'role_ask,role_create,role_list,role_remove,role_update');
     check('tools have schemas', Object.values(tools).every(t => t.description && t.inputSchema && t.inputSchema.type === 'object'));
 
     const a = tools.role_create.run({ name: 'Captain', persona: 'You are a calm ship captain.\nSpeak briefly.' }, ctx);
