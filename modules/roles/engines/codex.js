@@ -6,6 +6,7 @@
 //   - attaches the taskmote-tools MCP server (bin/taskmote-mcp.js) with the same env a Claude session gets
 //   - keeps the conversation: the Codex session id of the role is stored in <state>/m/roles/ (never in the work folder)
 //     and the next turn uses `codex exec resume <id>`; if resume fails, one fresh start
+//   - a per-role daily turn cap (engines/limits.js); a refused turn is answered with a short bilingual notice, exit 0
 //   - stdout: only the final assistant message. stderr: diagnostics. Exit non-zero on failure, one short stderr line.
 // Test seam: ROLES_CODEX_BIN names a node script that stands in for codex.
 const fs = require('fs');
@@ -13,6 +14,7 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { spawn, execFileSync } = require('child_process');
+const limits = require('./limits');
 
 const ROOT = path.resolve(__dirname, '..', '..', '..');
 const TIMEOUT_MS = 10 * 60 * 1000;
@@ -155,6 +157,8 @@ async function main() {
   const prompt = Buffer.concat(chunks).toString('utf8');
   if (!prompt.trim()) die(2, 'empty prompt on stdin');
   const env = process.env;
+  const gate = limits.takeTurn(env, ROOT, botId(process.cwd(), env)); // per-role daily cap (settings daily_turn_cap, 0 = off)
+  if (!gate.ok) { process.stdout.write(gate.message + '\n'); return; }
   const r = await turn({ prompt, cwd: process.cwd(), env, exe: resolveCodex(env) });
   if (!r.ok) die(1, r.error);
   process.stdout.write(r.reply + '\n');

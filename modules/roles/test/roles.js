@@ -94,7 +94,7 @@ const throws = (fn) => { try { fn(); return null; } catch (e) { return e.message
     const eGpt = tools.role_create.run({ name: 'Gee', persona: 'p', engine: 'codex' }, ctx);
     check('engine codex can be set at create', eGpt.engine === 'codex' && api.get(eGpt.id).engine === 'codex');
     check('role_list shows the engine', tools.role_list.run({}, ctx).roles.find(x => x.id === eGpt.id).engine === 'codex');
-    check('bad engine refused with the allowed values', /engine must be one of: claude, codex/.test(throws(() => tools.role_create.run({ name: 'Bad', persona: 'p', engine: 'gpt5' }, ctx)) || '') && !api.list().some(x => x.name === 'Bad'));
+    check('bad engine refused with the allowed values', /engine must be one of: claude, codex, opencode/.test(throws(() => tools.role_create.run({ name: 'Bad', persona: 'p', engine: 'gpt5' }, ctx)) || '') && !api.list().some(x => x.name === 'Bad'));
     check('bad engine on update refused', /engine must be one of/.test(throws(() => tools.role_update.run({ role: eDef.id, engine: 5 }, ctx)) || ''));
     const upE = tools.role_update.run({ role: 'Plain', engine: 'codex' }, ctx);
     check('update can set the engine alone, keeps name and persona', upE.engine === 'codex' && upE.name === 'Plain' && upE.persona === 'p');
@@ -111,6 +111,16 @@ const throws = (fn) => { try { fn(); return null; } catch (e) { return e.message
     check('chooseEngine has no opinion for a claude role', (await choose(path.join(tmp, 'work', 'bot-' + eDef.id))) === null);
     check('chooseEngine has no opinion for a normal bot', (await choose(path.join(tmp, 'work', 'bot-main'))) === null);
     check('chooseEngine has no opinion for an unknown role id', (await choose(path.join(tmp, 'work', 'bot-r-00000000'))) === null);
+    // opencode engine + model field
+    const eOc = tools.role_create.run({ name: 'Oc', persona: 'p', engine: 'opencode', model: 'opencode/big-pickle' }, ctx);
+    check('engine opencode and a model can be set at create', eOc.engine === 'opencode' && eOc.model === 'opencode/big-pickle' && api.get(eOc.id).model === 'opencode/big-pickle');
+    const lOc = tools.role_list.run({}, ctx).roles;
+    check('role_list shows the model only when set', lOc.find(x => x.id === eOc.id).model === 'opencode/big-pickle' && lOc.find(x => x.id === eGpt.id).model === undefined);
+    check('chooseEngine says opencode for an opencode role', ((await choose(path.join(tmp, 'work', 'bot-' + eOc.id))) || {}).engine === 'opencode');
+    check('update can change the model alone', tools.role_update.run({ role: 'Oc', model: 'opencode-go/kimi-k2' }, ctx).model === 'opencode-go/kimi-k2' && api.get(eOc.id).engine === 'opencode');
+    check('an empty model clears it', tools.role_update.run({ role: 'Oc', model: '' }, ctx).model === undefined && api.get(eOc.id).model === undefined);
+    check('a bad model is refused at create and update', /provider\/model/.test(throws(() => tools.role_create.run({ name: 'BadM', persona: 'p', engine: 'opencode', model: 'a b; rm' }, ctx)) || '') && /provider\/model/.test(throws(() => tools.role_update.run({ role: 'Oc', model: 'x'.repeat(101) }, ctx)) || ''));
+    tools.role_remove.run({ role: eOc.id }, ctx);
     tools.role_remove.run({ role: eGpt.id }, ctx);
     check('chooseEngine has no opinion for an archived codex role', (await choose(path.join(tmp, 'work', 'bot-' + eGpt.id))) === null);
 

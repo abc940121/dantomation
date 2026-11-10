@@ -26,3 +26,17 @@
     `chooseEngine` with the key "codex"; the owner adds one config `engines` entry (turn engine, plain stdout). The core
     is untouched. `engines/codex.js` is a plain script: Codex session id in module state (not the work folder), resume with
     one fresh retry, sandbox and approval policy as `-c` overrides because `codex exec resume` has no `-s`.
+11. OpenCode engine: `engine` may also be "opencode", with an optional `model`. `engines/opencode.js` mirrors codex.js
+    (plain stdout, session id in module state, one fresh retry) but passes the prompt as an attached file with stdin closed
+    (the recipe that works with the real client). Only two model ids are allowed (free, then the Go plan); anything else is
+    refused unless listed in `roles.opencode_extra_paid_models`, so nothing can start billing per use. Free exhausted: one retry
+    on Go and a 120 minute memory; quota and key errors get a bilingual reply, never a retry loop. Success = exit 0 + non-empty text.
+    A per-run `opencode.json` carries the tools server and permission denies; shell is off unless `opencode_allow_bash`.
+    Network stays on by default (`opencode_allow_web`, true). A real run showed that denying `webfetch` alone is not enough:
+    the model falls back to the Code Mode `execute` tool, whose `fetch` is not governed by that rule. Web off therefore denies
+    `execute` and the other network tools; the cost is that the MCP tools (reached through Code Mode) go away with it.
+    Each run has a timeout (default 900 s, process tree killed). Go turns are counted across roles with an optional
+    `go_daily_cap` (named in snake_case because module setting keys must be lowercase).
+12. Daily turn cap for non-Claude engines: `engines/limits.js` counts turns per role and local day in module state.
+    The engine scripts are separate processes, so they read `roles.daily_turn_cap` (default 200, 0 = off) from the config file
+    themselves. A refused turn is a normal reply (exit 0) with a bilingual notice, so the owner sees it in chat.

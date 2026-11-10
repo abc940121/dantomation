@@ -9,6 +9,11 @@
       "label": "roles-codex-engine",
       "file": "test/codex-engine.js",
       "needs": []
+    },
+    {
+      "label": "roles-opencode-engine",
+      "file": "test/opencode-engine.js",
+      "needs": []
     }
   ]
 }

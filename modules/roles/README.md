@@ -16,9 +16,9 @@ after each finished task and every 15 seconds while visible.
 MCP tools (provided through `api.mcpTools`):
 
 - `role_create {name, persona, engine?}`: name 1-40 characters, unique (case-insensitive)
-  among live roles; persona up to 4000 characters; engine `claude` (default) or `codex`.
-  Returns `{id, name, persona, engine}`.
-- `role_update {role, name?, persona?, engine?}`: `role` is an id or the current name.
+  among live roles; persona up to 4000 characters; engine `claude` (default), `codex` or `opencode`;
+  optional `model` (OpenCode only, see below). Returns `{id, name, persona, engine}` plus `model` when set.
+- `role_update {role, name?, persona?, engine?, model?}`: `role` is an id or the current name. An empty `model` clears it.
 - `role_remove {role}`: archives the role (hidden from the bot list). Nothing is
   deleted: the record and the role's conversation and work folder stay.
 - `role_list {}`: live roles, with their engine.
@@ -70,6 +70,72 @@ Differences from a Claude role:
 Undo: set the role's engine back with `role_update {role, engine: "claude"}` (or remove the `codex` entry from the config
 `engines` table, which makes every role fall back to Claude at once). Deleting `codex-session-*.json` starts a fresh Codex conversation.
 The `roles-codex-engine` suite tests the engine script with a fake codex: `node modules/roles/test/codex-engine.js`.
+
+## OpenCode roles
+
+A role can also run its chat turns on the OpenCode CLI. Tell any bot "make a role called X on OpenCode" (it calls
+`role_create` with `engine: "opencode"`, optional `model`), or `role_update` an existing role. `role_list` shows the model and
+`opencode_go_turns_today` (Go plan turns of all roles today).
+
+Config entry (the core runs it as a turn engine, same as Codex):
+
+```
+"engines": { "opencode": { "bin": "node", "args": ["<repo>/modules/roles/engines/opencode.js"], "turn": true } }
+```
+
+Needs `opencode` on PATH (the real binary: free models only answer inside the unmodified OpenCode client) and the `roles`
+module on. Without the entry the core ignores the choice and the role keeps running on Claude.
+
+Models and money. The engine never causes new charges on its own. Exactly two model ids are allowed:
+`opencode/deepseek-v4.1-flash-free` (free, tried first) and `opencode-go/deepseek-v4.1-flash` (the flat Go plan). Any other
+model is refused with a bilingual message unless the owner lists it in `roles.opencode_extra_paid_models`. The engine does not
+log in, top up or change any OpenCode account or config.
+
+- "Free usage limit reached" on the free id: one retry on the Go id, and "free exhausted" is remembered for 120 minutes
+  (`state/m/roles/opencode-free-exhausted.json`), so later turns start on the Go id. Never more than that one retry.
+- "rate limit" or "usage limit reached" from the Go id: no retry, bilingual quota reply.
+- "API key has expired" / "unauthorized": bilingual key-renewal reply.
+- Success means exit code 0 and a non-empty reply text, nothing else. Words like "success" in the reply mean nothing.
+- Go plan turns are counted per day across all roles (`state/m/roles/opencode-go-turns.json`, shown by `role_list`).
+  `roles.go_daily_cap` (default 0 = off) refuses with a bilingual reply when reached. This is separate from the per-role cap.
+
+```
+"roles": { "opencode_extra_paid_models": [], "opencode_allow_bash": false, "opencode_allow_web": true, "opencode_timeout_s": 900, "go_daily_cap": 0, "daily_turn_cap": 200 }
+```
+
+How it works: `engines/opencode.js` gets the prompt on stdin, writes it to a file and runs
+`opencode run <short message> --standalone --auto --format json -m <id> [-s <session id>] -f <prompt file>` in the role's work
+folder with stdin closed, no shell, no console window. The reply is the text of the last assistant message. The OpenCode
+session id is kept in `state/m/roles/opencode-session-<role id>.json`; if resume fails, one fresh session starts.
+Each run is stopped after `roles.opencode_timeout_s` seconds (default 900): the process tree is killed and the reply says so, bilingual.
+
+Each run writes an `opencode.json` into the work folder (owned by this module, rewritten every turn) with:
+
+- the `taskmote-tools` MCP server (`node <repo>/bin/taskmote-mcp.js`, env HARNESS_STATE_DIR / HARNESS_CONFIG / HARNESS_TASK_ID);
+- permissions: access outside the work folder denied, reading `*.env` denied, editing `opencode.json`, `AGENTS.md`,
+  `CLAUDE.md`, `.opencode/`, `.claude/`, `.codex/` denied, shell commands denied unless `roles.opencode_allow_bash` is true;
+  network tools (web fetch, web search, Code Mode `execute` with its `fetch`) allowed unless `roles.opencode_allow_web` is
+  false, which denies all of them. With web off the `taskmote-tools` MCP tools are unreachable too (OpenCode exposes them
+  through Code Mode), so web off suits roles that only read and write files.
+
+Differences from a Codex role: `--auto` approves everything that is not explicitly denied and is not an OS sandbox; the
+denies above are OpenCode's own permission rules, not a sandbox. The network is on by default (see `opencode_allow_web`).
+
+Undo: `role_update {role, engine: "claude"}` (clear a model with `model: ""`), or remove the `opencode` entry from the config
+`engines` table so every OpenCode role falls back to Claude. Deleting `opencode-session-*.json` starts a fresh conversation.
+The `roles-opencode-engine` suite tests the script with a fake opencode: `node modules/roles/test/opencode-engine.js`.
+
+## Daily turn cap
+
+Roles on the Codex and OpenCode engines count their turns per role and local day in `state/m/roles/turns-<role id>.json`.
+The cap is the config key `roles.daily_turn_cap` (default 200, `0` = off). When a role reaches it, the turn is not run and the
+reply states the cap and that it resets tomorrow, in English and Traditional Chinese. Refused turns are not counted.
+
+## Known limits
+
+- A Codex or OpenCode role can read any file the user can read. Only Codex writes are sandboxed (to the work folder); OpenCode has no OS sandbox.
+- The Claude Code guard hooks (and Taskmote approval cards) do not run inside the Codex or OpenCode engines.
+- The network is on in an OpenCode turn by default (web fetch, web search, Code Mode `fetch`). Set `roles.opencode_allow_web` to false to deny every network tool; a shell command (`opencode_allow_bash`) could still reach the network, so keep that off too.
 
 ## Undo
 
