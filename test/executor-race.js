@@ -52,14 +52,17 @@ async function main() {
   const fenv = { ...env, HARNESS_ENGINE_SCRIPT: path.join(__dirname, 'fake-engine.js'), HARNESS_FAKE_DELAY_MS: '5000' };
   const H = (...a) => spawnSync(process.execPath, [HARNESS, ...a], { env: fenv, encoding: 'utf8', timeout: 60000 });
   const lockFile = path.join(state, 'executor.lock');
-  const readLock = () => { try { return JSON.parse(fs.readFileSync(lockFile, 'utf8')); } catch { return null; } };
+  // The last failed read is kept so a timing failure says why (missing file, sharing error, half-written JSON).
+  let lockErr = null;
+  const readLock = () => { try { return JSON.parse(fs.readFileSync(lockFile, 'utf8')); } catch (e) { lockErr = e.code || e.message; return null; } };
+  // Wait for the engine's lock and keep the value that was seen: a second read can miss a moment the file is unreadable.
+  const waitEngineLock = async () => { let lk = null; await waitFor(() => { const l = readLock(); if (l && l.pids.length === 2) lk = l; return !!lk; }); if (!lk) throw new Error(`executor.lock never showed 2 pids (last read error: ${lockErr})`); return lk; };
   const startBg = (req, dir) => spawn(process.execPath, [HARNESS, 'start', req, '--workdir', path.join(base, dir)], { env: fenv, stdio: 'ignore', windowsHide: true });
   const taskOf = req => journal().find(x => x.type === 'task_start' && x.request === req).task_id;
   {
     // B1: kill harness only while the engine waits; resume at once
     const h = startBg('race task 1', 'w1');
-    await waitFor(() => (readLock() || { pids: [] }).pids.length === 2);
-    const enginePid = readLock().pids[1];
+    const enginePid = (await waitEngineLock()).pids[1];
     killOnly(h.pid);
     const engineAlive = alive(enginePid);
     const r = H('resume');
@@ -86,7 +89,7 @@ async function main() {
   {
     // B3: second resume while the first harness is still running -> refuse
     const h = startBg('race task 3', 'w3');
-    await waitFor(() => (readLock() || { pids: [] }).pids.length === 2);
+    await waitEngineLock();
     const r = H('resume');
     await new Promise(ok => h.on('exit', ok));
     const t = taskOf('race task 3');

@@ -60,10 +60,10 @@ res['status shows last finished task, its folder, undo points 2, modules, and no
 const beforeUndo = read(outFile);
 const u1 = run(undoL, env);
 res['undo #1 restores out.txt to the earlier content'] = u1.status === 0 && read(outFile) === request + '\n';
-const back = (u1.out.match(/restore (\S+) (\d+)/) || []);
-res['undo prints how to get back (restore <task> <n>)'] = back[1] === start.task_id && u1.out.includes("Undo this with: HARNESS_OWNER=1 node bin/harness.js restore");
-const redo = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'harness.js'), 'restore', back[1] || 'x', back[2] || '0'], { cwd: ROOT, env: { ...env, HARNESS_OWNER: '1' }, encoding: 'utf8' });
-res['undo, then redo by restore: content is back exactly'] = redo.status === 0 && beforeUndo !== null && beforeUndo !== request + '\n' && read(outFile) === beforeUndo;
+const back = (u1.out.match(/Undo this with: taskmote undo --to (\d+) (\S+)/) || []);
+res['undo prints how to get back (undo --to <n> <task>)'] = back[2] === start.task_id;
+const redo = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'taskmote.js'), 'undo', '--to', back[1] || '0', back[2] || 'x'], { cwd: ROOT, env, encoding: 'utf8' });
+res['undo, then redo by undo --to: content is back exactly'] = redo.status === 0 && beforeUndo !== null && beforeUndo !== request + '\n' && read(outFile) === beforeUndo;
 const u2 = run(undo2L, env);
 res['undo #2 steps back further (out.txt gone)'] = u2.status === 0 && !fs.existsSync(outFile);
 const u3 = run(undo2L, env);

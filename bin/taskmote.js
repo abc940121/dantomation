@@ -21,7 +21,7 @@ const C = require('../lib/config');
 const M = require('../lib/modules');
 
 const HARNESS = path.join(__dirname, 'harness.js');
-const USAGE = 'usage: taskmote do "<request>" | do | status | undo | serve | token new [--worker] | <module verb>';
+const USAGE = 'usage: taskmote do "<request>" | do | status | undo [--to <n> | fork <n>] | serve | token new [--worker] | <module verb>';
 const fail = (msg, code = 1) => { console.error(msg); process.exit(code); };
 
 // demo also runs before the config is read: it must not need, read or touch the owner's config or state.
@@ -151,7 +151,8 @@ async function statusDirect() {
 async function undoVerb(args) {
   // Agents run inside an engine, which always sets HARNESS_TASK_ID: they never undo.
   if (process.env.HARNESS_TASK_ID) fail('undo is for the person at the keyboard, not for agents (HARNESS_TASK_ID is set). Stopping.', 6);
-  const info = serverInfo();
+  // With arguments (--to, fork) it runs here directly; only a plain undo goes through the server.
+  const info = !(args && args.length) && serverInfo();
   if (info) {
     const ck = (await loadModules()).find(m => m.api && typeof m.api.undoInfo === 'function');
     const id = ck && ck.api.undoInfo(J).task;
@@ -202,6 +203,8 @@ const TRUNK = { do: doVerb, status: statusVerb, undo: undoVerb,
     console.log(`${worker ? 'worker ' : ''}token written to ${require('../lib/server').tokenNew(worker ? 'worker' : undefined)} (owner-only); send it as: Authorization: Bearer <token>${worker ? ' (it may only call /api/worker/ and module routes marked access: worker)' : ''}`);
   } };
 const run = Object.prototype.hasOwnProperty.call(TRUNK, verb) ? TRUNK[verb] : (verb && moduleVerb);
+const MOVED = { restore: 'taskmote undo --to <n> <task>', fork: 'taskmote undo fork' };
+if (Object.prototype.hasOwnProperty.call(MOVED, verb)) console.error(`note: "taskmote ${verb}" is now "${MOVED[verb]}"; the old spelling still works for now.`);
 if (DEV.includes(verb)) console.error(`note: "taskmote ${verb}" is now "taskmote dev ${verb}"; the old spelling still works for now.`);
 if (!run) fail(USAGE, 2);
 else run(rest).catch(e => fail(`taskmote: ${e && e.stack || e}`, 1));

@@ -11,10 +11,10 @@ const forkOpts = settings => ({ base: settings && settings.fork_dir ? settings.f
 const errMsg = e => String((e && e.message) || e).split('\n')[0].slice(0, 200);
 const bad = e => ({ status: 400, json: { error: errMsg(e) } });
 
-// harness.js fork <task> <n> | fork steps <task> | fork diff <task> <a> <b> | fork list
+// taskmote undo fork <task> <n> | undo fork steps <task> | undo fork diff <task> <a> <b> | undo fork list
 // Not for agents: refuses when HARNESS_TASK_ID is set. It only reads the original folder.
 function forkCmd(args, ctx) {
-  if (process.env.HARNESS_TASK_ID) { console.error('fork is for the person at the keyboard, not for agents (HARNESS_TASK_ID is set). Stopping.'); process.exit(6); }
+  if (process.env.HARNESS_TASK_ID) { console.error('undo fork is for the person at the keyboard, not for agents (HARNESS_TASK_ID is set). Stopping.'); process.exit(6); }
   const [a, b, c, d] = args;
   try {
     if (a === 'steps' && b) { for (const s of fk.steps(b)) console.log(`${s.step}\t${s.tool}\t${s.time}\t${s.ref}${s.safety ? '\t(restore safety point)' : ''}`); return; }
@@ -25,7 +25,7 @@ function forkCmd(args, ctx) {
       console.log(`forked step ${r.step} of task ${r.parent_task} into ${r.path} (fork ${r.id}); original folder untouched. Start a task there to continue.`);
       return;
     }
-    console.error('usage: harness fork <task> <n> | fork steps <task> | fork diff <task> <a> <b> | fork list'); process.exitCode = 2;
+    console.error(UNDO_USAGE); process.exitCode = 2;
   } catch (e) { console.error(`fork failed: ${errMsg(e)}`); process.exitCode = 1; }
 }
 
@@ -98,11 +98,47 @@ function undoInfo(J) {
   return t ? { task: t.task_id, count: undoStack(J.readAll().records, t.task_id).length } : { task: null, count: 0 };
 }
 
+const UNDO_USAGE = 'usage: taskmote undo | undo --to <n> [<task>] | undo fork <n> | undo fork <task> <n> | undo fork steps <task> | undo fork diff <task> <a> <b> | undo fork list';
+const redoLine = (task, n) => `Undo this with: taskmote undo --to ${n} ${task}`;
+const handWarning = hand => `warning: ${hand.length} file(s) changed after the task ended, likely by hand: ${hand.slice(0, 5).join(', ')}${hand.length > 5 ? ` and ${hand.length - 5} more` : ''}. Undo resets them too; your version is kept in a safety point (see "Undo this with" below).`;
+
+// taskmote undo --to <n> [<task>]: put the folder back to undo point n (default: the latest
+// task). Like a plain undo it first saves a safety point, so it can be undone too.
+function undoTo(n, task, { J, EXEC_LOCK }) {
+  const records = J.readAll().records;
+  const t = task ? [...records].reverse().find(r => r.type === 'task_start' && r.task_id === task) : latestTask(records);
+  if (!t) { console.error(task ? `no task ${task}` : 'nothing to undo: no task yet'); process.exit(task ? 2 : 0); }
+  const l = J.lock(EXEC_LOCK, { pids: [process.pid], task_id: t.task_id, restore: true });
+  if (!l.held) { console.error('a task is still running; wait for it to finish (or stop it) before undoing'); process.exit(4); }
+  try {
+    let hand = [];
+    try { hand = handEdits(t.task_id, records, ck.treeOf(t.task_id, n), ck.currentTree(t.task_id, ck.taskDir(t.task_id)), ck.taskDir(t.task_id)); } catch { /* best effort */ }
+    if (hand.length) console.log(handWarning(hand));
+    const r = ck.restore(t.task_id, n, { user: true });
+    J.append({ type: 'undo', task_id: t.task_id, n: Number(n), ref: r.ref, undo_ref: r.undo.ref });
+    console.log(`undone: ${t.workdir} is back to undo point ${n} of task ${t.task_id}; removed ${r.removed.length} file(s) added since.`);
+    console.log(redoLine(t.task_id, r.undo.n));
+  } catch (e) { console.error(`undo failed: ${e.message.split(String.fromCharCode(10))[0]}`); process.exitCode = 1; } finally { J.unlock(EXEC_LOCK, l.nonce); }
+}
+
 // taskmote undo: the person's own command. Agents are kept out twice: it
 // refuses when HARNESS_TASK_ID is set (the engine env), and guard-base blocks
 // agent commands that name the verb. No HARNESS_OWNER needed.
-function undoCmd(args, { J, EXEC_LOCK }) {
+// With no arguments it steps back one agent change, as it always has.
+function undoCmd(args, ctx) {
+  const { J, EXEC_LOCK } = ctx;
   if (process.env.HARNESS_TASK_ID) { console.error('undo is for the person at the keyboard, not for agents (HARNESS_TASK_ID is set). Stopping.'); process.exit(6); }
+  const [a, b, c, ...more] = args || [];
+  const isN = x => /^[0-9]+$/.test(String(x || ''));
+  if (a === 'fork') {
+    if (isN(b) && c === undefined) { const t = latestTask(J.readAll().records); if (!t) { console.error('nothing to fork: no task yet'); process.exit(2); } return forkCmd([t.task_id, b], ctx); }
+    return forkCmd(args.slice(1), ctx);
+  }
+  if (a === '--to') {
+    if (!isN(b) || more.length || (c !== undefined && !/^[A-Za-z0-9._-]+$/.test(c))) { console.error(UNDO_USAGE); process.exit(2); }
+    return undoTo(b, c, ctx);
+  }
+  if (a !== undefined) { console.error(UNDO_USAGE); process.exit(2); }
   const records = J.readAll().records;
   const t = latestTask(records);
   if (!t) { console.log('nothing to undo: no task yet'); return; }
@@ -122,7 +158,7 @@ function undoCmd(args, { J, EXEC_LOCK }) {
     const n = stack[stack.length - 1];
     let hand = [];
     try { if (cur) hand = handEdits(t.task_id, records, ck.treeOf(t.task_id, n), cur, ck.taskDir(t.task_id)); } catch { /* the warning is best effort */ }
-    if (hand.length) console.log(`warning: ${hand.length} file(s) changed after the task ended, likely by hand: ${hand.slice(0, 5).join(', ')}${hand.length > 5 ? ` and ${hand.length - 5} more` : ''}. Undo resets them too; your version is kept in a safety point (see "Undo this with" below).`);
+    if (hand.length) console.log(handWarning(hand));
     // restore() takes a fresh checkpoint of the current state before it changes
     // anything (r.undo), so the undo itself can be undone.
     const r = ck.restore(t.task_id, n, { user: true });
@@ -130,7 +166,7 @@ function undoCmd(args, { J, EXEC_LOCK }) {
     let left = stack.length - 1;
     try { left = distinctPoints(t.task_id, stack.slice(0, -1), ck.treeOf(t.task_id, n)); } catch { /* raw count */ }
     console.log(`undone: ${t.workdir} is back to the state before agent change ${n} of task ${t.task_id}; removed ${r.removed.length} file(s) added since. ${left} more undo point(s).`);
-    console.log(`Undo this with: HARNESS_OWNER=1 node bin/harness.js restore ${t.task_id} ${r.undo.n}   (PowerShell: $env:HARNESS_OWNER='1'; node bin/harness.js restore ${t.task_id} ${r.undo.n})`);
+    console.log(redoLine(t.task_id, r.undo.n));
   } catch (e) { console.error(`undo failed: ${e.message.split(String.fromCharCode(10))[0]}`); process.exitCode = 1; } finally { J.unlock(EXEC_LOCK, l.nonce); }
 }
 

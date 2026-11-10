@@ -18,6 +18,7 @@ const { spawnSync, execFileSync } = require('child_process');
 const ROOT = path.resolve(__dirname, '..', '..', '..');
 const GUARD = path.join(ROOT, 'guards', 'guard.js');
 const HARNESS = path.join(ROOT, 'bin', 'harness.js');
+const TASKMOTE = path.join(ROOT, 'bin', 'taskmote.js');
 if (!require(path.join(ROOT, 'lib', 'config')).load().modules.checkpoint) { console.log('SKIP: checkpoint is not enabled in this config'); process.exit(0); }
 const base = fs.mkdtempSync(path.join(os.tmpdir(), 'ck-'));
 const state = path.join(base, 'state');
@@ -173,15 +174,38 @@ const warn6 = (String(u6.stdout).match(/warning: .*/) || [''])[0];
 console.log(`6: undo after a hand edit: exit ${u6.status}; ${warn6}`);
 res['6 undo warns about the hand-edited file only'] = u6.status === 0 && /warning: 1 file\(s\) changed after the task ended, likely by hand: a\.txt\./.test(warn6) && !/b\.txt/.test(warn6);
 res['6 undo still undoes (agent file b.txt removed)'] = !fs.existsSync(path.join(w4, 'b.txt')) && fs.readFileSync(path.join(w4, 'a.txt'), 'utf8') === 'agent a\n';
-const back6 = (u6.stdout.match(/restore tHAND (\d+)/) || [])[1];
-const r6 = harness(['restore', 'tHAND', back6], { HARNESS_STATE_DIR: st4, HARNESS_OWNER: '1' });
-res['6 the printed restore line brings the hand edit back'] = r6.status === 0 && fs.readFileSync(path.join(w4, 'a.txt'), 'utf8') === 'edited by hand\n';
+const back6 = (u6.stdout.match(/Undo this with: taskmote undo --to (\d+) tHAND/) || [])[1];
+const r6 = spawnSync(process.execPath, [TASKMOTE, 'undo', '--to', String(back6), 'tHAND'], { env: env4, encoding: 'utf8' });
+res['6 the printed undo --to line brings the hand edit back (no HARNESS_OWNER needed)'] = r6.status === 0 && fs.readFileSync(path.join(w4, 'a.txt'), 'utf8') === 'edited by hand\n';
+res['6 undo --to prints its own way back'] = /Undo this with: taskmote undo --to \d+ tHAND/.test(r6.stdout);
 const u6b = (() => { const s = path.join(base, 'state5'), d = path.join(base, 'w5'); fs.mkdirSync(d, { recursive: true }); fs.mkdirSync(s, { recursive: true });
   fs.writeFileSync(path.join(s, 'journal.jsonl'), JSON.stringify({ id: 'y', ts: new Date().toISOString(), type: 'task_start', task_id: 'tNOEXIT', request: 'r', workdir: d }) + '\n');
   spawnSync(process.execPath, [GUARD], { env: { ...env, HARNESS_STATE_DIR: s, HARNESS_TASK_ID: 'tNOEXIT', HARNESS_TASK_DIR: d }, input: JSON.stringify({ session_id: 's', tool_name: 'Write', tool_input: { file_path: path.join(d, 'c.txt'), content: 'x' }, cwd: d }), encoding: 'utf8' });
   fs.writeFileSync(path.join(d, 'c.txt'), 'c\n');
   return spawnSync(process.execPath, [HARNESS, 'undo'], { env: { ...env, HARNESS_STATE_DIR: s }, encoding: 'utf8' }); })();
 res['6 no engine_exit record: no warning, undo as before'] = u6b.status === 0 && !/warning:/.test(u6b.stdout) && /removed 1 file/.test(u6b.stdout);
+
+// ---- 7. undo --to / undo fork / bad args / old spellings (ticket c)
+const tm = (args, extra) => spawnSync(process.execPath, [TASKMOTE, ...args], { env: { ...env4, ...(extra || {}) }, encoding: 'utf8' });
+const bad = [['bogus'], ['--to'], ['--to', 'x'], ['--to', '1', 'a/b'], ['--to', '1', 'tHAND', 'extra']].map(a => tm(['undo', ...a]));
+res['7 undo with unknown args: usage, exit 2'] = bad.every(r => r.status === 2 && /usage: taskmote undo \| undo --to <n>/.test(r.stderr));
+const tNo = tm(['undo', '--to', '1', 'tNOPE']);
+res['7 undo --to an unknown task: exit 2, names it'] = tNo.status === 2 && /no task tNOPE/.test(tNo.stderr);
+const tAgent = tm(['undo', '--to', '1', 'tHAND'], { HARNESS_TASK_ID: 'x' });
+res['7 undo --to refuses inside an engine (exit 6)'] = tAgent.status === 6;
+const latestTo = tm(['undo', '--to', '1']);
+res['7 undo --to <n> with no task uses the latest task'] = latestTo.status === 0 && /back to undo point 1 of task tHAND/.test(latestTo.stdout) && !fs.existsSync(path.join(w4, 'a.txt')) && !fs.existsSync(path.join(w4, 'b.txt'));
+const fk = tm(['undo', 'fork', '2']);
+const fkPath = (fk.stdout.match(/into (.+?) \(fork /) || [])[1];
+res['7 undo fork <n> forks step n of the latest task into a new folder'] = fk.status === 0 && /forked step 2 of task tHAND/.test(fk.stdout) && !!fkPath && fs.readFileSync(path.join(fkPath, 'a.txt'), 'utf8') === 'agent a\n';
+const fl = tm(['undo', 'fork', 'list']);
+res['7 undo fork list shows the fork'] = fl.status === 0 && /tHAND step 2/.test(fl.stdout);
+const oldFork = tm(['fork', 'list']);
+res['7 old "taskmote fork" still runs and names "taskmote undo fork"'] = oldFork.status === 0 && /tHAND step 2/.test(oldFork.stdout) && /note: "taskmote fork" is now "taskmote undo fork"/.test(oldFork.stderr);
+const oldRestore = tm(['restore', 'tHAND', '1']);
+res['7 old "taskmote restore" names "taskmote undo --to" and stays owner-only'] = oldRestore.status === 6 && /note: "taskmote restore" is now "taskmote undo --to <n> <task>"/.test(oldRestore.stderr);
+const forkAgent = tm(['undo', 'fork', 'list'], { HARNESS_TASK_ID: 'x' });
+res['7 undo fork refuses inside an engine (exit 6)'] = forkAgent.status === 6;
 
 let ok = true;
 for (const [k, v] of Object.entries(res)) { ok = ok && v; console.log(`${v ? 'PASS' : 'FAIL'} ${k}`); }

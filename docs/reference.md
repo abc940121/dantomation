@@ -6,7 +6,7 @@ The lower-level reference that used to live in the README: the CLI details, the 
 
 - `do "<request>"` starts a task in the bot's folder, `work/bot-main`, kept between tasks (with `engine.profile: "locked"` each task gets a fresh `work/<task id>`; add `--workdir <dir>` to use your own). If it is interrupted (shutdown, kill), run `node bin/taskmote.js do` with no request to resume it. Starting a second task while one is open is refused, with the resume command in the message.
 - `status` prints the open task (request, steps done, last step), the last finished task, how many undo points exist (only points an undo would stop at; points that match the next one are not counted), which modules are on, and any config warning.
-- `undo` rolls the latest task's folder back to the state before the agent's last change; run it again to step back one more. It needs the `checkpoint` module (on by default) and works only for tasks started while it was on. It cannot run while a task is running, and agents cannot run it. When nothing is left it says so. Each undo first takes a fresh checkpoint and prints the line that brings the undone state back (`HARNESS_OWNER=1 node bin/harness.js restore <task> <n>`), so an undo can itself be undone. If files it resets changed after the task ended (most likely edited by hand), it prints a warning naming them before undoing; that version is in the safety point the restore line brings back.
+- `undo` rolls the latest task's folder back to the state before the agent's last change; run it again to step back one more. It needs the `checkpoint` module (on by default) and works only for tasks started while it was on. It cannot run while a task is running, and agents cannot run it. When nothing is left it says so. Each undo first takes a fresh checkpoint and prints the line that brings the undone state back (`taskmote undo --to <n> <task>`), so an undo can itself be undone. `undo --to <n> [<task>]` jumps straight to undo point n (default: the latest task); `undo fork <n>` copies the folder as it was at step n into a new folder. If files it resets changed after the task ended (most likely edited by hand), it prints a warning naming them before undoing; that version is in the safety point the printed line brings back.
 - With the `approval-cards` module on, a risky action (git push, deleting outside the task folder, installs, publishing, paid API calls) stops and waits for you. `status` shows the card; answer with `node bin/taskmote.js do yes` or `do no` (an unclear answer asks again; no answer for 10 minutes counts as no). See [`approval-cards`](../modules/approval-cards/README.md).
 - Undo is protected by convention only (see Known limits).
 
@@ -65,7 +65,7 @@ Every field but `contract` and `name` is optional, and every callback may be asy
 | Module | What it does | Default |
 |---|---|---|
 | [`guard-base`](../modules/guard-base/README.md) | API keys, deletion, hook skip, secrets, rule against agents running restore, undo or naming HARNESS_OWNER | on |
-| [`checkpoint`](../modules/checkpoint/README.md) | snapshot before each mutating call; owner-only `harness.js restore` | on |
+| [`checkpoint`](../modules/checkpoint/README.md) | snapshot before each mutating call; `undo`, `undo --to`, `undo fork` | on |
 | [`worker`](../modules/worker/README.md) | provisional: pull-based worker for a second machine (outbound HTTP only) | off |
 | [`guard-private-rules`](../modules/guard-private-rules/README.md) | owner's rules file, self-protection of the config | off |
 | [`spend-count`](../modules/spend-count/README.md) | block a session over the spend limit | off |
@@ -88,8 +88,8 @@ Other features checked and kept in core: the stale-lock wait for a "transient" h
     node bin/harness.js start "<request>" [--workdir <dir>]
     node bin/harness.js resume        # after a shutdown or kill
     node bin/harness.js status        # print the resume prompt for the open task
-    HARNESS_OWNER=1 node bin/harness.js restore <task> <n>   # owner only: roll the task folder back to checkpoint n
-                                      # (PowerShell: $env:HARNESS_OWNER='1'; node bin/harness.js restore <task> <n>)
+    taskmote undo --to <n> [<task>]   # roll the task folder back to undo point n (old spelling: restore)
+    taskmote undo fork <n>            # copy step n of the latest task into a new folder (old spelling: fork)
 
 Interactive Claude Code sessions opened in this folder also get the guard (`.claude/settings.json`).
 
@@ -151,7 +151,7 @@ A module suite prints `SKIP` when its module is off in the current config. Tests
 
 ## Known limits
 
-- **Undo is protected by convention only.** `taskmote undo` refuses inside an engine (`HARNESS_TASK_ID` is set) and guard-base blocks agent spellings of it, but that is pattern matching, not a sandbox. An agent that gets past the guard (guard-base switched off, or an obfuscated command) could still run undo. The checkpoint taken just before every undo keeps that recoverable with `restore`.
+- **Undo is protected by convention only.** `taskmote undo` refuses inside an engine (`HARNESS_TASK_ID` is set) and guard-base blocks agent spellings of it, but that is pattern matching, not a sandbox. An agent that gets past the guard (guard-base switched off, or an obfuscated command) could still run undo. The checkpoint taken just before every undo keeps that recoverable with `undo --to`.
 - The same holds for answering approval cards: the answer verb refuses inside an engine and the module blocks agent spellings of it; with the guard bypassed an agent could answer its own card.
 
 Core limits are here; each module's limits (the guard is not a sandbox, checkpoint coverage, spend accounting, voice) are in its README.
