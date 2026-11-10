@@ -104,6 +104,18 @@ async function run(reg, args, cfgExtra) {
     check('spend: shown in text', /spend: \$1\.75/.test(r.out), r.out);
     fs.unlinkSync(spFile);
 
+    // include_titles off: counts and spend stay, card titles go, the item count is kept
+    {
+      const rt2 = M.registry({ modules: { digest: true }, digest: { include_titles: false } });
+      check('include_titles defaults to true', reg.settingsFor('digest').include_titles === true);
+      r = await run(rt2, ['--since', '24h', '--json']);
+      const jt = JSON.parse(r.out);
+      check('include_titles off: no title in the json', r.code === 0 && jt.counts.cards_open === 1 && !JSON.stringify(jt).includes('rm -rf') && jt.notable.length === j.notable.length, JSON.stringify(jt.notable));
+      check('include_titles off: card line keeps the card id', jt.notable.some(l => l === 'Approval waiting: (card c1)'), jt.notable.join(' | '));
+      r = await run(rt2, ['--since', '24h']);
+      check('include_titles off: text has counts and no title', /tasks: 2 started/.test(r.out) && !r.out.includes('rm -rf'), r.out);
+    }
+
     // notable list is capped
     seed(Array.from({ length: 15 }, (_, i) => ({ ts: iso(H), type: 'task_done', task_id: 't' + i, failed: true, code: 1 })));
     r = await run(reg, ['--since', '24h', '--json']);

@@ -10,6 +10,7 @@ Enable: `"modules": {"digest": true}`.
 
 - `--since` takes an ISO date/time (`2026-01-31T08:00:00Z`) or a span (`30m`, `12h`, `2d`). Bad input exits 2.
 - Without `--since` it uses the time of the last digest run, or the last 24 hours (setting `default_hours`).
+- Setting `include_titles` (boolean, default true): off drops card titles from the notable lines (counts, spend and ids only); the number of lines stays the same.
 - The output has counts first, then up to 10 lines: waiting approval cards and questions, failed tasks, stalls, overruns, unverified claims, tripwire hits.
 - The last-run time is kept in this module's state folder. Only the command updates it.
 

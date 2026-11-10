@@ -51,7 +51,7 @@ function readSpend(sinceMs, now) {
 }
 
 // Pure: records -> summary. Unknown or missing record kinds simply count as zero.
-function summarize(records, sinceMs, now, spend) {
+function summarize(records, sinceMs, now, spend, titles = true) {
   const inWin = r => { const t = Date.parse(r && r.ts); return !Number.isNaN(t) && t >= sinceMs && t <= now; };
   const c = { tasks_started: 0, tasks_done: 0, tasks_failed: 0, tasks_stopped: 0, claims_flagged: 0, tripwires: 0, stalls: 0, overruns: 0, cards_answered: 0, cards_open: 0, questions_open: 0 };
   const fail = [], stall = [], over = [], claim = [], trip = [], open = [];
@@ -66,7 +66,7 @@ function summarize(records, sinceMs, now, spend) {
     else if (['question_answer', 'question_expire', 'question_cancel'].includes(r.type) && qs.has(r.question_id)) qs.get(r.question_id).open = false;
   }
   const alive = x => x.open && !(x.expires_at && Date.parse(x.expires_at) <= now);
-  for (const x of cards.values()) if (alive(x)) { c.cards_open++; open.push(`Approval waiting: ${clip(x.summary || x.tool || x.card_id, 80)} (card ${x.card_id})`); }
+  for (const x of cards.values()) if (alive(x)) { c.cards_open++; open.push(`Approval waiting: ${titles ? clip(x.summary || x.tool || x.card_id, 80) + ' ' : ''}(card ${x.card_id})`); }
   for (const x of qs.values()) if (alive(x)) { c.questions_open++; open.push(`Question waiting: ${x.question_id}${x.task_id ? ' (task ' + x.task_id + ')' : ''}`); }
 
   for (const r of records) {
@@ -116,7 +116,7 @@ function build(ctx, sinceArg, now) {
   }
   let records = [];
   try { records = J.readAll().records; } catch { /* no journal: empty digest */ }
-  return summarize(records, sinceMs, now, readSpend(sinceMs, now));
+  return summarize(records, sinceMs, now, readSpend(sinceMs, now), !(ctx.settings && ctx.settings.include_titles === false));
 }
 
 // Push goes out as the event digest.ready {text}. A notifier module (notifications, ntfy)
@@ -156,7 +156,10 @@ module.exports = {
   runsOn: 'main',
   priority: 90,
   emits: [],
-  settings: { default_hours: { type: 'integer', default: 24, min: 1, max: 720, description: 'look-back when there is no last run and no --since' } },
+  settings: {
+    default_hours: { type: 'integer', default: 24, min: 1, max: 720, description: 'look-back when there is no last run and no --since' },
+    include_titles: { type: 'boolean', default: true, description: 'show card titles in the notable lines (off: counts, spend and ids only, so a pushed digest carries no titles)' },
+  },
   commands: { digest },
   routes: [{
     method: 'GET', path: '/digest', access: 'owner', description: 'summary as JSON (?since=<ISO|12h|2d>)',

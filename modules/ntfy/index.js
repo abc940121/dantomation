@@ -49,7 +49,9 @@ async function ping(ctx, kind, taskId, extra, flush, raw) {
   // Send gate: a module may ask to hold this ping. A throw or any answer but true sends as usual. A raw send skips the gate.
   if (gate && !raw) {
     let hold = false;
-    try { hold = (await gate({ kind: KINDS[kind], task_id: id, text: message(kind, id, title, extra) })) === true; } catch { hold = false; }
+    try { hold = (await gate({ kind: KINDS[kind], task_id: id, text: message(kind, id, title, extra) })) === true; } catch (e) {
+      try { ctx.state.append({ type: 'ntfy_gate_error', kind: KINDS[kind], task_id: id, msg: String(e && e.message || e).slice(0, 80) }); } catch { /* journal trouble never blocks */ }
+    }
     if (hold) return { sent: false, reason: 'held_by_gate', held: true }; // the gate owns it; not a failure, so not journaled as one
   }
   const now = Date.now();
@@ -127,7 +129,27 @@ function lastSend(J, pick = () => true) {
   for (let i = recs.length - 1; i >= 0; i--) if (recs[i].type === 'ntfy_sent' && recs[i].module === 'ntfy' && pick(recs[i])) return recs[i];
   return null;
 }
+const PUBLIC_HOST = 'ntfy.sh';
+function guessable(ctx, topic) {
+  let host = ''; try { host = new URL(String(ctx.settings.server)).hostname.toLowerCase(); } catch { /* not a URL */ }
+  return host === PUBLIC_HOST && (topic.length < 16 || !/\d/.test(topic));
+}
+function lastGateError(J) {
+  const recs = (J && J.readAll ? J.readAll().records : []);
+  let n = 0, last = null;
+  for (const r of recs) if (r.type === 'ntfy_gate_error' && r.module === 'ntfy') { n++; last = r; }
+  return last ? { n, last } : null;
+}
 function statusLine(J, ctx) {
+  const base = statusCore(J, ctx);
+  const topic = ctx.secret('topic');
+  if (!topic || !topicOk(topic) || !serverUrl(ctx.settings.server)) return base;
+  const ge = lastGateError(J);
+  const gw = ge ? `; send gate errored ${ge.n} time(s), last ${String(ge.last.ts || '').slice(0, 16).replace('T', ' ')}: ${ge.last.msg}` : '';
+  const warn = guessable(ctx, topic) ? '; WARNING: anyone who guesses this topic on the public ntfy.sh can read your pings; use a long random topic or your own server' : '';
+  return base + gw + warn;
+}
+function statusCore(J, ctx) {
   const topic = ctx.secret('topic');
   if (!topic) return 'ntfy: no topic (silent)';
   if (!topicOk(topic)) return `ntfy: topic set but unusable: ${WHY.bad_topic}`;

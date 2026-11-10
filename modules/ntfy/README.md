@@ -35,6 +35,7 @@ The topic is a secret: set it with `node bin/harness.js secret ntfy topic`; it i
 - `timeout_ms` integer 500..4500, default 4000
 
 A failed send never stops a task. `taskmote status` shows one ntfy line: no topic (silent), the last ping sent, or the last failure and which setting to fix. Events reach this module only inside the process that emits them (no cross-process transport yet), so a card created in another process does not ping.
+A throwing send gate does not hold the ping; it is journaled as `ntfy_gate_error` and `taskmote status` shows the count and last message. Status also warns when the server is the public ntfy.sh and the topic is shorter than 16 characters or has no digits (the topic is never printed).
 
 Test: `node test/run-all.js module ntfy`
 

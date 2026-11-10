@@ -161,6 +161,37 @@ const TOPIC = 'zq-secret-topic-91x';
     check('bad server: nothing sent, status says the server setting is wrong', hits.length === n2 && /ntfy: the "server" setting is not a plain http\(s\) URL/.test(st4), st4);
     check('bad server drop is journaled with why', J.readAll().records.some(r => r.type === 'ntfy_sent' && r.why === 'bad_server' && r.task_id === 't10'));
 
+    // a throwing send gate still sends, and the error is journaled and shown in status
+    {
+      sentReset();
+      const rg = mk({ server: base });
+      rg.updateSettings('ntfy', { topic: TOPIC }, { save: async () => {} });
+      const undo = rg.api('ntfy').setSendGate(() => { throw new Error('gate boom ' + 'x'.repeat(200)); });
+      const n3 = hits.length;
+      await M.emit(rg.mods, 'task.end', { task_id: 'tg1', code: 0, workdir: '/w' });
+      await settle();
+      const ge = J.readAll().records.filter(r => r.type === 'ntfy_gate_error' && r.module === 'ntfy');
+      check('gate throw: ping still sent', hits.length === n3 + 1);
+      check('gate throw: journaled with kind, task and a message cut to 80', ge.length === 1 && ge[0].kind === 'task_finished' && ge[0].task_id === 'tg1' && ge[0].msg.startsWith('gate boom') && ge[0].msg.length === 80, JSON.stringify(ge));
+      const stg = await status(rg);
+      check('gate throw: status shows count, time and message', /; send gate errored 1 time\(s\), last \d{4}-\d{2}-\d{2} \d{2}:\d{2}: gate boom/.test(stg), stg);
+      undo();
+    }
+    // the public ntfy.sh host with a guessable topic is warned about, without printing the topic
+    {
+      const WARN = /WARNING: anyone who guesses this topic on the public ntfy\.sh/;
+      const pub = t => { const r = M.registry({ modules: { ntfy: true } }); r.updateSettings('ntfy', { topic: t }, { save: async () => {} }); return status(r); };
+      const shortT = await pub('abc123');
+      check('public host, short topic: warned, topic not printed', WARN.test(shortT) && !shortT.includes('abc123'), shortT);
+      const letters = await pub('onlylettersinthistopicname');
+      check('public host, all letters: warned, topic not printed', WARN.test(letters) && !letters.includes('onlylettersinthistopicname'), letters);
+      const strong = await pub('k3x9q2m7v1z8w4t6');
+      check('public host, long topic with digits: no warning', !WARN.test(strong), strong);
+      const own = mk({ server: base });
+      own.updateSettings('ntfy', { topic: 'abc' + '1' }, { save: async () => {} });
+      check('own server, short topic: no warning', !WARN.test(await status(own)));
+    }
+
     check('topic in config is a load error', mk({ topic: 'abcd1234' }).errors.length >= 1);
     const api = mk({}).api('ntfy');
     check('non-http server refused', api.serverUrl('ftp://x') === null);
