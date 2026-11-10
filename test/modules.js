@@ -62,7 +62,7 @@ for (const rel of ['lib/config.js', 'lib/modules.js', 'lib/preset.js', 'presets/
   res['taskmote looks up trunk verbs before module verbs'] = src.includes('Object.prototype.hasOwnProperty.call(TRUNK, verb) ? TRUNK[verb] : (verb && moduleVerb)');
 }
 // every production entry point gets its module map from config.load(), never from a raw map
-for (const rel of ['bin/harness.js', 'bin/taskmote.js', 'bin/approve-mcp.js', 'guards/guard.js', 'lib/server.js']) {
+for (const rel of ['bin/harness.js', 'bin/taskmote.js', 'bin/approve-mcp.js', 'bin/taskmote-mcp.js', 'guards/guard.js', 'lib/server.js']) {
   const src = fs.readFileSync(path.join(ROOT, rel), 'utf8');
   const calls = src.match(/\bM\.load\(([^)]*)\)/g) || [];
   res[`${rel}: module map comes from config.load()`] = /\bC\.load\(\)/.test(src) && calls.every(c => /M\.load\((CONFIG|cfg)\)/.test(c));
@@ -70,7 +70,7 @@ for (const rel of ['bin/harness.js', 'bin/taskmote.js', 'bin/approve-mcp.js', 'g
 
 // a new entry point that loads modules must join the list above, or this fails
 {
-  const ENTRIES = new Set(['bin/harness.js', 'bin/taskmote.js', 'bin/approve-mcp.js', 'guards/guard.js', 'lib/server.js']);
+  const ENTRIES = new Set(['bin/harness.js', 'bin/taskmote.js', 'bin/approve-mcp.js', 'bin/taskmote-mcp.js', 'guards/guard.js', 'lib/server.js']);
   const extra = [];
   for (const dir of ['bin', 'lib', 'guards']) for (const f of fs.readdirSync(path.join(ROOT, dir))) {
     if (!f.endsWith('.js')) continue;

@@ -1,0 +1,207 @@
+#!/usr/bin/env node
+'use strict';
+// bin/taskmote-mcp.js, Taskmote's own MCP stdio server (ask_owner, queue_task, task_status, undo_task,
+// digest, search_journal). Spawns the real server against temp dirs and the fake engine:
+//   a. initialize, ping, tools/list (four read-only tools by default, six with --allow-write; --no-ask), unknown tool / method errors
+//   b. happy paths: queue_task -> task_status -> search_journal -> digest -> undo_task;
+//      ask_owner answered through `taskmote ask answer`, and ask_owner timing out as {answered:false}
+//   c. undo_task owner card (Undo / Keep / timeout / cards off) and while the executor lock is held: blocked, nothing changed
+//   d. modules off: each module-backed tool answers with text naming the module to enable; no crash
+// Runs in any mode: it writes its own configs in a temp dir.
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { spawn, spawnSync } = require('child_process');
+
+const ROOT = path.resolve(__dirname, '..');
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'harness-tmcp-'));
+const results = [];
+const check = (label, ok, info) => { results.push(!!ok); console.log(`${ok ? 'PASS' : 'FAIL'} ${label}${!ok && info !== undefined ? ': ' + String(typeof info === 'string' ? info : JSON.stringify(info)).slice(0, 300) : ''}`); };
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+function mkEnv(name, modules) {
+  const d = path.join(tmp, name);
+  fs.mkdirSync(d, { recursive: true });
+  const cfg = path.join(d, 'config.json');
+  fs.writeFileSync(cfg, JSON.stringify({ owner_name: 'Tester', modules }));
+  const env = { ...process.env, HARNESS_CONFIG: cfg, HARNESS_STATE_DIR: path.join(d, 'state'), HARNESS_LOG_DIR: path.join(d, 'logs'), HARNESS_WORK_DIR: path.join(d, 'work'),
+    HARNESS_ENGINE_SCRIPT: path.join(ROOT, 'test', 'fake-engine.js'), HARNESS_FAKE_DELAY_MS: '0', HARNESS_FAKE_GUARD: '1', HARNESS_NO_SERVER: '1', HARNESS_MCP_POLL_MS: '50',
+    GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
+  delete env.HARNESS_TASK_ID; delete env.HARNESS_TASK_DIR; delete env.HARNESS_OWNER;
+  return { d, env };
+}
+
+// One server process; call(method, params) -> the JSON-RPC response (rejects after 30 s).
+function startServer(env, args = []) {
+  const child = spawn(process.execPath, [path.join(ROOT, 'bin', 'taskmote-mcp.js'), ...args], { env, stdio: ['pipe', 'pipe', 'pipe'] });
+  const waiting = new Map(); let buf = '', nextId = 1;
+  child.stdout.on('data', c => {
+    buf += c;
+    let i;
+    while ((i = buf.indexOf('\n')) >= 0) { const l = buf.slice(0, i); buf = buf.slice(i + 1); if (!l.trim()) continue; const m = JSON.parse(l); const w = waiting.get(m.id); if (w) { waiting.delete(m.id); w(m); } }
+  });
+  const call = (method, params) => new Promise((res, rej) => {
+    const id = nextId++;
+    const t = setTimeout(() => { waiting.delete(id); rej(new Error('timeout waiting for ' + method)); }, 30000);
+    waiting.set(id, m => { clearTimeout(t); res(m); });
+    child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
+  });
+  const tool = async (name, args) => {
+    const r = await call('tools/call', { name, arguments: args });
+    const text = r.result && r.result.content && r.result.content[0].text;
+    let json = null; try { json = JSON.parse(text); } catch { /* error text */ }
+    return { err: !!(r.result && r.result.isError), text, json, raw: r };
+  };
+  return { child, call, tool, stop: () => { child.stdin.end(); } };
+}
+
+const journal = env => { try { return fs.readFileSync(path.join(env.HARNESS_STATE_DIR, 'journal.jsonl'), 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)); } catch { return []; } };
+async function until(fn, ms = 15000) { const end = Date.now() + ms; for (;;) { const v = fn(); if (v) return v; if (Date.now() > end) return null; await sleep(50); } }
+
+async function main() {
+  const ON = { 'guard-base': true, checkpoint: true, 'question-cards': true, digest: true, search: true };
+  const { env } = mkEnv('on', ON);
+  const s = startServer(env, ['--allow-write']);
+
+  // a. protocol
+  const init = await s.call('initialize', { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 't', version: '1' } });
+  check('initialize: protocol and tools capability', init.result && init.result.protocolVersion === '2024-11-05' && init.result.capabilities.tools && init.result.serverInfo.name === 'taskmote', init);
+  check('ping answers', (await s.call('ping', {})).result !== undefined);
+  const list = await s.call('tools/list', {});
+  const names = (list.result.tools || []).map(t => t.name).sort();
+  check('tools/list with --allow-write: the six tools, each with an inputSchema', JSON.stringify(names) === JSON.stringify(['ask_owner', 'digest', 'queue_task', 'search_journal', 'task_status', 'undo_task']) && list.result.tools.every(t => t.inputSchema && t.inputSchema.type === 'object' && t.description), names);
+  const unk = await s.call('tools/call', { name: 'nope', arguments: {} });
+  check('unknown tool: JSON-RPC error -32602', unk.error && unk.error.code === -32602, unk);
+  const unm = await s.call('nope', {});
+  check('unknown method: JSON-RPC error -32601', unm.error && unm.error.code === -32601, unm);
+
+  // default (read-only), --no-ask, env flag
+  const ro = startServer(env);
+  const roNames = ((await ro.call('tools/list', {})).result.tools || []).map(t => t.name).sort();
+  check('default tools/list: 4 read-only tools', JSON.stringify(roNames) === JSON.stringify(['ask_owner', 'digest', 'search_journal', 'task_status']), roNames);
+  for (const w of [['queue_task', { request: 'x' }], ['undo_task', { task_id: 't1' }]]) {
+    const r = await ro.tool(w[0], w[1]);
+    check(`${w[0]} without --allow-write: isError telling to restart with --allow-write`, r.err && /--allow-write/.test(r.text), r);
+  }
+  check('write tool call without the flag changed nothing', !journal(env).some(r => r.type === 'task_start' || r.type === 'queue_add'));
+  ro.stop();
+  const na = startServer(env, ['--allow-write', '--no-ask']);
+  const naNames = ((await na.call('tools/list', {})).result.tools || []).map(t => t.name).sort();
+  check('--no-ask removes ask_owner', !naNames.includes('ask_owner') && naNames.length === 5, naNames);
+  const naCall = await na.tool('ask_owner', { question: 'q', choices: ['a', 'b'] });
+  check('--no-ask: ask_owner call is an error', naCall.err && /--no-ask/.test(naCall.text), naCall);
+  na.stop();
+  const ne = startServer({ ...env, TASKMOTE_MCP_WRITE: '1' });
+  const neNames = ((await ne.call('tools/list', {})).result.tools || []).map(t => t.name);
+  check('env TASKMOTE_MCP_WRITE=1 enables the 2 write tools', neNames.length === 6, neNames);
+  ne.stop();
+
+  // b. queue_task -> task_status -> search -> digest -> undo
+  const wd = path.join(tmp, 'on', 'wd');
+  const REQ = 'write the zebra report';
+  const q = await s.tool('queue_task', { request: REQ, cwd: wd });
+  check('queue_task: returns a task id', !q.err && q.json && q.json.queued === true && /^t[\w-]+$/.test(q.json.task_id), q);
+  const tid = q.json && q.json.task_id;
+  const finished = await until(() => journal(env).some(r => r.type === 'task_done' && r.task_id === tid));
+  check('queue_task: the task ran to done through the CLI path', !!finished);
+  const st = await s.tool('task_status', { task_id: tid });
+  check('task_status: one task, done, with its request', !st.err && st.json.state === 'done' && st.json.task_id === tid && st.json.request === REQ, st);
+  const recent = await s.tool('task_status', {});
+  check('task_status: recent tasks, newest first', !recent.err && Array.isArray(recent.json.tasks) && recent.json.tasks[0].task_id === tid, recent);
+  const bad = await s.tool('task_status', { task_id: 'tnope' });
+  check('task_status: unknown task is a clear error', bad.err && /no task/.test(bad.text), bad);
+  const empty = await s.tool('queue_task', { request: '   ' });
+  check('queue_task: empty request is a clear error', empty.err && /request is required/.test(empty.text), empty);
+
+  const se = await s.tool('search_journal', { query: 'zebra', limit: 5 });
+  check('search_journal: finds the task by its request', !se.err && se.json.total >= 1 && se.json.results.length >= 1, se);
+  const se2 = await s.tool('search_journal', { query: '' });
+  check('search_journal: empty query is a clear error', se2.err && /q required/.test(se2.text), se2);
+
+  const dg = await s.tool('digest', { since: '1d' });
+  check('digest: summary JSON', !dg.err && dg.json && typeof dg.json === 'object', dg);
+  const dg2 = await s.tool('digest', { since: 'whenever' });
+  check('digest: bad since is a clear error', dg2.err && /since/.test(dg2.text), dg2);
+
+  // c. undo_task: blocked while the executor lock is held (taken from a child so the pid is alive and not the server's), then works
+  const holder = spawn(process.execPath, ['-e', [
+    `process.env.HARNESS_STATE_DIR=${JSON.stringify(env.HARNESS_STATE_DIR)};`,
+    `const J=require(${JSON.stringify(path.join(ROOT, 'lib', 'journal'))});`,
+    `const l=J.lock(require('path').join(J.STATE,'executor.lock'),{pids:[process.pid],task_id:${JSON.stringify(tid)}});`,
+    `console.log(l.held?'held':'no'); setInterval(()=>{},1000);`].join('\n')], { stdio: ['ignore', 'pipe', 'ignore'] });
+  await new Promise(r => holder.stdout.once('data', r));
+  const undoCount = () => journal(env).filter(r => r.type === 'undo').length;
+  const cardCount = () => journal(env).filter(r => r.type === 'question').length;
+  const cardText = id => { try { return JSON.parse(fs.readFileSync(path.join(env.HARNESS_STATE_DIR, 'm', 'question-cards', 'vault.json'), 'utf8'))[id].text; } catch { return ''; } };
+  const u0 = undoCount();
+  const c0 = cardCount();
+  const blocked = await s.tool('undo_task', { task_id: tid });
+  check('undo_task: a running task blocks it, no card is sent, nothing changes', !blocked.err && blocked.json.blocked === true && blocked.json.undone === false && undoCount() === u0 && cardCount() === c0, blocked);
+  holder.kill();
+  await sleep(300);
+  // answer the next undo card with choice n (1 = Undo, 2 = Keep); returns the card record
+  const answerCard = async n => {
+    const seen = cardCount();
+    const rec = await until(() => { const c = journal(env).filter(r => r.type === 'question'); return c.length > seen ? c[c.length - 1] : null; });
+    if (!rec) return null;
+    spawnSync(process.execPath, [path.join(ROOT, 'bin', 'taskmote.js'), 'ask', 'answer', rec.question_id, String(n)], { env, encoding: 'utf8' });
+    return rec;
+  };
+  const keepP = s.tool('undo_task', { task_id: tid, timeout_s: 30 });
+  const keepCard = await answerCard(2);
+  const keep = await keepP;
+  check('undo_task: card text names the task and the folder', keepCard && cardText(keepCard.question_id).startsWith(`Undo task ${tid} ("write the zebra report")? Its folder goes back`), keepCard);
+  check('undo_task: answered Keep changes nothing', !keep.err && keep.json.undone === false && keep.json.reason === 'owner did not approve' && undoCount() === u0, keep);
+  const toU = await s.tool('undo_task', { task_id: tid, timeout_s: 0.4 });
+  check('undo_task: no answer in time changes nothing', !toU.err && toU.json.undone === false && toU.json.reason === 'owner did not approve' && undoCount() === u0, toU);
+  const unP = s.tool('undo_task', { task_id: tid, timeout_s: 30 });
+  await answerCard(1);
+  const un = await unP;
+  check('undo_task: answered Undo restores, with removed_files and an undo_ref', !un.err && un.json.undone === true && typeof un.json.removed_files === 'number' && un.json.undo_ref && undoCount() === u0 + 1, un);
+  const decisions = journal(env).filter(r => r.type === 'undo_card').map(r => r.answer);
+  check('undo_task: each decision journaled as undo_card', JSON.stringify(decisions) === JSON.stringify(['Keep', 'no answer', 'Undo']), decisions);
+  const unx = await s.tool('undo_task', { task_id: 'tnope' });
+  check('undo_task: unknown task is a clear error', unx.err && /no task/.test(unx.text), unx);
+
+  // ask_owner
+  const seenQ = cardCount();
+  const askP = s.tool('ask_owner', { question: 'Ship it?', choices: ['yes', 'no'], timeout_s: 30 });
+  const qrec = await until(() => journal(env).filter(r => r.type === 'question')[seenQ]);
+  check('ask_owner: a question card is raised and the call waits', !!qrec);
+  const ans = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'taskmote.js'), 'ask', 'answer', qrec.question_id, '2'], { env, encoding: 'utf8' });
+  const ar = await askP;
+  check('ask_owner: the owner\'s answer comes back', ans.status === 0 && !ar.err && ar.json.answered === true && ar.json.choice === 2 && ar.json.option === 'no', { ans: ans.stderr, ar });
+  const to = await s.tool('ask_owner', { question: 'Anyone there?', choices: ['a', 'b'], timeout_s: 0.4 });
+  check('ask_owner: no answer in time is {answered:false}, not an error', !to.err && to.json.answered === false, to);
+  const badAsk = await s.tool('ask_owner', { question: 'one choice', choices: ['a'] });
+  check('ask_owner: bad input is a clear error', badAsk.err && /options/.test(badAsk.text), badAsk);
+  s.stop();
+
+  // d. modules off
+  const nc = mkEnv('nocards', { 'guard-base': true, checkpoint: true, 'question-cards': false });
+  const ncs = startServer(nc.env, ['--allow-write']);
+  const ncr = await ncs.tool('undo_task', { task_id: 't1' });
+  check('undo_task: question-cards off refuses, naming it (never undoes without a card)', ncr.err && ncr.text.includes('"question-cards"') && /Enable it/.test(ncr.text), ncr);
+  ncs.stop();
+  const off = mkEnv('off', { 'guard-base': true, checkpoint: false });
+  const o = startServer(off.env, ['--allow-write']);
+  await o.call('initialize', {});
+  const cases = [['ask_owner', { question: 'q', choices: ['a', 'b'] }, 'question-cards'], ['undo_task', { task_id: 't1' }, 'checkpoint'], ['digest', {}, 'digest'], ['search_journal', { query: 'x' }, 'search']];
+  for (const [name, args, mod] of cases) {
+    const r = await o.tool(name, args);
+    check(`${name}: ${mod} off -> error text says to enable it`, r.err && r.text.includes(`"${mod}"`) && /Enable it/.test(r.text), r);
+  }
+  const ost = await o.tool('task_status', {});
+  check('task_status needs no module: works with them off', !ost.err && Array.isArray(ost.json.tasks), ost);
+  const oq = await o.tool('queue_task', { request: 'hello off' });
+  check('queue_task needs no module: works with them off', !oq.err && oq.json.queued === true, oq);
+  await until(() => journal(off.env).some(r => r.type === 'task_done'));
+  o.stop();
+
+  await sleep(200);
+  try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* best effort */ }
+  const pass = results.filter(Boolean).length;
+  console.log(`result: ${pass}/${results.length}`);
+  process.exit(pass === results.length ? 0 : 1);
+}
+main().catch(e => { console.log('FAIL crashed: ' + (e && e.stack || e)); process.exit(1); });

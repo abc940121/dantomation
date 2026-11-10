@@ -125,6 +125,36 @@ On Windows, `bin\taskmote.cmd` does the same; put `bin` on your PATH to type `ta
 - **Voice.** `voice` and `voice-chat` add hands-free turns, including answering approval cards by voice.
 - **A second machine.** `worker` pulls jobs over outbound HTTP only.
 
+## Use it from Claude Code (MCP)
+
+`bin/taskmote-mcp.js` is an MCP stdio server. Any Claude Code session, or other MCP client, can then call what Claude Code does not have: cards to your phone, the task queue, undo and the journal.
+
+It is read-only by default: with no flag it lists only `task_status`, `search_journal`, `digest` and `ask_owner`. Anything that can change things is opt-in. Install it for every project of yours (user-wide) or for one project (the default scope):
+
+```sh
+# user-wide
+claude mcp add --scope user taskmote -- node <path-to-repo>/bin/taskmote-mcp.js
+# this project only (default project scope)
+claude mcp add taskmote -- node <path-to-repo>/bin/taskmote-mcp.js
+# read-write: also lists queue_task and undo_task
+claude mcp add taskmote -- node <path-to-repo>/bin/taskmote-mcp.js --allow-write
+```
+
+`--allow-write` (or the environment variable `TASKMOTE_MCP_WRITE=1`) adds `queue_task` and `undo_task`; calling either without it returns an error that says to restart with `--allow-write`. `--no-ask` drops `ask_owner` for a fully read-only install.
+
+`undo_task` always asks you on the phone first, whoever queued the task: a card "Undo task ... ?" with Undo / Keep. Only Undo proceeds; Keep, no answer in time (`timeout_s`, default 600) or `question-cards` being off changes nothing. `queue_task` runs through the same path as `taskmote do`, so the same guards, approval cards and spend counting apply as for a typed command.
+
+| Tool | What it does | Needs module | Listed |
+|---|---|---|---|
+| `ask_owner` | Ask a question with 2 to 6 choices on your phone and wait. No answer in time returns `{"answered":false}`, never an error. | `question-cards` | default (not with `--no-ask`) |
+| `task_status` | One task, or the recent tasks, from the journal. | none | default |
+| `digest` | The while-you-were-away summary as JSON (honours `include_titles`). | `digest` | default |
+| `search_journal` | Full-text search over past tasks, messages and rooms. | `search` | default |
+| `queue_task` | Queue a task the way `taskmote do` does and return its id. `cwd` applies only when no server is running. | none | `--allow-write` |
+| `undo_task` | Put a task's folder back, like the Undo button, after you answer Undo on a phone card. If a task is running it returns `blocked` and sends no card. | `checkpoint`, `question-cards` | `--allow-write` |
+
+A tool whose module is off answers with text naming the module to turn on. The separate `bin/approve-mcp.js` permission-prompt server is unchanged. The MCP server replaces the `agent-tools` module's prompt text; do not turn both on.
+
 ## Modules
 
 Every module is off by default, except the two safety modules `guard-base` and `checkpoint` and the CLI helper modules `scaffold` and `presets`. `guard-base` is locked on: a config or preset that turns it off is refused, so `serve` will not start and every tool call is blocked until it is fixed. Turning `approval-cards` off is allowed, but `serve` warns that every red-line step will then be refused. "Can touch" is what the module itself reads or changes beyond the trunk.
