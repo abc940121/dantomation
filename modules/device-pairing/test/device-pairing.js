@@ -188,6 +188,9 @@ const req = (port, method, p, body, token, extra) => new Promise((res, rej) => {
     const dr = [];
     for (const [m, p, b] of denied) dr.push((await req(port, m, p, b, dev)).status);
     check('device: tasks, undo, resume, settings, worker, pairing admin and other module routes -> 403', dr.every(s => s === 403), dr.join());
+    const qBefore = journal().filter(r => r.type === 'queue_add').length;
+    const dWd = await req(port, 'POST', '/api/tasks', { prompt: 'x', workdir: state }, dev);
+    check('device: POST /api/tasks with a workdir -> 403 and nothing is queued', dWd.status === 403 && journal().filter(r => r.type === 'queue_add').length === qBefore, dWd.raw);
     check('device: a device cannot list or revoke devices or mint codes', (await req(port, 'GET', '/m/device-pairing/devices', undefined, dev)).status === 403);
     check('device: a made-up device token is 401 on a change (loopback reads stay anonymous, as with no token)', (await req(port, 'POST', '/api/chat', { bots: 'all', text: 'x' }, 'dvt_00000000.' + 'a'.repeat(43))).status === 401);
     // audit

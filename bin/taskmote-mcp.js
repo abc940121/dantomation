@@ -211,7 +211,7 @@ function searchJournal(a) {
 const TOOLS = [
   { name: 'ask_owner', description: 'Ask the owner a question on their phone (a question card) and wait for the answer. Returns {answered:true, choice, option, text} or, if no answer arrives in time, {answered:false}. Never an error because the owner is away.',
     inputSchema: { type: 'object', properties: { question: { type: 'string', description: 'The question.' }, choices: { type: 'array', items: { type: 'string' }, minItems: 2, maxItems: 6, description: '2 to 6 short answers.' }, timeout_s: { type: 'number', description: 'How long to wait, in seconds (default 1800). The card stays open after.' } }, required: ['question', 'choices'] } },
-  { name: 'queue_task', description: 'Queue a task for Taskmote to run, the way `taskmote do` does. Returns the task id. cwd applies only when no Taskmote server is running.',
+  { name: 'queue_task', description: 'Queue a task for Taskmote to run, the way `taskmote do` does. Returns the task id. cwd is the folder the task works in (an existing folder; default: the bot folder).',
     inputSchema: { type: 'object', properties: { request: { type: 'string', description: 'What to do.' }, cwd: { type: 'string', description: 'Working directory for the task.' } }, required: ['request'] } },
   { name: 'task_status', description: 'Status of one task, or of the recent tasks, from the journal.',
     inputSchema: { type: 'object', properties: { task_id: { type: 'string' }, limit: { type: 'number', description: 'How many recent tasks (default 10, max 50).' } } } },

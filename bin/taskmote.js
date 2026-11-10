@@ -79,7 +79,10 @@ async function doVerb(args) {
   if (open && request) fail(`task ${open.task_id} is still open ("${clip(open.request)}"). Resume it with: taskmote do   (no request). Use taskmote status to see where it stands.`);
   const info = open || !request ? null : serverInfo();
   if (info) {
-    const r = await api(info, 'POST', '/api/tasks', { prompt: request });
+    // --workdir goes with the request: dropping it would run the task in the bot's own folder instead.
+    const wi = args.indexOf('--workdir');
+    const workdir = wi >= 0 && args[wi + 1] ? path.resolve(args[wi + 1]) : undefined;
+    const r = await api(info, 'POST', '/api/tasks', { prompt: request, ...(workdir ? { workdir } : {}) });
     if (!r) return direct();
     if (r.status !== 201) fail(`taskmote: server refused: ${r.body.error || r.status}`);
     console.log(`task ${r.body.id} sent to the server (${r.body.state}). Follow it with: taskmote status`);

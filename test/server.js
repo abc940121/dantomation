@@ -284,6 +284,17 @@ async function main() {
   note('stop: queued worker task -> stopped', stp.status === 200 && stp.body.state === 'stopped', stp.raw);
   note('chat: fan-out to all bots', (await req(port2, 'POST', '/api/chat', { bots: 'all', text: 'hello all' })).body.length === 2);
 
+  // ---- workdir: `taskmote do --workdir <dir>` with a live server runs the task in that folder (it used to be dropped)
+  const wdDir = path.join(base, 'chosen-folder'); fs.mkdirSync(wdDir, { recursive: true });
+  const wdRel = await req(port2, 'POST', '/api/tasks', { prompt: 'x', workdir: 'relative/dir' });
+  const wdMissing = await req(port2, 'POST', '/api/tasks', { prompt: 'x', workdir: path.join(base, 'no-such-folder') });
+  const wdWorker = await req(port2, 'POST', '/api/tasks', { prompt: 'x', workdir: wdDir }, wauth);
+  note('workdir: relative path -> 400, missing folder -> 400, worker token -> 403', wdRel.status === 400 && wdMissing.status === 400 && wdWorker.status === 403, [wdRel.status, wdMissing.status, wdWorker.status].join());
+  const wdDo = spawnSync(process.execPath, [DANT, 'do', 'workdir test', '--workdir', wdDir], { env, cwd: work, encoding: 'utf8', timeout: 30000 });
+  const wdTask = (/task (t\S+) sent to the server/.exec(wdDo.stdout) || [])[1];
+  const wdStart = wdTask && await waitFor(() => journal().find(r => r.type === 'task_start' && r.task_id === wdTask), 60000);
+  note('workdir: do --workdir through the server starts the task in that folder', !!wdStart && path.resolve(wdStart.workdir) === path.resolve(wdDir), wdDo.stdout + wdDo.stderr + JSON.stringify(wdStart || null));
+  await waitFor(() => journal().some(r => r.type === 'task_done' && r.task_id === wdTask), 60000);
   // ---- 4: auth
   killTree(srv.pid); await waitFor(() => !alive(srv.pid), 15000);
   fs.rmSync(path.join(state, 'server.json'), { force: true });
