@@ -380,7 +380,7 @@
         if (!r.ok || !r.body) throw new Error('status ' + r.status);
         ui.conn = 'live'; backoff = 1000; render();
         const rd = r.body.getReader(), dec = new TextDecoder();
-        const p = D.createSSEParser((type, data) => { D.reduce(S, type, data); render(); });
+        const p = D.createSSEParser((type, data) => { D.reduce(S, type, data); render(); if (type === 'task_end') refreshBots(); });
         for (;;) {
           const { done, value } = await rd.read();
           if (done) break;
@@ -424,21 +424,31 @@
   }
   setInterval(loadQuestions, 5000);
 
+  // Start state: with nothing chosen, "main" (else the first bot) is preselected, once. Deselecting all later stays deselected.
+  let defaulted = false;
+  function defaultTarget() {
+    if (defaulted || !S.order.length) return;
+    defaulted = true;
+    if (!ui.all && !ui.targets.size && !ui.view) ui.targets.add(S.bots.main ? 'main' : S.order[0]);
+  }
+
   async function boot() {
     try {
       const [b, t, c] = await Promise.all([api('/api/bots'), api('/api/tasks?limit=50'), api('/api/cards?state=pending')]);
-      if (b.ok) D.applyBots(S, b.body);
+      if (b.ok) { D.applyBots(S, b.body); defaultTarget(); }
       if (t.ok) D.applyTasks(S, t.body);
       if (c.ok) D.applyCards(S, c.body);
     } catch (err) { /* unauthorized shows the token form; others retry via the stream */ }
     await loadRooms(); await loadQuestions();
     render(); stream();
   }
-  // Refresh the roster now and then so offline/busy changes without events show up.
-  setInterval(async () => {
+  // Refresh the roster: after each finished task, and every 15 s while the page is visible, so offline/busy
+  // changes and bots that were added while the server runs (roles) show up.
+  async function refreshBots() {
     if (ui.needAuth) return;
-    try { const b = await api('/api/bots'); if (b.ok) { D.applyBots(S, b.body); render(); } } catch (err) { /* ignore */ }
-  }, 30000);
+    try { const b = await api('/api/bots'); if (b.ok) { D.applyBots(S, b.body); defaultTarget(); render(); } } catch (err) { /* ignore */ }
+  }
+  setInterval(() => { if (document.visibilityState !== 'hidden') refreshBots(); }, 15000);
 
   // Redeem a #p= code right away: the fragment is already gone from the URL, so waiting for the language choice would lose it on a reload.
   const paired = pairCode ? redeemCode(pairCode) : Promise.resolve(null);

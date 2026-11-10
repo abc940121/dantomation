@@ -58,7 +58,10 @@ function approveMcpFile(task) {
   const node = process.execPath.replace(/\\/g, '/');
   const server = path.join(J.ROOT, 'bin', 'approve-mcp.js').replace(/\\/g, '/');
   const env = { HARNESS_STATE_DIR: J.STATE, HARNESS_CONFIG: C.file(), HARNESS_PROMPT_TOOL: '1', ...(task ? { HARNESS_TASK_ID: task.task_id, HARNESS_TASK_DIR: task.workdir } : {}) };
-  const s = { mcpServers: { taskmote: { type: 'stdio', command: node, args: [server], env } } };
+  // taskmote-tools: the feature tools (bin/taskmote-mcp.js, and tools that modules add), so a task session can call them.
+  const tools = path.join(J.ROOT, 'bin', 'taskmote-mcp.js').replace(/\\/g, '/');
+  const toolsEnv = { HARNESS_STATE_DIR: J.STATE, HARNESS_CONFIG: C.file(), ...(task ? { HARNESS_TASK_ID: task.task_id } : {}) }; // the task id lets queue_task / undo_task cap a task's own family
+  const s = { mcpServers: { taskmote: { type: 'stdio', command: node, args: [server], env }, 'taskmote-tools': { type: 'stdio', command: node, args: [tools], env: toolsEnv } } };
   const f = path.join(J.STATE, task ? `mcp-approve-${String(task.task_id).replace(/[^\w-]/g, '_')}.json` : 'mcp-approve.json');
   fs.mkdirSync(J.STATE, { recursive: true });
   fs.writeFileSync(f, JSON.stringify(s, null, 2));
@@ -289,7 +292,7 @@ function resolveClaude() {
   if (process.platform !== 'win32') return;
   // spawn without a shell needs the real exe on Windows
   try {
-    const npmRoot = execSync('npm root -g', { encoding: 'utf8' }).trim();
+    const npmRoot = execSync('npm root -g', { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
     const exe = path.join(npmRoot, '@anthropic-ai', 'claude-code', 'bin', 'claude.exe');
     if (fs.existsSync(exe)) process.env.HARNESS_CLAUDE = exe;
   } catch { /* fall back to PATH */ }

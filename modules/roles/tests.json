@@ -1,0 +1,9 @@
+{
+  "suites": [
+    {
+      "label": "roles",
+      "file": "test/roles.js",
+      "needs": []
+    }
+  ]
+}

@@ -115,6 +115,14 @@ function taskStatus(a) {
   return { tasks: all.slice(-limit).reverse().map(brief) };
 }
 
+// ---- task family (queue_task / undo_task from inside a task session) ----
+// The server env carries HARNESS_TASK_ID only for a task session; the owner's own session has none and is never capped.
+// A task queued from inside a task is journaled as {type:'task_parent', task_id, parent_task_id}; an owner-started task has none (depth 0).
+const MAX_DEPTH = 2, MAX_CHILDREN = 5;
+const parentMap = records => { const m = new Map(); for (const r of records) if (r.type === 'task_parent' && r.task_id && r.parent_task_id) m.set(r.task_id, r.parent_task_id); return m; };
+const depthOf = (id, parents) => { let d = 0; for (let x = id; parents.has(x) && d < 100; x = parents.get(x)) d++; return d; };
+const inFamily = (id, root, parents) => { for (let x = id, n = 0; x && n < 100; x = parents.get(x), n++) if (x === root) return true; return false; };
+
 // ---- queue_task ----
 // Deliberately the exact CLI path (`taskmote do`), never a shortcut into the executor: that is what
 // makes the guards, approval cards and spend counting apply as for a typed command.
@@ -124,6 +132,13 @@ async function queueTask(a) {
   const request = typeof a.request === 'string' ? a.request.trim() : '';
   if (!request) throw new ToolError('request is required (a non-empty string)');
   if (a.cwd !== undefined && (typeof a.cwd !== 'string' || !a.cwd.trim())) throw new ToolError('cwd must be a path string');
+  const caller = process.env.HARNESS_TASK_ID || null;
+  if (caller) {
+    const parents = parentMap(J.readAll().records);
+    if (depthOf(caller, parents) + 1 > MAX_DEPTH) throw new ToolError(`task family cap: depth limit ${MAX_DEPTH} reached (an owner task is depth 0; a task at depth ${MAX_DEPTH} may not queue more tasks).`);
+    const kids = [...parents.values()].filter(p => p === caller).length;
+    if (kids >= MAX_CHILDREN) throw new ToolError(`task family cap: this task has already queued ${MAX_CHILDREN} tasks (limit ${MAX_CHILDREN} children per task).`);
+  }
   const open = J.openTask(J.readAll().records);
   if (open) throw new ToolError(`task ${open.task_id} is still open ("${clip(open.request, 80)}"). Wait for it to finish, or check task_status.`);
   const before = J.readAll().records.length;
@@ -141,7 +156,7 @@ async function queueTask(a) {
   child.unref();
   const end = Date.now() + QUEUE_WAIT_MS();
   const tail = () => { try { return clip(fs.readFileSync(logFile, 'utf8'), 300); } catch { return ''; } };
-  const done = id => { try { fs.unlinkSync(logFile); } catch { /* best effort */ } return { queued: true, task_id: id }; };
+  const done = id => { try { fs.unlinkSync(logFile); } catch { /* best effort */ } if (caller) J.append({ type: 'task_parent', task_id: id, parent_task_id: caller }); return { queued: true, task_id: id }; };
   for (;;) {
     const hit = J.readAll().records.slice(before).find(r => r.type === 'task_start' && r.request === request);
     if (hit) return done(hit.task_id);
@@ -170,6 +185,8 @@ function tellOwnerUndone(t, n) {
 }
 async function undoTask(a) {
   if (typeof a.task_id !== 'string' || !a.task_id) throw new ToolError('task_id is required');
+  const caller = process.env.HARNESS_TASK_ID || null;
+  if (caller && !inFamily(a.task_id, caller, parentMap(J.readAll().records))) throw new ToolError(`undo refused: a task may only undo itself and the tasks it queued (${clip(a.task_id, 60)} is not in the family of ${caller}).`);
   const { api: ck } = need('checkpoint');
   const t = [...J.readAll().records].reverse().find(r => r.type === 'task_start' && r.task_id === a.task_id);
   if (!t) throw new ToolError(`no task ${clip(a.task_id, 60)}`);
@@ -220,10 +237,30 @@ const TOOLS = [
 ];
 const IMPL = { ask_owner: askOwner, queue_task: queueTask, task_status: taskStatus, undo_task: undoTask, digest, search_journal: searchJournal };
 
+// Tools that enabled modules offer through api.mcpTools: [{name, description, inputSchema, run(args, ctx)}].
+// ctx is the same module ctx the other module-backed tools get. Core tool names win a clash; a module tool is
+// listed only while its module is on, and a module that fails to load adds nothing.
+const droppedTools = new Set(); // log each dropped module tool once
+function moduleTools() {
+  const L = loaded(), out = [];
+  if (L.err) return out;
+  for (const name of L.meta.keys()) {
+    const api = M.apiOf(L.mods, name);
+    if (!api || !Array.isArray(api.mcpTools)) continue;
+    for (const t of api.mcpTools) {
+      if (!t || typeof t.name !== 'string' || typeof t.run !== 'function' || Object.prototype.hasOwnProperty.call(IMPL, t.name) || out.some(o => o.name === t.name)) { const k = `${name}/${t && t.name}`; if (!droppedTools.has(k)) { droppedTools.add(k); process.stderr.write(`taskmote-mcp: module ${name} tool dropped (bad shape or name taken): ${String(t && t.name).slice(0, 60)}
+`); } continue; }
+      out.push({ name: t.name, description: t.description, inputSchema: t.inputSchema, run: t.run, module: name });
+    }
+  }
+  return out;
+}
 
-async function callTool(name, args, reqId) {
+
+async function callTool(name, args, reqId, modTool) {
   try {
-    const out = await IMPL[name](args && typeof args === 'object' ? args : {}, reqId);
+    const a = args && typeof args === 'object' ? args : {};
+    const out = modTool ? await modTool.run(a, need(modTool.module).ctx) : await IMPL[name](a, reqId);
     return { content: [{ type: 'text', text: JSON.stringify(out) }] };
   } catch (e) {
     return { isError: true, content: [{ type: 'text', text: e instanceof ToolError ? e.message : 'tool failed: ' + clip((e && e.message) || e, 300) }] };
@@ -238,10 +275,12 @@ async function handle(msg) {
     let result;
     if (method === 'initialize') result = { protocolVersion: params.protocolVersion || PROTOCOL, capabilities: { tools: {} }, serverInfo: { name: NAME, version: '1' } };
     else if (method === 'ping') result = {};
-    else if (method === 'tools/list') result = { tools: TOOLS };
+    else if (method === 'tools/list') result = { tools: [...TOOLS, ...moduleTools().map(({ name, description, inputSchema }) => ({ name, description, inputSchema }))] };
     else if (method === 'tools/call') {
-      if (!Object.prototype.hasOwnProperty.call(IMPL, params.name)) throw Object.assign(new Error(`unknown tool ${clip(params.name, 40)}`), { code: -32602 });
-      result = await callTool(params.name, params.arguments, id);
+      const core = Object.prototype.hasOwnProperty.call(IMPL, params.name);
+      const modTool = core ? null : moduleTools().find(t => t.name === params.name);
+      if (!core && !modTool) throw Object.assign(new Error(`unknown tool ${clip(params.name, 40)}`), { code: -32602 });
+      result = await callTool(params.name, params.arguments, id, modTool);
     } else throw Object.assign(new Error(`method not found: ${clip(method, 40)}`), { code: -32601 });
     return { jsonrpc: '2.0', id, result };
   } catch (e) { return { jsonrpc: '2.0', id, error: { code: e.code || -32603, message: e.message } }; }

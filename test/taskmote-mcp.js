@@ -7,6 +7,8 @@
 //      ask_owner answered through `taskmote ask answer`, and ask_owner timing out as {answered:false}
 //   c. undo_task undoes at once then posts an info card (en + zh-TW), cards off still undoes; executor lock held: blocked, nothing changed
 //   d. modules off: each module-backed tool answers with text naming the module to enable; no crash
+//   f. task family cap: from inside a task (env HARNESS_TASK_ID) queue_task refuses past depth 2 and past 5 children; undo_task only reaches itself and its descendants
+//   e. tools a module provides (roles): listed next to the six only while the module is on, run, errors are tool errors
 // Runs in any mode: it writes its own configs in a temp dir.
 const fs = require('fs');
 const os = require('os');
@@ -176,6 +178,54 @@ async function main() {
   check('queue_task needs no module: works with them off', !oq.err && oq.json.queued === true, oq);
   await until(() => journal(off.env).some(r => r.type === 'task_done'));
   o.stop();
+
+  // e. module-provided tools: the roles module is on
+  const rl = mkEnv('roles', { roles: true });
+  const rs = startServer(rl.env);
+  const rnames = ((await rs.call('tools/list', {})).result.tools || []).map(t => t.name).sort();
+  check('module tools: the six plus the four role tools, each with a schema', JSON.stringify(rnames) === JSON.stringify([...ALL, 'role_create', 'role_list', 'role_remove', 'role_update'].sort()), rnames);
+  const rcr = await rs.tool('role_create', { name: 'Captain', persona: 'You are a calm ship captain.' });
+  check('role_create: returns the role', !rcr.err && rcr.json && /^r-[0-9a-f]{8}$/.test(rcr.json.id) && rcr.json.name === 'Captain', rcr);
+  const rfile = path.join(rl.env.HARNESS_STATE_DIR, 'm', 'roles', 'roles.json');
+  check('role_create: the role is in the roles state file at once', (() => { try { return JSON.parse(fs.readFileSync(rfile, 'utf8')).roles.some(r => r.id === rcr.json.id); } catch { return false; } })());
+  const rdup = await rs.tool('role_create', { name: 'captain', persona: 'x' });
+  check('role_create: a refused input is a tool error, not a crash', rdup.err && /already exists/.test(rdup.text), rdup);
+  const rup = await rs.tool('role_update', { role: 'Captain', persona: 'You are a loud pirate.' });
+  check('role_update: by name', !rup.err && rup.json.id === rcr.json.id && /pirate/.test(rup.json.persona), rup);
+  const rls = await rs.tool('role_list', {});
+  check('role_list: shows the role', !rls.err && rls.json.roles.length === 1 && rls.json.roles[0].id === rcr.json.id, rls);
+  const rrm = await rs.tool('role_remove', { role: rcr.json.id });
+  check('role_remove: archives it', !rrm.err && rrm.json.archived === true && (await rs.tool('role_list', {})).json.roles.length === 0, rrm);
+  check('core tools still run next to module tools', (await rs.tool('task_status', {})).json.tasks !== undefined);
+  rs.stop();
+  const x2 = startServer(env);
+  const noRole = await x2.call('tools/call', { name: 'role_create', arguments: { name: 'a', persona: 'b' } });
+  check('module tool of a module that is off: unknown tool (-32602)', noRole.error && noRole.error.code === -32602, noRole);
+  x2.stop();
+
+  // f. task family: a chain tA > tB > tC (tA started by the owner), and tP with five children
+  const fam = mkEnv('fam', ON);
+  fs.mkdirSync(fam.env.HARNESS_STATE_DIR, { recursive: true });
+  const par = (task_id, parent_task_id) => JSON.stringify({ id: 'p' + task_id, ts: new Date().toISOString(), type: 'task_parent', task_id, parent_task_id });
+  fs.writeFileSync(path.join(fam.env.HARNESS_STATE_DIR, 'journal.jsonl'), [par('tB', 'tA'), par('tC', 'tB'), ...['k1', 'k2', 'k3', 'k4', 'k5'].map(k => par(k, 'tP'))].join('\n') + '\n');
+  const asTask = id => startServer({ ...fam.env, HARNESS_TASK_ID: id });
+  const deep = asTask('tC');
+  const qd = await deep.tool('queue_task', { request: 'one level too deep' });
+  check('queue_task: a great-grandchild (depth 3 from an owner task) is refused, naming the depth cap 2', qd.err && /task family cap/.test(qd.text) && /depth limit 2/.test(qd.text), qd);
+  deep.stop();
+  const wide = asTask('tP');
+  const qw = await wide.tool('queue_task', { request: 'a sixth child' });
+  check('queue_task: a task that already queued 5 tasks is refused, naming the cap 5', qw.err && /task family cap/.test(qw.text) && /limit 5/.test(qw.text), qw);
+  wide.stop();
+  const fm = asTask('tB');
+  const ux = await fm.tool('undo_task', { task_id: 'tA' });
+  check('undo_task: from inside a task, its parent (outside its family) is refused', ux.err && /undo refused/.test(ux.text), ux);
+  const uo = await fm.tool('undo_task', { task_id: 'tZ' });
+  check('undo_task: from inside a task, an unrelated task is refused', uo.err && /undo refused/.test(uo.text), uo);
+  const ud = await fm.tool('undo_task', { task_id: 'tC' });
+  const us = await fm.tool('undo_task', { task_id: 'tB' });
+  check('undo_task: itself and its descendants pass the family check (they go on to the task lookup)', ud.err && /no task/.test(ud.text) && us.err && /no task/.test(us.text), [ud.text, us.text]);
+  fm.stop();
 
   await sleep(200);
   try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* best effort */ }

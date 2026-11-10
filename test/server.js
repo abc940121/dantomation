@@ -23,7 +23,7 @@ process.env.HARNESS_STATE_DIR = state; // for the in-process journal use (card c
 const cfgFile = path.join(base, 'config.json');
 const writeCfg = server => fs.writeFileSync(cfgFile, JSON.stringify({
   owner_name: 'Tester',
-  modules: { 'approval-cards': true, checkpoint: true, 'guard-base': true },
+  modules: { 'approval-cards': true, checkpoint: true, 'guard-base': true, roles: true },
   bots: [{ id: 'main', name: 'main', engine: 'claude' }, { id: 'remote', name: 'remote', engine: 'claude', runsOn: 'worker' }],
   server: { port: 0, tick_ms: 50, job_timeout_ms: 700, claim_wait_ms: 300, ...server },
 }));
@@ -283,6 +283,22 @@ async function main() {
   const stp = await req(port2, 'POST', `/api/tasks/${t3.body.id}/stop`, {});
   note('stop: queued worker task -> stopped', stp.status === 200 && stp.body.state === 'stopped', stp.raw);
   note('chat: fan-out to all bots', (await req(port2, 'POST', '/api/chat', { bots: 'all', text: 'hello all' })).body.length === 2);
+
+  // ---- roles: a bot registered by a module while the server runs (same state file the roles module writes)
+  const rolesStore = require(path.join(ROOT, 'modules', 'roles', 'store')).createStore(path.join(state, 'm', 'roles'));
+  const role = rolesStore.create({ name: 'Captain', persona: 'You are a calm ship captain.' });
+  const botsNow = (await req(port2, 'GET', '/api/bots')).body;
+  const roleBot = botsNow.find(b => b.id === role.id);
+  note('roles: a new role is in GET /api/bots at once, with no restart', !!roleBot && roleBot.name === 'Captain' && roleBot.runsOn === 'main' && botsNow.length === 3, JSON.stringify(botsNow));
+  const roleChat = await req(port2, 'POST', '/api/chat', { bots: [role.id], text: 'hello role' });
+  note('roles: POST /api/chat accepts the role id', roleChat.status === 200 && roleChat.body.length === 1 && roleChat.body[0].bot === role.id, roleChat.raw);
+  const roleStart = await waitFor(() => journal().find(r => r.type === 'task_start' && r.task_id === (roleChat.body[0] || {}).taskId), 60000);
+  note('roles: the task runs as the role bot, in a work folder that was created for it', !!roleStart && roleStart.bot === role.id && fs.existsSync(roleStart.workdir), JSON.stringify(roleStart || null));
+  await waitFor(() => journal().some(r => r.type === 'task_done' && r.task_id === roleChat.body[0].taskId), 60000);
+  note('roles: "all" still means the configured bots only', (await req(port2, 'POST', '/api/chat', { bots: 'all', text: 'again' })).body.length === 2);
+  rolesStore.archive(role.id);
+  const gone = await req(port2, 'POST', '/api/chat', { bots: [role.id], text: 'x' });
+  note('roles: an archived role leaves the list and is refused', gone.status === 400 && !(await req(port2, 'GET', '/api/bots')).body.some(b => b.id === role.id), gone.raw);
 
   // ---- workdir: `taskmote do --workdir <dir>` with a live server runs the task in that folder (it used to be dropped)
   const wdDir = path.join(base, 'chosen-folder'); fs.mkdirSync(wdDir, { recursive: true });
