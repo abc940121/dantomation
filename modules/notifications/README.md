@@ -10,6 +10,7 @@ In-app notification log for the owner. Off by default: `"modules": { "notificati
 | `task_finished` | `task.end` with `code` 0 | "Task finished" |
 | `task_failed` | `task.end` with any other code | "Task failed (exit N)" |
 | `question_asked` | `question.asked {question_id, task_id, text}` | "Question: <text>" |
+| `digest` | `digest.ready {text}` (from the digest module's `--push`) | the digest text, first 1000 characters |
 | `room_mention` | `rooms.mention {room, target, text, msg_id}`, only when `target` is `owner` | "Mention in <room>: <text>" |
 
 No module emits `question.asked` or `rooms.mention` yet, so those two kinds stay empty
@@ -34,7 +35,7 @@ Entry: `{id, kind, text, ref, task_id, ts, read}`. Invalid input answers 400.
 ## Settings (config section `notifications`)
 
 - `max_entries` integer 10..5000, default 500. Over the cap, read entries are pruned first, oldest first, then unread ones.
-- `kind_card_pending`, `kind_question_asked`, `kind_task_failed`, `kind_task_finished`, `kind_room_mention`: boolean, default true. A runtime override set with `PATCH /kinds` wins over the setting.
+- `kind_card_pending`, `kind_question_asked`, `kind_task_failed`, `kind_task_finished`, `kind_room_mention`, `kind_digest`: boolean, default true. A runtime override set with `PATCH /kinds` wins over the setting.
 
 State: `state/m/notifications/notifications.json` and `prefs.json`.
 Status line: `notifications: N unread`.

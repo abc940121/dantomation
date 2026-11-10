@@ -11,6 +11,7 @@ No ntfy code is used. Each ping is one HTTP POST to `<server>/<topic>` with a pl
 | task finished | `task.end` with `code` 0 | `Task finished: <task id>` |
 | task blocked | `task-watchdog.stalled`, or `task.end` with a non-zero `code` | `Task blocked: <task id>` (with `(exit N)` for an exit) |
 | approval waiting | `card.created` | `Approval waiting: <task id>` |
+| digest | `digest.ready {text}` (from the digest module's `--push`) | the digest text, up to 3000 characters; setting `kind_digest`; never held by the rate cap |
 
 The message holds only the kind, the task id and, if `include_title` is on, the first line of the task request (ASCII, 60 characters). Card summaries, watchdog details, commands and file contents are never sent. If `app_url` is set it is sent as the tap-to-open link.
 
@@ -29,10 +30,14 @@ The topic is a secret: set it with `node bin/harness.js secret ntfy topic`; it i
 - `topic` secret, write-only, never logged; the journal gets `ntfy_sent {kind, task_id, ok, status, why?}` only; with a topic set, failed or held pings (bad topic, bad server, rate cap, timeout, network) are journaled too
 - `app_url` string, default empty
 - `include_title` boolean, default false
-- `kind_task_finished`, `kind_task_blocked`, `kind_approval_waiting` booleans, default true
-- `max_per_minute` integer 1..600, default 20; over the cap, extra finished pings are held and sent as one summary ("N pings held, latest: finished <id>"); blocked and approval pings are never held, and a failed one stays in `status` until one of its kind succeeds; held pings still pending when the process exits normally are sent then (a hard `process.exit` skips this)
+- `kind_task_finished`, `kind_task_blocked`, `kind_approval_waiting`, `kind_digest` booleans, default true
+- `max_per_minute` integer 1..600, default 20; over the cap, extra finished pings are held and sent as one summary ("N pings held, latest: finished <id>"); blocked, approval and digest pings are never held, and a failed one stays in `status` until one of its kind succeeds; held pings still pending when the process exits normally are sent then (a hard `process.exit` skips this)
 - `timeout_ms` integer 500..4500, default 4000
 
 A failed send never stops a task. `taskmote status` shows one ntfy line: no topic (silent), the last ping sent, or the last failure and which setting to fix. Events reach this module only inside the process that emits them (no cross-process transport yet), so a card created in another process does not ping.
 
 Test: `node test/run-all.js module ntfy`
+
+## Send gate (for other modules)
+
+`api.setSendGate(fn)` lets a module hold pings: before each ping `fn({kind, task_id, text})` may return `true` to hold it (not sent, and the caller keeps it). Any other answer, or an error, sends as usual. It returns an undo function. `api.sendText(text, title)` sends one plain message now, skipping the gate. Used by the quiet-hours module.

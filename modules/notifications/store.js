@@ -6,7 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const KINDS = ['card_pending', 'question_asked', 'task_failed', 'task_finished', 'room_mention'];
+const KINDS = ['card_pending', 'question_asked', 'task_failed', 'task_finished', 'room_mention', 'digest'];
 const MAX_TEXT = 200;
 const MAX_ID = 64;
 

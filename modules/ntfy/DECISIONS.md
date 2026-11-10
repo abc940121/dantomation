@@ -10,3 +10,4 @@ Module-owned log. Append only, one line per decision with the reason. Trunk deci
 - Fetch errors are logged as `timeout` or `network`, never `e.message`, which can carry the URL.
 - Per-minute cap, so a looping task cannot flood the phone.
 - Blocked = watchdog stall or non-zero exit; there is no single "blocked" event in trunk.
+- S0: added a generic send gate (`api.setSendGate`) and `api.sendText` so another module (quiet-hours) can hold pings and send one summary without a core change. No gate set means no change in behaviour.

@@ -3,13 +3,14 @@
 // plain HTTP POST to <server>/<topic>. Off by default; silent until a topic is set.
 // Ping only: approval stays in approval-cards. See README.md and DECISIONS.md.
 
-const KINDS = { finished: 'task_finished', blocked: 'task_blocked', approval: 'approval_waiting' };
-const HEAD = { finished: 'Task finished', blocked: 'Task blocked', approval: 'Approval waiting' };
-const TAGS = { finished: 'white_check_mark', blocked: 'warning', approval: 'raised_hand' };
-const PRIORITY = { finished: '3', blocked: '4', approval: '4' };
+const KINDS = { finished: 'task_finished', blocked: 'task_blocked', approval: 'approval_waiting', digest: 'digest' };
+const HEAD = { finished: 'Task finished', blocked: 'Task blocked', approval: 'Approval waiting', digest: 'Digest' };
+const TAGS = { finished: 'white_check_mark', blocked: 'warning', approval: 'raised_hand', digest: 'memo' };
+const PRIORITY = { finished: '3', blocked: '4', approval: '4', digest: '3' };
 const WINDOW_MS = 60000, titles = new Map(); // task_id -> short title (only when include_title)
 const sent = []; // send timestamps, for the per-minute cap
-const PRIORITY_KINDS = new Set(['blocked', 'approval']); // never held by the cap
+const PRIORITY_KINDS = new Set(['blocked', 'approval', 'digest']); // never held by the cap
+let gate = null; // optional send gate set by another module through api.setSendGate (see README)
 const held = { count: 0, kind: null, id: null, timer: null, ctx: null }; // rate-capped 'finished' pings, coalesced
 
 const safeId = v => (typeof v === 'string' && /^[A-Za-z0-9._:-]{1,64}$/.test(v) ? v : null);
@@ -24,6 +25,7 @@ function serverUrl(s) {
 const topicOk = t => typeof t === 'string' && /^[A-Za-z0-9_-]{4,64}$/.test(t);
 
 function message(kind, taskId, title, extra) {
+  if (kind === 'digest') return String(extra || '').slice(0, 3000) || HEAD.digest;
   let t = HEAD[kind];
   if (taskId) t += `: ${taskId}`;
   if (title) t += ` (${title})`;
@@ -32,9 +34,9 @@ function message(kind, taskId, title, extra) {
 }
 
 // Returns {sent:boolean, reason?}. Never throws; never carries the topic.
-async function ping(ctx, kind, taskId, extra, flush) {
+async function ping(ctx, kind, taskId, extra, flush, raw) {
   const s = ctx.settings;
-  if (s['kind_' + KINDS[kind]] === false) return { sent: false, reason: 'kind_off' };
+  if (!raw && s['kind_' + KINDS[kind]] === false) return { sent: false, reason: 'kind_off' };
   const topic = ctx.secret('topic');
   if (!topic) return { sent: false, reason: 'no_topic' };
   const id = safeId(taskId);
@@ -43,6 +45,13 @@ async function ping(ctx, kind, taskId, extra, flush) {
   if (!topicOk(topic)) return drop('bad_topic');
   const base = serverUrl(s.server);
   if (!base) return drop('bad_server');
+  const title = s.include_title && id ? cleanTitle(titles.get(id)) : '';
+  // Send gate: a module may ask to hold this ping. A throw or any answer but true sends as usual. A raw send skips the gate.
+  if (gate && !raw) {
+    let hold = false;
+    try { hold = (await gate({ kind: KINDS[kind], task_id: id, text: message(kind, id, title, extra) })) === true; } catch { hold = false; }
+    if (hold) return { sent: false, reason: 'held_by_gate', held: true }; // the gate owns it; not a failure, so not journaled as one
+  }
   const now = Date.now();
   while (sent.length && now - sent[0] > WINDOW_MS) sent.shift();
   const capped = sent.length >= s.max_per_minute;
@@ -56,13 +65,12 @@ async function ping(ctx, kind, taskId, extra, flush) {
   // Piggyback: this send is allowed, so a held backlog goes out as one summary after it.
   // A flush sends the backlog alone; a normal 'finished' ping joins it as the latest. Priority pings send as-is.
   let backlog = null;
-  if (held.count && (flush || !PRIORITY_KINDS.has(kind))) {
+  if (!raw && held.count && (flush || !PRIORITY_KINDS.has(kind))) {
     backlog = flush ? { n: held.count, kind: held.kind, id: held.id } : { n: held.count + 1, kind, id };
     held.count = 0; held.kind = held.id = null;
   }
 
-  const title = s.include_title && id ? cleanTitle(titles.get(id)) : '';
-  const headers = { 'Content-Type': 'text/plain; charset=utf-8', Title: `Taskmote: ${HEAD[kind]}`, Tags: TAGS[kind], Priority: PRIORITY[kind] };
+  const headers = { 'Content-Type': 'text/plain; charset=utf-8', Title: raw ? `Taskmote: ${raw.title}` : `Taskmote: ${HEAD[kind]}`, Tags: TAGS[kind], Priority: PRIORITY[kind] };
   const link = serverUrl(s.app_url);
   if (s.app_url && link) headers.Click = link;
   let ok = false, status = 0, why = '';
@@ -71,7 +79,7 @@ async function ping(ctx, kind, taskId, extra, flush) {
   const onAbort = () => ac.abort();
   if (ctx.signal) ctx.signal.addEventListener('abort', onAbort, { once: true });
   try {
-    const res = await fetch(`${base}/${topic}`, { method: 'POST', body: backlog ? summary(backlog) : message(kind, id, title, extra), headers, redirect: 'error', signal: ac.signal });
+    const res = await fetch(`${base}/${topic}`, { method: 'POST', body: raw ? raw.text : backlog ? summary(backlog) : message(kind, id, title, extra), headers, redirect: 'error', signal: ac.signal });
     status = res.status; ok = res.ok;
     try { await res.arrayBuffer(); } catch { /* body unused */ }
   } catch (e) { why = e && e.name === 'AbortError' ? 'timeout' : 'network'; } // never e.message: it may carry the URL
@@ -152,6 +160,7 @@ module.exports = {
     include_title: { type: 'boolean', default: false, description: 'add a short first line of the task request to the message (off: id only)' },
     kind_task_finished: { type: 'boolean', default: true, description: 'ping when a task ends with exit 0' },
     kind_task_blocked: { type: 'boolean', default: true, description: 'ping when a task is stalled or ends with a non-zero exit' },
+    kind_digest: { type: 'boolean', default: true, description: 'ping when the digest module asks for its summary to be pushed' },
     kind_approval_waiting: { type: 'boolean', default: true, description: 'ping when an approval card is waiting' },
     max_per_minute: { type: 'integer', default: 20, min: 1, max: 600, description: 'most pings sent per minute; extra finished pings are held and sent as one summary (blocked and approval pings are never held)' },
     timeout_ms: { type: 'integer', default: 4000, min: 500, max: 4500, description: 'give up on one send after this long' },
@@ -170,8 +179,15 @@ module.exports = {
     }),
     'task-watchdog.stalled': safely(({ task_id }, ctx) => ping(ctx, 'blocked', task_id)),
     // The card summary can hold a command line, so only the card's task id is sent.
+    'digest.ready': safely(({ text }, ctx) => ping(ctx, 'digest', null, typeof text === 'string' ? text : '')),
     'card.created': safely(({ task_id }, ctx) => ping(ctx, 'approval', task_id)),
   },
   statusLines: (J, ctx) => { try { return [statusLine(J, ctx)]; } catch { return ['ntfy: status unreadable']; } },
-  api: { serverUrl, topicOk, flushHeld, reset(windowOnly) { sent.length = 0; if (windowOnly) return; held.count = 0; held.kind = held.id = null; if (held.timer) { clearTimeout(held.timer); held.timer = null; } } }, // reset: tests only
+  api: {
+    serverUrl, topicOk, flushHeld,
+    // Send gate: fn({kind, task_id, text}) -> true holds this ping (not sent; the caller keeps it). Anything else sends. Returns an undo function.
+    setSendGate(fn) { gate = typeof fn === 'function' ? fn : null; return () => { if (gate === fn) gate = null; }; },
+    // Send one plain message now (skips the gate and the per-kind switch). Resolves {sent, reason?}.
+    sendText(text, title) { return ping(this.ctx, 'finished', null, null, 'exit', { text: String(text), title: String(title || 'Update') }); },
+    reset(windowOnly) { sent.length = 0; if (windowOnly) return; held.count = 0; held.kind = held.id = null; if (held.timer) { clearTimeout(held.timer); held.timer = null; } } }, // reset: tests only
 };

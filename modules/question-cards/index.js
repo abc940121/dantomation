@@ -149,5 +149,5 @@ module.exports = {
     timeout_minutes: { type: 'number', default: S.DEFAULT_TIMEOUT_MIN, min: 1, max: 10080, description: 'minutes a question waits before it expires' },
     max_pending: { type: 'integer', default: 50, min: 1, max: 500, description: 'most questions that may wait at once' },
   },
-  api: { validateAsk: S.validateAsk, validateAnswer: S.validateAnswer, source: S.source, fold: S.fold, pending: S.pending, view: S.view, isExpired: S.isExpired },
+  api: { ask: function (v) { return S.ask(ioOf(this.ctx), v, this.ctx.settings); }, validateAsk: S.validateAsk, validateAnswer: S.validateAnswer, source: S.source, fold: S.fold, pending: S.pending, view: S.view, isExpired: S.isExpired },
 };

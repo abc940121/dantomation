@@ -1,0 +1,9 @@
+{
+  "suites": [
+    {
+      "label": "digest",
+      "file": "test/digest.js",
+      "needs": []
+    }
+  ]
+}

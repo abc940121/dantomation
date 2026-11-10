@@ -54,6 +54,7 @@ module.exports = {
       if (code === 0) record(ctx, 'task_finished', { text: 'Task finished', task_id });
       else record(ctx, 'task_failed', { text: `Task failed (exit ${Number.isInteger(code) ? code : '?'})`, task_id });
     },
+    'digest.ready': ({ text }, ctx) => { record(ctx, 'digest', { text: str(text).slice(0, 1000) }); },
     // The two below are events no module emits yet (see README, missing seams).
     'question.asked': ({ question_id, task_id, text }, ctx) => { record(ctx, 'question_asked', { text: `Question: ${str(text)}`, ref: question_id, task_id }); },
     'rooms.mention': ({ room, target, text, msg_id }, ctx) => {

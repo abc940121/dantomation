@@ -1,0 +1,9 @@
+{
+  "suites": [
+    {
+      "label": "quiet-hours",
+      "file": "test/quiet-hours.js",
+      "needs": []
+    }
+  ]
+}

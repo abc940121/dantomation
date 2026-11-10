@@ -193,7 +193,7 @@ module.exports = {
   description: 'Snapshots the task folder before every mutating tool call; owner commands restore, undo and fork from step N.',
   priority: 90, // last: snapshot only calls that nothing else blocked or held for approval
   statusLines,
-  api: { undoInfo, undoStack, undoCount, distinctPoints, checkpoint: ck.checkpoint, steps: fk.steps, diff: fk.diff, fork: fk.fork, forks: fk.forks },
+  api: { undoInfo, undoStack, undoCount, distinctPoints, checkpoint: ck.checkpoint, restore: ck.restore, diffstat: ck.diffstat, steps: fk.steps, diff: fk.diff, fork: fk.fork, forks: fk.forks },
   settings: {
     fork_dir: { type: 'string', default: '', description: 'absolute folder for forks; empty = under the harness state dir' },
     max_forks: { type: 'integer', default: 20, min: 1, max: 1000, description: 'fork records kept; the oldest are dropped' },

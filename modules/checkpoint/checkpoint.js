@@ -138,6 +138,40 @@ function changedPaths(a, b) {
   return git(CK, path.join(CK, 'none.index'), ['diff-tree', '-r', '-z', '--name-only', a, b]).split('\0').filter(Boolean);
 }
 
+// Files that differ between snapshot n and the folder now, with line counts:
+// [{path, added, removed}]. Reads only; makes no checkpoint. The shadow repo marks every file -diff,
+// so numstat there says "binary"; the two sides are copied to a temp folder and counted outside the repo.
+function diffstat(task, dir, n) {
+  ensureRepo();
+  const base = treeOf(task, n), cur = currentTree(task, dir);
+  const raw = git(CK, path.join(CK, 'none.index'), ['diff-tree', '-r', '-z', '--raw', '--no-renames', '--no-abbrev', base, cur]).split('\0');
+  const items = [];
+  for (let i = 0; i + 1 < raw.length; i += 2) {
+    const m = /^:(\d+) (\d+) ([0-9a-f]+) ([0-9a-f]+) /.exec(raw[i]);
+    if (m) items.push({ path: raw[i + 1], a: /^0+$/.test(m[3]) ? null : m[3], b: /^0+$/.test(m[4]) ? null : m[4] });
+  }
+  if (!items.length) return [];
+  const tmp = fs.mkdtempSync(path.join(require('os').tmpdir(), 'ckstat-'));
+  try {
+    fs.mkdirSync(path.join(tmp, 'a')); fs.mkdirSync(path.join(tmp, 'b'));
+    items.forEach((it, i) => {
+      for (const [side, sha] of [['a', it.a], ['b', it.b]]) {
+        const data = sha ? execFileSync('git', ['--git-dir', REPO, 'cat-file', 'blob', sha], { maxBuffer: 1 << 28, windowsHide: true }) : Buffer.alloc(0);
+        fs.writeFileSync(path.join(tmp, side, String(i)), data);
+      }
+    });
+    const r = require('child_process').spawnSync('git', ['-c', 'core.autocrlf=false', 'diff', '--no-index', '--numstat', '--text', '-z', 'a', 'b'], { cwd: tmp, encoding: 'utf8', maxBuffer: 1 << 28, windowsHide: true });
+    const out = (r.stdout || '').split('\0');
+    const counts = {};
+    for (let i = 0; i + 2 < out.length + 1; i += 3) {
+      const m = /^(\d+)\t(\d+)\t$/.exec(out[i] || '');
+      const p = /^a\/(\d+)$/.exec(out[i + 1] || '');
+      if (m && p) counts[p[1]] = { added: Number(m[1]), removed: Number(m[2]) };
+    }
+    return items.map((it, i) => ({ path: it.path, added: (counts[i] || {}).added || 0, removed: (counts[i] || {}).removed || 0 }));
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+}
+
 function taskDir(task, ref) {
   const recs = J.readAll().records;
   const c = recs.filter(r => r.type === 'checkpoint' && r.task_id === task && r.dir);
@@ -173,4 +207,4 @@ function restore(task, n, opts = {}) {
   } finally { fs.rmSync(tmp, { force: true }); }
 }
 
-module.exports = { checkpoint, restore, currentTree, treeOf, treesOf, changedPaths, MAX_BYTES, REPO, git, ensureRepo, taskDir, safeId: safe };
+module.exports = { checkpoint, restore, diffstat, currentTree, treeOf, treesOf, changedPaths, MAX_BYTES, REPO, git, ensureRepo, taskDir, safeId: safe };

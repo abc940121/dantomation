@@ -144,6 +144,16 @@ const TOPIC = 'zq-secret-topic-91x';
     check('cleared once an approval ping succeeds', !/FAILED/.test(await status(reg)));
     check('no message or header ever holds the topic', hits.every(h => !h.body.includes(TOPIC) && !JSON.stringify(h.headers).includes(TOPIC)));
 
+    reg = mk({ server: base });
+    const d0 = hits.length;
+    await M.emit(reg.mods, 'digest.ready', { text: 'Digest since x\ntasks: 1 started' });
+    await settle();
+    check('digest.ready: one ping carrying the text', hits.length - d0 === 1 && hits[hits.length - 1].body === 'Digest since x\ntasks: 1 started', hits[hits.length - 1] && hits[hits.length - 1].body);
+    reg = mk({ server: base, kind_digest: false });
+    await M.emit(reg.mods, 'digest.ready', { text: 'x' });
+    await settle();
+    check('digest.ready: kind_digest off sends nothing', hits.length - d0 === 1);
+
     reg = mk({ server: 'ftp://x.example' });
     const n2 = hits.length;
     await M.emit(reg.mods, 'task.end', { task_id: 't10', code: 0, workdir: '/w' });

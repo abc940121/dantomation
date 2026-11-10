@@ -1,0 +1,9 @@
+{
+  "suites": [
+    {
+      "label": "change-card",
+      "file": "test/change-card.js",
+      "needs": ["change-card", "checkpoint", "question-cards"]
+    }
+  ]
+}
