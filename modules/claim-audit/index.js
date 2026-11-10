@@ -182,6 +182,11 @@ module.exports = {
   on: { 'task.end': onTaskEnd },
   prepareTurn,
   statusLines,
+  // taskmote ask claims <task> | ask claims <task> answer "<answer 1>" ...
+  verbs: {
+    'claim-questions': { under: 'ask', as: 'claims', min: 1, max: 1, order: 6, usage: 'ask claims <task> [answer "<answer 1>" ...]' },
+    'claim-answer': { under: 'ask', as: 'claims', word: 'answer', min: 3 },
+  },
   commands,
   settings: {
     ask_to_cite: { type: 'boolean', default: true, description: 'add a short "cite your evidence" line to the engine prompt (and a reminder on resume after a flagged report)' },

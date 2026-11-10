@@ -95,6 +95,7 @@ module.exports = {
   dependsOn: [],
 
   // `taskmote check usage [daily|monthly|session] [--since D] [--until D] [--json]`
+  verbs: { usage: { under: 'check', order: 2, usage: 'check usage [daily|monthly|session] [--since <date>] [--until <date>] [--json]' } }, // taskmote check usage
   commands: {
     async usage(args, ctx) {
       if (process.env.HARNESS_TASK_ID) { console.error('check usage: owner only; not available inside a task'); return { handled: true, code: 2 }; }

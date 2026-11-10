@@ -135,6 +135,14 @@ module.exports = {
   emits: ['question'], // question.asked, question.answered, question.cancelled, question.expired (see store.js)
   on: { 'task.start': (_, ctx) => S.sweep(ioOf(ctx)) },
   statusLines,
+  // taskmote ask ...: a bare question is the default; list/get/answer/cancel pass their own word on
+  verbs: { question: [
+    { under: 'ask', fallback: true, prefix: ['ask'], order: 1, usage: 'ask "<text>" <option> <option> [... up to 6] [--free]' },
+    { under: 'ask', as: 'list', withSub: true, order: 2, usage: 'ask list' },
+    { under: 'ask', as: 'get', withSub: true, order: 3, usage: 'ask get <id>' },
+    { under: 'ask', as: 'answer', withSub: true, order: 4, usage: 'ask answer <id> <number|option> [text]' },
+    { under: 'ask', as: 'cancel', withSub: true, order: 5, usage: 'ask cancel <id>' },
+  ] },
   commands: { question: command },
   routes: [
     { method: 'GET', path: '/questions', handler: listPending, description: 'pending questions' },

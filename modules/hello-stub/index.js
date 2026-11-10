@@ -25,6 +25,7 @@ module.exports = {
   },
 
   // Command: `taskmote dev hello [name]`.
+  verbs: { hello: { under: 'dev', order: 1 } }, // taskmote dev hello
   commands: {
     // ctx.state.append writes a journal record tagged module: "hello-stub".
     async hello(args, ctx) {

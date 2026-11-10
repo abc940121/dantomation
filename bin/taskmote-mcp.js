@@ -51,7 +51,7 @@ function loaded() {
   return LOADED;
 }
 class ToolError extends Error {}
-const off = name => new ToolError(`the ${name} module is off. Enable it: set "${name}": true under "modules" in the Taskmote config, then restart this server.`);
+const off = name => new ToolError(`the ${name} module is off or not installed. Enable it: set "${name}": true under "modules" in the Taskmote config (it needs a modules/${name} folder), then restart this server.`);
 // -> { api, mt, ctx } for an enabled module, else throws a ToolError naming it.
 function need(name) {
   const L = loaded();

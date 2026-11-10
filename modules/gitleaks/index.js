@@ -117,6 +117,7 @@ module.exports = {
   priority: 10,
   hookTimeoutMs: 5000,
   beforeTool,
+  verbs: { scan: { under: 'check', as: 'secrets', order: 1, usage: 'check secrets [path] [--dir]' } }, // taskmote check secrets
   commands: { scan },
   settings: {
     binary: { type: 'string', default: 'gitleaks', description: 'gitleaks program name or absolute path' },

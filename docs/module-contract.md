@@ -57,6 +57,7 @@ Manifest fields (unknown fields are a load error):
 | `failMode` | `"open"` (default) or `"closed"`: what a throwing or timed-out `beforeReply` does (keep or block the reply) |
 | `emits` | extra event prefixes the module may emit |
 | `commands` | `harness.js <verb>` / `taskmote <verb>` |
+| `verbs` | puts a command under a trunk verb (`dev`, `check`, `ask`, `preset`): `{ scan: { under: 'check', as: 'secrets', order: 1, usage: 'check secrets [path]' } }`. Also `withSub`, `fallback`, `prefix`, `word`, `min`, `max`; see `parseVerbs` in lib/modules.js. The trunk builds its sub-verb tables and usage text from these, so removing the folder removes the verbs |
 | `routes` | HTTP routes under `/m/<name>/`: `{method, path, handler, description?, access?}` |
 | `panels` | UI panels `{id, title, mount, entry}` |
 | `jobs` | background work started by `registry.startJobs(ctx)`: `{id, every, run}` or `{id, start}` |

@@ -112,6 +112,7 @@ module.exports = {
     return { context: lines };
   },
 
+  verbs: { 'engine-router': { under: 'dev', order: 2 } }, // taskmote dev engine-router
   commands: {
     async 'engine-router'(args, ctx) {
       if (process.env.HARNESS_TASK_ID) { console.error('engine-router: owner only'); return { handled: true, code: 2 }; }

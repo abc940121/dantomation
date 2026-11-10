@@ -22,13 +22,13 @@ const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
-const MODULES = fs.readdirSync(path.join(ROOT, 'modules'), { withFileTypes: true })
-  .filter(d => d.isDirectory() && fs.existsSync(path.join(ROOT, 'modules', d.name, 'index.js'))).map(d => d.name).sort();
+const MODULES = require('../lib/modules').installed();
 // [label, file, modules it needs on (empty: runs in any mode), exclusive?] -- core suites only.
 // exclusive: creates temp module folders under modules/ or scans the whole tree, so with --parallel
 // it runs alone after the parallel phase (the shared repo tree is the one shared resource).
 const CORE_SUITES = [
   ['modules', 'test/modules.js', [], true],
+  ['module-removal', 'test/module-removal.js', [], true],
   ['module-contract', 'test/module-contract.js', [], true],
   ['module-events', 'test/module-events.js', [], true],
   ['module-seams', 'test/module-seams.js', [], true],

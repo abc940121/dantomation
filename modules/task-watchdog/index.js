@@ -251,6 +251,7 @@ module.exports = {
       handler: ({ settings }) => ({ status: 200, json: { settings: { ...settings } } }) },
   ],
 
+  verbs: { watchdog: { under: 'dev', order: 4 } }, // taskmote dev watchdog
   commands: {
     async watchdog(args, ctx) {
       const sub = args[0] || 'stalled';

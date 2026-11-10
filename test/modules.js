@@ -70,7 +70,7 @@ for (const rel of ['bin/harness.js', 'bin/taskmote.js', 'bin/approve-mcp.js', 'b
 
 // a new entry point that loads modules must join the list above, or this fails
 {
-  const ENTRIES = new Set(['bin/harness.js', 'bin/taskmote.js', 'bin/approve-mcp.js', 'bin/taskmote-mcp.js', 'guards/guard.js', 'lib/server.js']);
+  const ENTRIES = new Set(['bin/harness.js', 'bin/taskmote.js', 'bin/approve-mcp.js', 'bin/taskmote-mcp.js', 'guards/guard.js', 'lib/server.js', 'lib/config.js']); // config.js asks the registry which folders exist
   const extra = [];
   for (const dir of ['bin', 'lib', 'guards']) for (const f of fs.readdirSync(path.join(ROOT, dir))) {
     if (!f.endsWith('.js')) continue;
@@ -97,7 +97,7 @@ try {
   fs.mkdirSync(brokenDir, { recursive: true }); fs.writeFileSync(path.join(brokenDir, 'index.js'), "throw new Error('boom');\n");
   fs.mkdirSync(noName, { recursive: true }); fs.writeFileSync(path.join(noName, 'index.js'), "module.exports = { name: 'something-else', beforeTool() { return null; } };\n");
   fs.mkdirSync(badHook, { recursive: true }); fs.writeFileSync(path.join(badHook, 'index.js'), "module.exports = { name: 'zz-test-badhook', beforeTool: 'yes' };\n");
-  const failing = [['unknown name', 'no-such-module', true], ['throws on require', 'zz-test-throws', true], ['wrong exported name', 'zz-test-noname', true], ['beforeTool is not a function', 'zz-test-badhook', true], ['non-boolean flag', 'checkpoint', 'yes']];
+  const failing = [['throws on require', 'zz-test-throws', true], ['wrong exported name', 'zz-test-noname', true], ['beforeTool is not a function', 'zz-test-badhook', true], ['non-boolean flag', 'checkpoint', 'yes']];
   for (const [label, mod, val] of failing) {
     const c = cfgFile('fail-' + mod, { modules: { ...OFF, [mod]: val } });
     const g = guard(c, 'Read', { file_path: 'README.md' });
@@ -105,6 +105,8 @@ try {
     res[`load failure (${label}): guard blocks a harmless Read, naming ${mod}`] = g.code === 2 && g.kind === 'module' && g.err.includes(mod);
     res[`load failure (${label}): start and resume exit 2 naming ${mod}`] = s.status === 2 && r.status === 2 && s.stderr.includes(mod) && r.stderr.includes(mod);
   }
+  // a name with no folder (a removed module) is ignored with a warning, never a failure
+  res['unknown module name (no folder): ignored, guard allows a harmless Read'] = guard(cfgFile('fail-unknown', { modules: { ...OFF, 'no-such-module': true } }), 'Read', { file_path: 'README.md' }).code === 0;
   res['a failing module that is switched off does not matter'] = guard(cfgFile('fail-off', { modules: { ...OFF, 'zz-test-throws': false } }), 'Read', { file_path: 'README.md' }).code === 0;
 } finally {
   for (const d of [brokenDir, noName, badHook]) fs.rmSync(d, { recursive: true, force: true });
@@ -120,7 +122,7 @@ res['restore with checkpoint on but not the owner: exit 6'] = rs2.status === 6;
 const hits = [];
 for (const d of ['bin', 'lib', 'guards']) for (const f of fs.readdirSync(path.join(ROOT, d))) {
   if (!f.endsWith('.js')) continue;
-  fs.readFileSync(path.join(ROOT, d, f), 'utf8').split('\n').forEach((l, i) => { if (/require\([^)]*modules[/\\'"]/.test(l.replace(/lib\/modules/g, 'lib/loader'))) hits.push(`${d}/${f}:${i + 1}`); });
+  fs.readFileSync(path.join(ROOT, d, f), 'utf8').split('\n').forEach((l, i) => { if (/require\([^)]*modules[/\\'"]/.test(l.replace(/(lib\/|\.\/)modules/g, 'lib/loader'))) hits.push(`${d}/${f}:${i + 1}`); });
 }
 res[`no require of modules/ in bin, lib, guards (hits: ${hits.join(',') || 'none'})`] = hits.length === 0;
 

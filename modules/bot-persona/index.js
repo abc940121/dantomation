@@ -84,6 +84,7 @@ module.exports = {
       }) },
   ],
 
+  verbs: { persona: { under: 'preset' } }, // taskmote preset persona
   commands: {
     // taskmote preset persona list | show <bot> | clear <bot> [persona|memory] | set <bot> <persona|memory>   (text on stdin)
     // (the old spelling `taskmote persona ...` still runs and prints the new one)

@@ -21,7 +21,8 @@ const C = require('../lib/config');
 const M = require('../lib/modules');
 
 const HARNESS = path.join(__dirname, 'harness.js');
-const USAGE = 'usage: taskmote do "<request>" | do | status | undo [--to <n> | fork <n>] | ask ... | check secrets|usage ... | serve | token new [--worker] | <module verb>';
+// The usage line names ask / check sub-verbs only for the modules that are installed (see subNames below).
+const USAGE = () => `usage: taskmote do "<request>" | do | status | undo [--to <n> | fork <n>] | ${subNames('ask').length ? 'ask ... | ' : ''}${subNames('check').length ? `check ${subNames('check').join('|')} ... | ` : ''}serve | token new [--worker] | <module verb>`;
 const fail = (msg, code = 1) => { console.error(msg); process.exit(code); };
 
 // demo also runs before the config is read: it must not need, read or touch the owner's config or state.
@@ -194,65 +195,66 @@ async function undoDirect(args) {
 
 // Any other verb: a command of an enabled module. If none claims it, look for a module folder
 // that offers it, so a verb whose module is off says what to turn on.
+// The installed modules and the sub-verbs they declare (lib/modules.js catalog), read once and only when a verb needs them.
+let CATALOG;
+const catalog = () => CATALOG || (CATALOG = M.catalog(CONFIG));
+const offeredBy = verb => { const c = catalog().find(x => x.valid && x.commands.includes(verb)); return c ? c.name : null; };
+// Declarations for one group (dev | check | ask | preset), in usage order. Installed counts, on or off.
+const subDecls = group => catalog().filter(c => c.valid).flatMap(c => c.verbs.filter(d => d.under === group)).sort((a, b) => a.order - b.order);
+const subNames = group => [...new Set(subDecls(group).filter(d => !d.fallback).map(d => d.as))];
+const fits = (d, a) => (d.min === undefined || a.length >= d.min) && (d.max === undefined || a.length <= d.max) && (!d.word || a[1] === d.word);
+// `taskmote <group> <sub> ...`: run the command whose module declared that sub-verb; one that matches nothing prints the group's usage.
+async function subVerb(group, args, usage) {
+  const [v, ...a] = args;
+  const ds = subDecls(group);
+  const named = v ? ds.filter(d => !d.fallback && d.as === v) : [];
+  const hit = named.find(d => fits(d, a));
+  if (hit) { const x = hit.word ? [a[0], ...a.slice(2)] : a; return moduleVerb(hit.withSub ? [v, ...x] : x, hit.command); }
+  const fb = !named.length && v && ds.find(d => d.fallback);
+  if (fb) return moduleVerb([...fb.prefix, ...args], fb.command);
+  fail(usage(), 2);
+}
+const groupUsage = group => () => `usage: taskmote ${subDecls(group).map(d => d.usage).filter(Boolean).join(' | ')}`;
+
 async function moduleVerb(args, verb = process.argv[2]) {
   const mods = await loadModules();
   const claimers = M.verbClaimers(mods, verb);
   if (claimers.length > 1) fail(`taskmote: "${verb}" is offered by more than one enabled module (${claimers.join(', ')}); turn all but one off.`, 2);
   const cmd = claimers.length ? M.commands(mods)[verb] : undefined;
   if (cmd) { const r = await cmd(args, { J, get EXEC_LOCK() { return require('./harness').EXEC_LOCK; } }); return r && r.code ? process.exit(r.code) : undefined; }
-  const dir = path.join(__dirname, '..', 'modules');
-  let owner = null;
-  try { owner = fs.readdirSync(dir).find(n => { try { return Object.keys(require(path.join(dir, n, 'index.js')).commands || {}).includes(verb); } catch { return false; } }); } catch { /* no modules folder */ }
-  fail(owner ? `taskmote: "${verb}" needs the ${owner} module, which is off: turn on the ${owner} module (add "${owner}": true under "modules" in ${CONFIG.file}).` : USAGE, 2);
+  const owner = offeredBy(verb);
+  fail(owner ? `taskmote: "${verb}" needs the ${owner} module, which is off: turn on the ${owner} module (add "${owner}": true under "modules" in ${CONFIG.file}).` : USAGE(), 2);
 }
 
 const [verb, ...rest] = process.argv.slice(2);
-// Builder and debugging verbs live under `taskmote dev <verb>` so a new user sees fewer commands.
-// The old top-level spelling still runs and says the new one.
-const DEV = ['hello', 'engine-router', 'trace', 'watchdog'];
-const DEV_USAGE = `usage: taskmote dev <${DEV.join('|')}> ...`;
-const devVerb = async args => { const [v, ...a] = args; if (!DEV.includes(v)) fail(DEV_USAGE, 2); return moduleVerb(a, v); };
-// Questions live under `taskmote ask`: a bot asks the owner (question-cards), the owner lists and answers,
-// and the owner reads and answers a claim audit's evidence questions (claim-audit).
-const ASK_USAGE = 'usage: taskmote ask "<text>" <option> <option> [... up to 6] [--free] | ask list | ask get <id> | ask answer <id> <number|option> [text] | ask cancel <id> | ask claims <task> [answer "<answer 1>" ...]';
-const askVerb = async args => {
-  const [v, ...a] = args;
-  if (!v) fail(ASK_USAGE, 2);
-  if (['get', 'list', 'answer', 'cancel'].includes(v)) return moduleVerb([v, ...a], 'question');
-  if (v === 'claims') {
-    if (!a[0] || (a.length > 1 && a[1] !== 'answer') || (a[1] === 'answer' && a.length < 3)) fail(ASK_USAGE, 2);
-    return a[1] === 'answer' ? moduleVerb([a[0], ...a.slice(2)], 'claim-answer') : moduleVerb([a[0]], 'claim-questions');
-  }
-  return moduleVerb(['ask', ...args], 'question');
-};
-// Checks live under `taskmote check`: secrets runs the gitleaks module's scan, usage runs the ccusage module's report.
-const CHECK_USAGE = 'usage: taskmote check secrets [path] [--dir] | check usage [daily|monthly|session] [--since <date>] [--until <date>] [--json]';
-const CHECK = { secrets: 'scan', usage: 'usage' };
-const checkVerb = async args => {
-  const [v, ...a] = args;
-  if (!Object.prototype.hasOwnProperty.call(CHECK, v || '')) fail(CHECK_USAGE, 2);
-  return moduleVerb(a, CHECK[v]);
-};
+// Builder and debugging verbs live under `taskmote dev <verb>`, questions under `ask`, checks under `check`, and per-bot
+// persona text under `preset persona`. Which sub-verbs exist comes from the installed modules' own `verbs` declarations.
+const devUsage = () => `usage: taskmote dev <${subNames('dev').join('|') || 'none installed'}> ...`;
+const devVerb = args => subVerb('dev', args, devUsage);
+const askVerb = args => args.length ? subVerb('ask', args, groupUsage('ask')) : fail(groupUsage('ask')(), 2);
+const checkVerb = args => subVerb('check', args, groupUsage('check'));
 // Trunk verbs are looked up first (own keys only), so a module can never shadow them.
 const TRUNK = { do: doVerb, status: statusVerb, undo: undoVerb,
   dev: devVerb,
   serve: async () => { const w = C.warn(); if (w) console.error(w); await require('../lib/server').serve(); },
   token: async () => {
-    if (rest[0] !== 'new') fail(USAGE, 2);
+    if (rest[0] !== 'new') fail(USAGE(), 2);
     const worker = rest[1] === '--worker';
     console.log(`${worker ? 'worker ' : ''}token written to ${require('../lib/server').tokenNew(worker ? 'worker' : undefined)} (owner-only); send it as: Authorization: Bearer <token>${worker ? ' (it may only call /api/worker/ and module routes marked access: worker)' : ''}`);
   } };
-// Per-bot persona text sits with the presets: `taskmote preset persona ...` is the bot-persona module's command.
-// It is not a trunk verb, so `preset` alone still needs the presets module and `preset persona` needs bot-persona.
-const presetPersona = verb === 'preset' && rest[0] === 'persona';
 const run = Object.prototype.hasOwnProperty.call(TRUNK, verb) ? TRUNK[verb] : (verb && moduleVerb);
 // `ask` and `check` are fixed lines too, not trunk verbs: they route to modules and are checked before any module verb.
-const go = verb === 'ask' ? askVerb : verb === 'check' ? checkVerb : presetPersona ? (a => moduleVerb(a.slice(1), 'persona')) : run;
+// `preset <sub>` goes to a module only when an installed module declared that sub (else `preset` is the presets module's own command).
+const go = verb === 'ask' ? askVerb : verb === 'check' ? checkVerb
+  : verb === 'preset' && rest[0] && subNames('preset').includes(rest[0]) ? (a => subVerb('preset', a, () => USAGE())) : run;
 const MOVED = { restore: 'taskmote undo --to <n> <task>', fork: 'taskmote undo fork', question: 'taskmote ask', answer: 'taskmote do yes | do no',
   'claim-questions': 'taskmote ask claims <task>', 'claim-answer': 'taskmote ask claims <task> answer "<answer 1>" ...',
   pair: 'taskmote device pair', devices: 'taskmote device list', revoke: 'taskmote device revoke <id>',
   persona: 'taskmote preset persona', lesson: 'taskmote goal lesson', scan: 'taskmote check secrets', usage: 'taskmote check usage' };
-if (Object.prototype.hasOwnProperty.call(MOVED, verb)) { aliasHit(verb); console.error(`note: "taskmote ${verb}" is now "${MOVED[verb]}"; the old spelling still works for now.`); }
-if (DEV.includes(verb)) { aliasHit(verb); console.error(`note: "taskmote ${verb}" is now "taskmote dev ${verb}"; the old spelling still works for now.`); }
-if (!go) fail(USAGE, 2);
+// An old spelling is counted and noted only while an installed module still offers it; with the module folder gone it is just an unknown verb.
+if (Object.prototype.hasOwnProperty.call(MOVED, verb) && offeredBy(verb)) { aliasHit(verb); console.error(`note: "taskmote ${verb}" is now "${MOVED[verb]}"; the old spelling still works for now.`); }
+else if (verb && !Object.prototype.hasOwnProperty.call(TRUNK, verb) && verb !== 'ask' && verb !== 'check' && verb !== 'preset' && subDecls('dev').some(d => d.as === verb && offeredBy(d.command))) {
+  aliasHit(verb); console.error(`note: "taskmote ${verb}" is now "taskmote dev ${verb}"; the old spelling still works for now.`);
+}
+if (!go) fail(USAGE(), 2);
 else go(rest).catch(e => fail(`taskmote: ${e && e.stack || e}`, 1));

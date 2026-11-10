@@ -306,6 +306,7 @@ module.exports = {
 
   jobs: [{ id: 'sweep', every: 30, run: ctx => sweep(ctx).catch(() => 0) }],
 
+  verbs: { trace: { under: 'dev', order: 3 } }, // taskmote dev trace
   commands: {
     // trace [list] | trace show <task_id> | trace predict <task_id> <minutes> [expected result words]
     async trace(args, ctx) {
