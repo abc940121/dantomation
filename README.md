@@ -31,7 +31,7 @@ Phone approval cards need the `v1` preset: see [Try the v1 base](#try-the-v1-bas
 
 > **Before you start:** Taskmote runs AI agents on your machine, with your user's rights. The trunk only listens on `127.0.0.1`, and every optional module is **off** until you turn it on. Read [Security](#security) before you expose it to a phone or a network.
 
-> **A paired phone has your powers.** By default (`engine.profile: "full"`) each bot is a persistent Claude Code session with your own Claude settings, tools and MCP servers. Anyone holding a paired device can make it do what you could do at this keyboard, except the red-line actions, which the guard blocks or holds for your yes. Treat pairing like handing over a logged-in laptop: pair only devices you own, list them with `node bin/harness.js devices`, and remove one with `node bin/harness.js revoke <id>`. Set `engine.profile` to `"locked"` for the older narrow tool allowlist.
+> **A paired phone has your powers.** By default (`engine.profile: "full"`) each bot is a persistent Claude Code session with your own Claude settings, tools and MCP servers. Anyone holding a paired device can make it do what you could do at this keyboard, except the red-line actions, which the guard blocks or holds for your yes. Treat pairing like handing over a logged-in laptop: pair only devices you own, list them with `node bin/harness.js device list`, and remove one with `node bin/harness.js device revoke <id>`. Set `engine.profile` to `"locked"` for the older narrow tool allowlist.
 
 **It is not**
 - **Not a sandbox.** The guard is pattern matching in front of the agent's tools, not isolation. An agent can do what your user account can do.
@@ -91,8 +91,8 @@ On Windows, `bin\taskmote.cmd` does the same; put `bin` on your PATH to type `ta
 
 1. In your config file (`~/.harness/config.json`, or the file named by `HARNESS_CONFIG`), add `"preset": "v1"`. If you have no config yet, create the file as `{ "preset": "v1" }`. Your own `modules` entries always win over the preset.
 2. Run `node bin/taskmote.js serve`. It listens on `127.0.0.1:7420`.
-3. Open <http://127.0.0.1:7420/m/app-ui/ui/> (keep the `/ui/` at the end). The page asks for a pairing code the first time, even on this computer: run `node bin/harness.js pair` and type the six digits it prints. **It worked if** you can send "hello" and see a reply.
-4. **Phone (optional).** A phone cannot reach `127.0.0.1`. Put this computer on a private network you control (for example Tailscale), set `server.host` to that address, and restart `serve`. Then run `node bin/harness.js pair`, and open the printed link on the phone or type the code there. `node bin/harness.js devices` lists phones and `node bin/harness.js revoke <id>` removes one. Never open the port to the internet.
+3. Open <http://127.0.0.1:7420/m/app-ui/ui/> (keep the `/ui/` at the end). The page asks for a pairing code the first time, even on this computer: run `node bin/harness.js device pair` and type the six digits it prints. **It worked if** you can send "hello" and see a reply.
+4. **Phone (optional).** A phone cannot reach `127.0.0.1`. Put this computer on a private network you control (for example Tailscale), set `server.host` to that address, and restart `serve`. Then run `node bin/harness.js device pair`, and open the printed link on the phone or type the code there. `node bin/harness.js device list` lists phones and `node bin/harness.js device revoke <id>` removes one. Never open the port to the internet.
 
 `node bin/taskmote.js preset v1` shows what the preset turns on. It never writes a file. The verb is the `presets` module (on by default); with it off, the verb says to turn it on.
 

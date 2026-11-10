@@ -221,7 +221,7 @@ const { checkCitations } = require('../audit');
     const env = { ...process.env, HARNESS_CONFIG: cfg, HARNESS_STATE_DIR: path.join(dir, 'state'), HARNESS_LOG_DIR: path.join(dir, 'logs'),
       HARNESS_WORK_DIR: path.join(dir, 'work'), HARNESS_ENGINE_SCRIPT: path.join(ROOT, 'test', 'fake-engine.js'), HARNESS_FAKE_DELAY_MS: '0', HARNESS_FAKE_STREAM: stream };
     delete env.HARNESS_OWNER; delete env.HARNESS_TASK_ID; delete env.HARNESS_TASK_DIR; delete env.HARNESS_FAKE_GUARD;
-    const run = a => spawnSync(process.execPath, [path.join(ROOT, 'bin', /^claim-/.test(a[0]) ? 'harness.js' : 'taskmote.js'), ...a], { env, encoding: 'utf8', timeout: 60000 });
+    const run = a => spawnSync(process.execPath, [path.join(ROOT, 'bin', 'taskmote.js'), ...a], { env, encoding: 'utf8', timeout: 60000 });
     const s = run(['do', 'evidence task']);
     const st = run(['status']);
     let recs = [];
@@ -234,10 +234,14 @@ const { checkCitations } = require('../audit');
   check('e2e: interrogation pending_engine with 3 questions', aq && aq.status === 'pending_engine' && aq.questions === 3, JSON.stringify(aq));
   check('e2e: status shows interrogation line', /interrogation: pending_engine \(3 questions\)/.test(a.status));
   const tid = aq && aq.task_id;
-  const q = a.run(['claim-questions', tid]);
-  check('e2e: claim-questions prints the stored questions', /Which line shows that \\"The bug is fixed\.\\"\?|Which line shows that "The bug is fixed\."\?/.test(q.stdout), q.stdout.slice(0, 80));
-  const r = a.run(['claim-answer', tid, '[t:"Tests: 39/39 passed"]', 'because', '[j:nope]']);
-  check('e2e: claim-answer records answers (1 supported)', /recorded 3 answers \(1 supported\)/.test(r.stdout), r.stdout.trim() + r.stderr.slice(0, 100));
+  const q = a.run(['ask', 'claims', tid]);
+  check('e2e: ask claims prints the stored questions', /Which line shows that \\"The bug is fixed\.\\"\?|Which line shows that "The bug is fixed\."\?/.test(q.stdout), q.stdout.slice(0, 80));
+  const r = a.run(['ask', 'claims', tid, 'answer', '[t:"Tests: 39/39 passed"]', 'because', '[j:nope]']);
+  check('e2e: ask claims <task> answer records answers (1 supported)', /recorded 3 answers \(1 supported\)/.test(r.stdout), r.stdout.trim() + r.stderr.slice(0, 100));
+  const oq = a.run(['claim-questions', tid]);
+  check('e2e: old "taskmote claim-questions" still runs and names "taskmote ask claims"', /The bug is fixed/.test(oq.stdout) && /note: "taskmote claim-questions" is now "taskmote ask claims <task>"/.test(oq.stderr), oq.stderr.slice(0, 120));
+  const bad = a.run(['ask', 'claims', tid, 'answer']);
+  check('e2e: ask claims <task> answer with no answers: usage, exit 2', bad.status === 2 && /usage: taskmote ask/.test(bad.stderr));
   const b = e2e('e2e-off', {});
   check('e2e: no reviewer set: audit only, no interrogation', b.recs.some(r => r.type === 'claim_audit') && !b.recs.some(r => r.type === 'claim_interrogation'));
 

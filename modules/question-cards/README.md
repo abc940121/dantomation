@@ -10,13 +10,13 @@ for everything else ("which colour?", "ship today?"). Off by default:
 
 ## Flow
 
-1. Asker: `taskmote question ask "Which colour?" Red Green Blue --free` prints
+1. Asker: `taskmote ask "Which colour?" Red Green Blue --free` prints
    `{"question_id":"q-1a2b3c4d5e6f708192a3b4c5",...}`. Inside a task the question is tied to
    `HARNESS_TASK_ID`.
 2. Owner: sees it in the `Questions` chat panel, `status`, or
-   `taskmote question list`, and answers with a button, the route, or
-   `taskmote question answer q-1a2b3c 2 [free text]`.
-3. Asker polls `taskmote question get q-1a2b3c` (state `pending | answered |
+   `taskmote ask list`, and answers with a button, the route, or
+   `taskmote ask answer q-1a2b3c 2 [free text]`.
+3. Asker polls `taskmote ask get q-1a2b3c` (state `pending | answered |
    cancelled | expired`, plus `answer`). The answer also lands in the task's
    history as a note, so a resumed task sees it.
 

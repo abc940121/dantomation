@@ -8,6 +8,7 @@ The lower-level reference that used to live in the README: the CLI details, the 
 - `status` prints the open task (request, steps done, last step), the last finished task, how many undo points exist (only points an undo would stop at; points that match the next one are not counted), which modules are on, and any config warning.
 - `undo` rolls the latest task's folder back to the state before the agent's last change; run it again to step back one more. It needs the `checkpoint` module (on by default) and works only for tasks started while it was on. It cannot run while a task is running, and agents cannot run it. When nothing is left it says so. Each undo first takes a fresh checkpoint and prints the line that brings the undone state back (`taskmote undo --to <n> <task>`), so an undo can itself be undone. `undo --to <n> [<task>]` jumps straight to undo point n (default: the latest task); `undo fork <n>` copies the folder as it was at step n into a new folder. If files it resets changed after the task ended (most likely edited by hand), it prints a warning naming them before undoing; that version is in the safety point the printed line brings back.
 - With the `approval-cards` module on, a risky action (git push, deleting outside the task folder, installs, publishing, paid API calls) stops and waits for you. `status` shows the card; answer with `node bin/taskmote.js do yes` or `do no` (an unclear answer asks again; no answer for 10 minutes counts as no). See [`approval-cards`](../modules/approval-cards/README.md).
+- With the `question-cards` module on, an agent can ask you a multiple-choice question (`taskmote ask "<text>" <option> <option> ...`). `taskmote ask list` shows open questions and `taskmote ask answer <id> <number|option>` answers one; agents cannot list or answer. `taskmote ask claims <task>` shows the `claim-audit` questions for a task and `ask claims <task> answer "<a1>" ...` records answers. Old spellings (`question`, `claim-questions`, `claim-answer`) still run and print the new one.
 - Undo is protected by convention only (see Known limits).
 
 
@@ -90,6 +91,8 @@ Other features checked and kept in core: the stale-lock wait for a "transient" h
     node bin/harness.js status        # print the resume prompt for the open task
     taskmote undo --to <n> [<task>]   # roll the task folder back to undo point n (old spelling: restore)
     taskmote undo fork <n>            # copy step n of the latest task into a new folder (old spelling: fork)
+    taskmote ask list                 # open agent questions; ask answer <id> <n> (old spelling: question)
+    taskmote ask claims <task>        # claim-audit questions (old spellings: claim-questions, claim-answer)
 
 Interactive Claude Code sessions opened in this folder also get the guard (`.claude/settings.json`).
 

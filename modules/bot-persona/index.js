@@ -85,7 +85,8 @@ module.exports = {
   ],
 
   commands: {
-    // harness persona list | show <bot> | clear <bot> [persona|memory] | set <bot> <persona|memory>   (text on stdin)
+    // taskmote preset persona list | show <bot> | clear <bot> [persona|memory] | set <bot> <persona|memory>   (text on stdin)
+    // (the old spelling `taskmote persona ...` still runs and prints the new one)
     async persona(args, ctx) {
       if (process.env.HARNESS_TASK_ID) { console.error('persona: owner only; refused inside a task'); return { handled: true, code: 2 }; }
       const [verb, bot, part] = args;
@@ -107,7 +108,7 @@ module.exports = {
         if (e instanceof InputError) { console.error(`persona: ${e.message}`); return { handled: true, code: 2 }; }
         throw e;
       }
-      console.error('usage: persona list | show <bot> | set <bot> <persona|memory> (text on stdin) | clear <bot> [persona|memory]');
+      console.error('usage: taskmote preset persona list | show <bot> | set <bot> <persona|memory> (text on stdin) | clear <bot> [persona|memory]');
       return { handled: true, code: 2 };
     },
   },

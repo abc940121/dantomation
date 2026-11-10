@@ -138,6 +138,26 @@ const OWNER = { kind: 'owner', id: 'test' };
     check("command list works", code.list.code === 0 && out[0] === ['helper', 'main'].join(String.fromCharCode(10)), out.join('|'));
     check('command refuses inside a task and changes nothing', code.refused.code === 2 && (await call('GET', '/m/bot-persona/bots/main')).json.persona !== '');
     check('command rejects unknown bot and bad usage', code.bad.code === 2 && code.usage.code === 2);
+
+    // CLI end to end: `taskmote preset persona ...` reaches this module; the old `persona` spelling still runs and says the new one.
+    const { spawnSync } = require('child_process');
+    const cliCfg = path.join(tmp, 'cli-config.json');
+    fs.writeFileSync(cliCfg, JSON.stringify({ modules: { 'bot-persona': true }, bots: [{ id: 'main' }] }));
+    const cliEnv = { ...process.env, HARNESS_CONFIG: cliCfg, HARNESS_STATE_DIR: path.join(tmp, 'cli-state'), HARNESS_LOG_DIR: path.join(tmp, 'cli-logs') };
+    delete cliEnv.HARNESS_TASK_ID;
+    const tm = (args, input) => spawnSync(process.execPath, [path.join(ROOT, 'bin', 'taskmote.js'), ...args], { env: cliEnv, cwd: tmp, encoding: 'utf8', input, timeout: 30000, windowsHide: true });
+    let c = tm(['preset', 'persona', 'list']);
+    check('cli: preset persona list', c.status === 0 && c.stdout.trim() === '(none)' && !/note:/.test(c.stderr), c.status + ' ' + c.stdout + c.stderr);
+    c = tm(['preset', 'persona', 'set', 'main', 'persona'], 'calm and brief\n');
+    check('cli: preset persona set reads stdin', c.status === 0 && /persona set for main/.test(c.stdout), c.status + ' ' + c.stdout + c.stderr);
+    c = tm(['preset', 'persona', 'show', 'main']);
+    check('cli: preset persona show', c.status === 0 && c.stdout.includes('calm and brief'), c.stdout + c.stderr);
+    c = tm(['preset', 'persona']);
+    check('cli: bare preset persona prints the new usage', c.status === 2 && c.stderr.includes('usage: taskmote preset persona list'), c.status + ' ' + c.stderr);
+    c = tm(['persona', 'list']);
+    check('cli: old persona spelling still runs and prints the new one', c.status === 0 && c.stdout.trim() === 'main' && c.stderr.includes('"taskmote persona" is now "taskmote preset persona"'), c.status + ' ' + c.stdout + c.stderr);
+    c = tm(['preset', 'v1']);
+    check('cli: preset <name> still reaches the presets module', c.status === 0 && !/persona/.test(c.stderr), c.status + ' ' + c.stdout.slice(0, 200) + c.stderr);
   } catch (e) { check('no exception', false, e.stack); }
   finally { fs.rmSync(tmp, { recursive: true, force: true }); }
   const n = results.filter(Boolean).length;

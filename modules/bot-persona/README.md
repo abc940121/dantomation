@@ -19,8 +19,9 @@ Routes (all owner access), served at `/m/bot-persona`:
   All fields are validated before anything is written.
 - `DELETE /bots/:bot` clears both; `?part=persona|memory` clears one.
 
-Command (owner only, refused inside a task): `harness persona list | show <bot> |
+Command (owner only, refused inside a task): `taskmote preset persona list | show <bot> |
 set <bot> persona|memory (text on stdin) | clear <bot> [persona|memory]`.
+The old spelling `taskmote persona ...` still runs and prints the new one.
 
 Bot ids must be in config `bots` (or `main` when none are set). Text must be a
 string without control characters (tab, newline, CR allowed).

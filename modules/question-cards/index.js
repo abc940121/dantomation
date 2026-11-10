@@ -11,14 +11,14 @@ const ioOf = ctx => ({ J: (ctx && ctx.core && ctx.core.J) || (ctx && ctx.J) || J
 const inTask = () => !!process.env.HARNESS_TASK_ID;
 
 // An agent may ask (command) but never answer, cancel or list through the shell or the server API.
-const OWNER_CMD = /(taskmote|harness)(\.(js|cmd))?["']?\s+question\s+["']?(answer|cancel|list)\b/i;
+const OWNER_CMD = /(taskmote|harness)(\.(js|cmd))?["']?\s+(question|ask)\s+["']?(answer|cancel|list)\b/i;
 const API_CMD = /\/m\/question-cards(?![\w-])/i;
 function beforeTool(ctx) {
   if (!inTask()) return null;
   const { tool, ti } = ctx;
   if (!/^(bash|shell|powershell|cmd)$/i.test(String(tool || ''))) return null;
   const cmd = String((ti && ti.command) || '');
-  if (API_CMD.test(cmd)) return ['question_cards', 'the question-cards server API is for the owner only; ask with: taskmote question ask'];
+  if (API_CMD.test(cmd)) return ['question_cards', 'the question-cards server API is for the owner only; ask with: taskmote ask'];
   if (OWNER_CMD.test(cmd)) return ['question_cards', 'answering, cancelling or listing questions is for the owner only'];
   return null;
 }
@@ -68,11 +68,11 @@ async function postCancel(ctx) {
   return r.error ? fail(r) : { status: 200, json: { question: r.question } };
 }
 
-// ---- command: taskmote question <ask|get|list|answer|cancel> ...
+// ---- command: taskmote ask ... (the trunk `ask` verb calls this; `taskmote question <ask|get|list|answer|cancel>` is the old spelling)
 //   ask "<text>" <option> <option> ... [--free]      (bots and tasks; prints the question id)
 //   get <id>                                         (prints JSON; a task may read only its own)
 //   list | answer <id> <number|option> [free text] | cancel <id>   (owner only; refused inside a task)
-const USAGE = 'usage: question ask "<text>" <option> <option> [... up to 6] [--free] | question get <id> | question list | question answer <id> <number|option> [text] | question cancel <id>';
+const USAGE = 'usage: taskmote ask "<text>" <option> <option> [... up to 6] [--free] | ask get <id> | ask list | ask answer <id> <number|option> [text] | ask cancel <id>';
 const out = o => console.log(JSON.stringify(o));
 function bad(msg, code) { console.error(msg); process.exitCode = code || 2; return { ok: false }; }
 
@@ -121,7 +121,7 @@ async function command(args, ctx) {
 
 function statusLines(Jn, ctx) {
   const lines = [];
-  for (const q of S.pending(Jn.readAll().records, S.vaultLoad({ state: ctx.state }))) lines.push(`question ${q.question_id} is waiting: ${clip(q.text, 100)}`, `  answer with: taskmote question answer ${q.question_id} <1-${q.options.length}>`);
+  for (const q of S.pending(Jn.readAll().records, S.vaultLoad({ state: ctx.state }))) lines.push(`question ${q.question_id} is waiting: ${clip(q.text, 100)}`, `  answer with: taskmote ask answer ${q.question_id} <1-${q.options.length}>`);
   return lines;
 }
 

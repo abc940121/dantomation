@@ -185,11 +185,11 @@ const T0 = Date.parse('2030-01-01T00:00:00Z');
     // ---- guard against agents
     process.env.HARNESS_TASK_ID = 'task-x';
     const g = command => M.beforeTool(reg.mods, { tool: 'Bash', ti: { command }, cwd: tmp });
-    const blocked = ['taskmote question answer q-aaaaaa 1', 'node bin/harness.js question cancel q-aaaaaa', 'harness question list', 'curl http://127.0.0.1:1/m/question-cards/questions/q-aaaaaa/answer -d x'];
+    const blocked = ['taskmote question answer q-aaaaaa 1', 'taskmote ask answer q-aaaaaa 1', 'node bin/taskmote.js ask list', 'node bin/harness.js question cancel q-aaaaaa', 'harness question list', 'curl http://127.0.0.1:1/m/question-cards/questions/q-aaaaaa/answer -d x'];
     let okAll = true;
     for (const c of blocked) { const h = await g(c); if (!h || h[0] !== 'question_cards') { okAll = false; console.log('  not blocked: ' + c); } }
     check('agent cannot answer, cancel, list or call the route from a task', okAll);
-    check('agent may ask and get', (await g('taskmote question ask "Pick one" a b')) === null && (await g('harness question get q-aaaaaa')) === null);
+    check('agent may ask and get', (await g('taskmote question ask "Pick one" a b')) === null && (await g('harness question get q-aaaaaa')) === null && (await g('taskmote ask "Pick one" a b')) === null && (await g('taskmote ask get q-aaaaaa')) === null);
     check('non-shell tools are not touched', (await M.beforeTool(reg.mods, { tool: 'Read', ti: { file_path: 'question answer' }, cwd: tmp })) === null);
     delete process.env.HARNESS_TASK_ID;
     check('outside a task the hook allows', (await g('taskmote question answer q-aaaaaa 1')) === null);
@@ -241,6 +241,28 @@ const T0 = Date.parse('2030-01-01T00:00:00Z');
     check('cmd race: exactly one process answers, the rest exit 3', codes.filter(c => c === 0).length === 1 && codes.filter(c => c === 3).length === 2 && ans.length === 1, codes.join());
     p = run(['bogus']);
     check('cmd unknown verb prints usage, exit 2', p.status === 2 && /usage/.test(p.stderr));
+    // the trunk verb: taskmote ask ...
+    const tm = (args, extra = {}) => spawnSync(process.execPath, [path.join(ROOT, 'bin', 'taskmote.js'), ...args], { env: { ...env, ...extra }, encoding: 'utf8', timeout: 30000 });
+    p = tm(['ask', 'Trunk?', 'x', 'y'], { HARNESS_TASK_ID: 'task-tm' });
+    let idt = null; try { idt = JSON.parse(p.stdout.trim().split(String.fromCharCode(10)).pop()).question_id; } catch { /* checked below */ }
+    check('taskmote ask "<text>" a b (in a task) prints the id, no note', p.status === 0 && !!idt && !/note:/.test(p.stderr), p.stdout + p.stderr);
+    p = tm(['ask', 'get', idt], { HARNESS_TASK_ID: 'task-tm' });
+    check('taskmote ask get <id> by the asking task', p.status === 0 && JSON.parse(p.stdout).state === 'pending');
+    p = tm(['ask', 'list'], { HARNESS_TASK_ID: 'task-tm' });
+    check('taskmote ask list inside a task is refused (exit 6)', p.status === 6);
+    p = tm(['ask', 'list']);
+    check('taskmote ask list (owner) shows it', p.status === 0 && p.stdout.includes(idt), p.stdout);
+    p = tm(['ask', 'answer', idt, '2']);
+    check('taskmote ask answer <id> 2', p.status === 0 && /answered/.test(p.stdout), p.stdout + p.stderr);
+    // a task name typed where a question id goes: a clear error, never a match against claim answers or another question
+    p = tm(['ask', 'answer', 'task-tm', '1']);
+    check('taskmote ask answer <task name> 1: no such question, nothing answered', p.status !== 0 && /no such question/.test(p.stdout + p.stderr) && !/answered/.test(p.stdout), p.status + ' ' + p.stdout + p.stderr);
+    p = tm(['ask']);
+    check('taskmote ask with nothing: usage, exit 2', p.status === 2 && /usage: taskmote ask/.test(p.stderr));
+    p = tm(['question', 'list']);
+    check('old "taskmote question" still runs and names "taskmote ask"', p.status === 0 && /note: "taskmote question" is now "taskmote ask"/.test(p.stderr), p.stderr);
+    p = tm(['answer']);
+    check('old "taskmote answer" names "taskmote do yes | do no"', /note: "taskmote answer" is now "taskmote do yes \| do no"/.test(p.stderr), p.stderr);
     check('state dir is only the temp one', fs.existsSync(path.join(st2, 'journal.jsonl')));
   } catch (e) { check('no exception (command)', false, e.stack); }
   finally { fs.rmSync(tmp, { recursive: true, force: true }); }

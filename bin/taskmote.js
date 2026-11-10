@@ -21,7 +21,7 @@ const C = require('../lib/config');
 const M = require('../lib/modules');
 
 const HARNESS = path.join(__dirname, 'harness.js');
-const USAGE = 'usage: taskmote do "<request>" | do | status | undo [--to <n> | fork <n>] | serve | token new [--worker] | <module verb>';
+const USAGE = 'usage: taskmote do "<request>" | do | status | undo [--to <n> | fork <n>] | ask ... | serve | token new [--worker] | <module verb>';
 const fail = (msg, code = 1) => { console.error(msg); process.exit(code); };
 
 // demo also runs before the config is read: it must not need, read or touch the owner's config or state.
@@ -193,6 +193,19 @@ const [verb, ...rest] = process.argv.slice(2);
 const DEV = ['hello', 'new-module', 'engine-router', 'repo-map', 'trace', 'watchdog'];
 const DEV_USAGE = `usage: taskmote dev <${DEV.join('|')}> ...`;
 const devVerb = async args => { const [v, ...a] = args; if (!DEV.includes(v)) fail(DEV_USAGE, 2); return moduleVerb(a, v); };
+// Questions live under `taskmote ask`: a bot asks the owner (question-cards), the owner lists and answers,
+// and the owner reads and answers a claim audit's evidence questions (claim-audit).
+const ASK_USAGE = 'usage: taskmote ask "<text>" <option> <option> [... up to 6] [--free] | ask list | ask get <id> | ask answer <id> <number|option> [text] | ask cancel <id> | ask claims <task> [answer "<answer 1>" ...]';
+const askVerb = async args => {
+  const [v, ...a] = args;
+  if (!v) fail(ASK_USAGE, 2);
+  if (['get', 'list', 'answer', 'cancel'].includes(v)) return moduleVerb([v, ...a], 'question');
+  if (v === 'claims') {
+    if (!a[0] || (a.length > 1 && a[1] !== 'answer') || (a[1] === 'answer' && a.length < 3)) fail(ASK_USAGE, 2);
+    return a[1] === 'answer' ? moduleVerb([a[0], ...a.slice(2)], 'claim-answer') : moduleVerb([a[0]], 'claim-questions');
+  }
+  return moduleVerb(['ask', ...args], 'question');
+};
 // Trunk verbs are looked up first (own keys only), so a module can never shadow them.
 const TRUNK = { do: doVerb, status: statusVerb, undo: undoVerb,
   dev: devVerb,
@@ -202,9 +215,17 @@ const TRUNK = { do: doVerb, status: statusVerb, undo: undoVerb,
     const worker = rest[1] === '--worker';
     console.log(`${worker ? 'worker ' : ''}token written to ${require('../lib/server').tokenNew(worker ? 'worker' : undefined)} (owner-only); send it as: Authorization: Bearer <token>${worker ? ' (it may only call /api/worker/ and module routes marked access: worker)' : ''}`);
   } };
+// Per-bot persona text sits with the presets: `taskmote preset persona ...` is the bot-persona module's command.
+// It is not a trunk verb, so `preset` alone still needs the presets module and `preset persona` needs bot-persona.
+const presetPersona = verb === 'preset' && rest[0] === 'persona';
 const run = Object.prototype.hasOwnProperty.call(TRUNK, verb) ? TRUNK[verb] : (verb && moduleVerb);
-const MOVED = { restore: 'taskmote undo --to <n> <task>', fork: 'taskmote undo fork' };
+// `ask` is a fixed line too, not a trunk verb: it routes to question-cards or claim-audit and is checked before any module verb.
+const go = verb === 'ask' ? askVerb : presetPersona ? (a => moduleVerb(a.slice(1), 'persona')) : run;
+const MOVED = { restore: 'taskmote undo --to <n> <task>', fork: 'taskmote undo fork', question: 'taskmote ask', answer: 'taskmote do yes | do no',
+  'claim-questions': 'taskmote ask claims <task>', 'claim-answer': 'taskmote ask claims <task> answer "<answer 1>" ...',
+  pair: 'taskmote device pair', devices: 'taskmote device list', revoke: 'taskmote device revoke <id>',
+  persona: 'taskmote preset persona' };
 if (Object.prototype.hasOwnProperty.call(MOVED, verb)) console.error(`note: "taskmote ${verb}" is now "${MOVED[verb]}"; the old spelling still works for now.`);
 if (DEV.includes(verb)) console.error(`note: "taskmote ${verb}" is now "taskmote dev ${verb}"; the old spelling still works for now.`);
-if (!run) fail(USAGE, 2);
-else run(rest).catch(e => fail(`taskmote: ${e && e.stack || e}`, 1));
+if (!go) fail(USAGE, 2);
+else go(rest).catch(e => fail(`taskmote: ${e && e.stack || e}`, 1));

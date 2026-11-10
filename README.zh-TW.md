@@ -10,7 +10,7 @@
 
 > **開始之前：** Taskmote 會在你的電腦上以你的使用者權限執行 AI 代理。主幹只監聽 `127.0.0.1`，所有選用模組在你開啟前都是**關閉**的。要讓手機或網路連進來之前，請先讀[安全性](#security)。
 
-> **配對過的手機擁有你的權限。** 預設（`engine.profile: "full"`）每個 bot 都是一個持續存在的 Claude Code 工作階段，使用你自己的 Claude 設定、工具與 MCP 伺服器。任何拿著已配對裝置的人，都能讓它做你坐在這台電腦前能做的事；只有紅線動作會被防護擋下，或等你在卡片上同意。請把配對當成交出一台已登入的筆電：只配對你自己的裝置，用 `node bin/harness.js devices` 列出，用 `node bin/harness.js revoke <id>` 移除。若要回到舊的窄工具白名單，把 `engine.profile` 設為 `"locked"`。
+> **配對過的手機擁有你的權限。** 預設（`engine.profile: "full"`）每個 bot 都是一個持續存在的 Claude Code 工作階段，使用你自己的 Claude 設定、工具與 MCP 伺服器。任何拿著已配對裝置的人，都能讓它做你坐在這台電腦前能做的事；只有紅線動作會被防護擋下，或等你在卡片上同意。請把配對當成交出一台已登入的筆電：只配對你自己的裝置，用 `node bin/harness.js device list` 列出，用 `node bin/harness.js device revoke <id>` 移除。若要回到舊的窄工具白名單，把 `engine.profile` 設為 `"locked"`。
 
 Taskmote 在 2026 年 11 月前叫做 *dantomation*。舊指令名稱 `dantomation` 仍可作為別名使用。
 
@@ -70,8 +70,8 @@ Windows 上 `bin\taskmote.cmd` 效果相同；把 `bin` 加入 PATH 就能直接
 
 1. 在設定檔（`~/.harness/config.json`，或 `HARNESS_CONFIG` 指定的檔案）加入 `"preset": "v1"`。還沒有設定檔的話，建立內容為 `{ "preset": "v1" }` 的檔案。你自己寫的 `modules` 設定永遠優先於 preset。
 2. 執行 `node bin/taskmote.js serve`，它會監聽 `127.0.0.1:7420`。
-3. 開啟 <http://127.0.0.1:7420/m/app-ui/ui/>（結尾的 `/ui/` 要保留）。第一次開啟時頁面會要求配對碼，在本機也一樣：執行 `node bin/harness.js pair`，輸入它印出的六位數字。**成功的話**，送出 "hello" 會看到回覆。
-4. **手機（選用）。** 手機連不到 `127.0.0.1`。把這台電腦加入你自己控制的私人網路（例如 Tailscale），把 `server.host` 設成該位址，重新啟動 `serve`。然後執行 `node bin/harness.js pair`，在手機上開啟印出的連結或輸入配對碼。`node bin/harness.js devices` 列出手機，`node bin/harness.js revoke <id>` 移除手機。絕對不要把連接埠開放到網際網路。
+3. 開啟 <http://127.0.0.1:7420/m/app-ui/ui/>（結尾的 `/ui/` 要保留）。第一次開啟時頁面會要求配對碼，在本機也一樣：執行 `node bin/harness.js device pair`，輸入它印出的六位數字。**成功的話**，送出 "hello" 會看到回覆。
+4. **手機（選用）。** 手機連不到 `127.0.0.1`。把這台電腦加入你自己控制的私人網路（例如 Tailscale），把 `server.host` 設成該位址，重新啟動 `serve`。然後執行 `node bin/harness.js device pair`，在手機上開啟印出的連結或輸入配對碼。`node bin/harness.js device list` 列出手機，`node bin/harness.js device revoke <id>` 移除手機。絕對不要把連接埠開放到網際網路。
 
 `node bin/taskmote.js preset v1` 會列出這個 preset 開啟哪些模組，它不會寫入任何檔案。
 

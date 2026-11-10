@@ -8,6 +8,35 @@ const byDevice = ctx => String((ctx.actor && ctx.actor.id) || '').startsWith('de
 const deny = { status: 403, json: { error: 'forbidden' } };
 const body = ctx => (ctx.body && typeof ctx.body === 'object' ? ctx.body : {});
 
+// ---- command: taskmote device <pair|list|revoke <id>> (old spellings: pair, devices, revoke)
+const DEVICE_USAGE = 'usage: taskmote device pair | device list | device revoke <id>';
+async function pair() {
+  const m = S.mintCode();
+  console.log(`Pairing code (valid 2 minutes, single use): ${m.short}`);
+  console.log(`Link fragment for the QR: #p=${m.code}`);
+  console.log('Open <server address>/m/app-ui/ui/#p=<code> (or /m/chat-ui/ui/) in the browser or on the phone, or type the six digits into the page.');
+  return { handled: true, code: 0 };
+}
+async function list() {
+  const l = S.list();
+  if (!l.length) console.log('no paired devices');
+  for (const d of l) console.log(`${d.id}  ${d.revoked ? 'revoked' : d.expired ? 'expired' : 'active '}  ${d.label}  created ${d.created}  last seen ${d.lastSeen || 'never'}`);
+  return { handled: true, code: 0 };
+}
+async function revoke(args) {
+  const ok = S.revoke(args[0]);
+  console.log(ok ? `revoked ${args[0]}` : `no such device: ${args[0] || '(give a device id)'}`);
+  return { handled: true, code: ok ? 0 : 1 };
+}
+async function device(args) {
+  const [sub, ...a] = args;
+  if (sub === 'pair' && !a.length) return pair();
+  if (sub === 'list' && !a.length) return list();
+  if (sub === 'revoke' && a.length === 1) return revoke(a);
+  console.error(DEVICE_USAGE);
+  return { handled: true, code: 2 };
+}
+
 module.exports = {
   contract: 2,
   name: 'device-pairing',
@@ -23,25 +52,6 @@ module.exports = {
     { method: 'POST', path: '/redeem', access: 'public-post', description: 'phone: swap a pairing code {code, label} for a device token',
       handler: ctx => { const b = body(ctx), r = S.redeem(b.code, b.label); return r.ok ? { status: 200, json: { token: r.token, id: r.id, label: r.label } } : { status: r.status, json: { error: r.error } }; } },
   ],
-  commands: {
-    async pair() {
-      const m = S.mintCode();
-      console.log(`Pairing code (valid 2 minutes, single use): ${m.short}`);
-      console.log(`Link fragment for the QR: #p=${m.code}`);
-      console.log('Open <server address>/m/app-ui/ui/#p=<code> (or /m/chat-ui/ui/) in the browser or on the phone, or type the six digits into the page.');
-      return { handled: true, code: 0 };
-    },
-    async devices() {
-      const l = S.list();
-      if (!l.length) console.log('no paired devices');
-      for (const d of l) console.log(`${d.id}  ${d.revoked ? 'revoked' : d.expired ? 'expired' : 'active '}  ${d.label}  created ${d.created}  last seen ${d.lastSeen || 'never'}`);
-      return { handled: true, code: 0 };
-    },
-    async revoke(args) {
-      const ok = S.revoke(args[0]);
-      console.log(ok ? `revoked ${args[0]}` : `no such device: ${args[0] || '(give a device id)'}`);
-      return { handled: true, code: ok ? 0 : 1 };
-    },
-  },
+  commands: { device, pair, devices: list, revoke },
   api: { authenticate: S.authenticate, allows: S.allows, audit: S.audit },
 };

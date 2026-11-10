@@ -208,6 +208,24 @@ const req = (port, method, p, body, token, extra) => new Promise((res, rej) => {
     await req(port, 'POST', '/m/device-pairing/mint', {}, owner);
     let st = 0; for (let i = 0; i < 6; i++) st = (await req(port, 'POST', '/m/device-pairing/redeem', { code: String(100000 + i) })).status;
     check('lockout over HTTP: repeated wrong codes end in 429', st === 429);
+    // the CLI: taskmote device pair | list | revoke <id>, and the old spellings
+    const tm = (...args) => spawnSync(process.execPath, [path.join(ROOT, 'bin', 'taskmote.js'), ...args], { env, cwd: base, encoding: 'utf8', timeout: 30000, windowsHide: true });
+    let p = tm('device', 'list');
+    check('cli: taskmote device list shows the revoked device, no token', p.status === 0 && p.stdout.includes(redeem.json.id) && /revoked/.test(p.stdout) && !p.stdout.includes(dev) && !/note:/.test(p.stderr), p.stdout + p.stderr);
+    p = tm('device', 'pair');
+    check('cli: taskmote device pair prints a six-digit code', p.status === 0 && /single use\): \d{6}/.test(p.stdout));
+    p = tm('device', 'revoke', 'ffffffff');
+    check('cli: taskmote device revoke <unknown id> fails (exit 1)', p.status === 1 && /no such device/.test(p.stdout));
+    p = tm('device');
+    check('cli: taskmote device with nothing: usage, exit 2', p.status === 2 && /usage: taskmote device/.test(p.stderr));
+    p = tm('device', 'revoke');
+    check('cli: taskmote device revoke without an id: usage, exit 2', p.status === 2 && /usage: taskmote device/.test(p.stderr));
+    p = tm('devices');
+    check('cli: old "taskmote devices" still runs and names "taskmote device list"', p.status === 0 && p.stdout.includes(redeem.json.id) && /note: "taskmote devices" is now "taskmote device list"/.test(p.stderr), p.stderr);
+    p = tm('pair');
+    check('cli: old "taskmote pair" still runs and names "taskmote device pair"', p.status === 0 && /\d{6}/.test(p.stdout) && /note: "taskmote pair" is now "taskmote device pair"/.test(p.stderr), p.stderr);
+    p = tm('revoke', 'ffffffff');
+    check('cli: old "taskmote revoke" still runs and names "taskmote device revoke <id>"', p.status === 1 && /note: "taskmote revoke" is now "taskmote device revoke <id>"/.test(p.stderr), p.stderr);
   } finally {
     if (process.platform === 'win32') spawnSync('taskkill', ['/T', '/F', '/PID', String(srv.pid)], { stdio: 'ignore' }); else srv.kill('SIGKILL');
   }
