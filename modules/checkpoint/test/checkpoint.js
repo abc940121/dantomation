@@ -184,6 +184,28 @@ const u6b = (() => { const s = path.join(base, 'state5'), d = path.join(base, 'w
   fs.writeFileSync(path.join(d, 'c.txt'), 'c\n');
   return spawnSync(process.execPath, [HARNESS, 'undo'], { env: { ...env, HARNESS_STATE_DIR: s }, encoding: 'utf8' }); })();
 res['6 no engine_exit record: no warning, undo as before'] = u6b.status === 0 && !/warning:/.test(u6b.stdout) && /removed 1 file/.test(u6b.stdout);
+// Two undos in a row: the first undo's own writes are not hand edits, so the second does not warn;
+// a real hand edit after that undo still warns.
+{
+  const s = path.join(base, 'state6'), d = path.join(base, 'w6'); fs.mkdirSync(d, { recursive: true }); fs.mkdirSync(s, { recursive: true });
+  const env6 = { ...env, HARNESS_STATE_DIR: s };
+  const j6 = r => fs.appendFileSync(path.join(s, 'journal.jsonl'), JSON.stringify({ id: 'z' + Math.random(), ...r }) + '\n');
+  j6({ ts: new Date(Date.now() - 120000).toISOString(), type: 'task_start', task_id: 'tTWICE', request: 'r', workdir: d });
+  fs.writeFileSync(path.join(d, 'n.txt'), 'Teh\n');
+  const hook6 = () => spawnSync(process.execPath, [GUARD], { env: { ...env6, HARNESS_TASK_ID: 'tTWICE', HARNESS_TASK_DIR: d }, input: JSON.stringify({ session_id: 's', tool_name: 'Write', tool_input: { file_path: path.join(d, 'n.txt'), content: 'x' }, cwd: d }), encoding: 'utf8' });
+  hook6(); fs.writeFileSync(path.join(d, 'n.txt'), 'The\n');
+  hook6(); fs.writeFileSync(path.join(d, 'n.txt'), 'The\nChecked.\n');
+  const past = new Date(Date.now() - 60000); fs.utimesSync(path.join(d, 'n.txt'), past, past);
+  j6({ ts: new Date(Date.now() - 30000).toISOString(), type: 'engine_exit', task_id: 'tTWICE', code: 0 });
+  const a = spawnSync(process.execPath, [TASKMOTE, 'undo'], { env: env6, encoding: 'utf8' });
+  const b = spawnSync(process.execPath, [TASKMOTE, 'undo'], { env: env6, encoding: 'utf8' });
+  console.log(`6: two undos in a row: ${String(b.stdout).split('\n')[0]}`);
+  res['6 second undo in a row: no hand-edit warning for the first undo\'s own writes'] = a.status === 0 && b.status === 0 && !/warning:/.test(a.stdout + b.stdout) && fs.readFileSync(path.join(d, 'n.txt'), 'utf8') === 'Teh\n';
+  const later = new Date(Date.now() + 5000);
+  fs.writeFileSync(path.join(d, 'n.txt'), 'mine\n'); fs.utimesSync(path.join(d, 'n.txt'), later, later);
+  const c = spawnSync(process.execPath, [TASKMOTE, 'undo', '--to', '2', 'tTWICE'], { env: env6, encoding: 'utf8' });
+  res['6 a hand edit after an undo still warns'] = c.status === 0 && /likely by hand: n\.txt/.test(c.stdout);
+}
 
 // ---- 7. undo --to / undo fork / bad args / old spellings (ticket c)
 const tm = (args, extra) => spawnSync(process.execPath, [TASKMOTE, ...args], { env: { ...env4, ...(extra || {}) }, encoding: 'utf8' });

@@ -76,12 +76,14 @@ function distinctPoints(task, stack, cur) {
   return count;
 }
 
-// Files undo would overwrite that changed after the task's engine last exited: most likely
-// edited by hand. They are not lost (restore saves a safety point first), but the person is told.
+// Files undo would overwrite that changed after the task's engine last exited or after the last
+// undo (an undo's own writes are not hand edits): most likely edited by hand. They are not lost
+// (restore saves a safety point first), but the person is told.
 function handEdits(task, records, targetTree, cur, dir) {
   let end = NaN;
   for (const r of records) if (r.task_id === task && r.type === 'engine_exit') end = Date.parse(r.ts);
   if (!Number.isFinite(end) || !dir) return [];
+  for (const r of records) if (r.task_id === task && r.type === 'undo') end = Math.max(end, Date.parse(r.ts) || 0);
   return ck.changedPaths(targetTree, cur).filter(p => { try { return fs.statSync(path.join(dir, p)).mtimeMs > end + 1000; } catch { return false; } });
 }
 
