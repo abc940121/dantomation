@@ -266,7 +266,6 @@
       if (c.kind === 'bot') {
         const b = S.bots[c.bot] || { id: c.bot, name: c.bot, status: 'idle' };
         name = b.name || c.bot; avId = c.bot;
-        if (ui.mainRole && c.bot === ui.mainRole) name += ' · ' + tr('conv.mainTag');
         const online = b.status !== 'offline';
         users.push({ _id: c.bot, username: name, avatar: avatarOf(c.bot, name), status: { state: online ? 'online' : 'offline', lastChanged: online ? '' : word('status', 'offline') } });
         if (b.status === 'busy') typing = [c.bot];

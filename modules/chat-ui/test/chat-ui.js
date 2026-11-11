@@ -439,7 +439,7 @@ async function pageTests() {
     const stat = [...html.matchAll(/data-i18n="([^"]+)"/g)].map(m => { const e = el(); e.key = m[1]; e.getAttribute = a => (a === 'data-i18n' ? m[1] : null); return e; });
     const get = id => { if (!els.has(id)) els.set(id, el()); return els.get(id); };
     for (const m of html.matchAll(/id="(hs[\w-]*)"[^>]*\shidden/g)) get(m[1]).hidden = true; // the home-screen parts start hidden, as in index.html
-    const win = { DantoI18n: I, DantoState: D, DantoRooms: require(path.join(UI, 'rooms.js')), DantoClean: require(path.join(UI, 'clean.js')), addEventListener: (ev, f) => { handlers[ev] = f; } };
+    const win = { DantoI18n: I, DantoState: D, DantoRooms: require(path.join(UI, 'rooms.js')), DantoClean: require(path.join(UI, 'clean.js')), DantoCardForm: require(path.join(UI, 'cardform.js')), addEventListener: (ev, f) => { handlers[ev] = f; } };
     const ctx = { window: win, DantoState: D, location: { hash: opt.hash || '', pathname: '/m/chat-ui/ui/index.html', search, origin: 'http://127.0.0.1:1', href: 'http://127.0.0.1:1/m/chat-ui/ui/' }, history: { replaceState(a, b, u) { urls.push(u); const i = String(u).indexOf('#'); ctx.location.hash = i < 0 ? '' : String(u).slice(i); } },
       localStorage: { getItem: k => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)) },
       document: { getElementById: get, createElement: () => el(), createTextNode: t => ({ textContent: String(t) }), title: '', querySelectorAll: s => (s === '[data-i18n]' ? stat : s.includes('input:checked') ? [{ value: 'r-11111111' }] : []), documentElement: {}, addEventListener() {}, body: el(), visibilityState: 'visible' },
@@ -581,6 +581,23 @@ async function pageTests() {
   const prev = id => { const r = JSON.parse(pa.get('chat').rooms).find(x => x.roomId === id); return r ? r.lastMessage.content : null; };
   check('preview: the open room shows its own last message', /hello from main/.test(prev('room:g-aaaaaaaa') || ''), String(prev('room:g-aaaaaaaa')));
   check('preview: another room does not borrow the last message of the open room', prev('room:g-bbbbbbbb') !== null && !/hello from main/.test(prev('room:g-bbbbbbbb')), String(prev('room:g-bbbbbbbb')));
+
+  // 5b. the main role's room carries the Main tag once (room name), never in the bubble username or the avatar seed
+  const mainBots = [{ id: 'r-22222222', name: 'Chief of Staff', engine: 'claude', status: 'idle', runsOn: 'main' }, ...bots];
+  const mainApi = u => {
+    if (u.startsWith('/m/roles/main')) return json(200, { id: 'r-22222222', name: 'Chief of Staff' });
+    if (u.startsWith('/api/bots')) return json(200, mainBots);
+    if (u.startsWith('/api/events')) return new Response('', { status: 200 });
+    return json(200, []);
+  };
+  for (const lang of ['en', 'zh-TW']) {
+    const tag = I.TABLE[lang]['conv.mainTag'], mp = await run(lang, mainApi);
+    await mp.settle(); await mp.poll(); await mp.frame();
+    const list = JSON.parse(mp.get('chat').rooms), mr = list.find(x => x.roomId === 'bot:r-22222222'), ar = list.find(x => x.roomId === 'bot:r-11111111');
+    const count = s => String(s).split(tag).length - 1;
+    check('main tag (' + lang + '): the main role room name holds the tag exactly once', !!mr && mr.roomName === 'Chief of Staff · ' + tag && count(mr.roomName) === 1, mr && mr.roomName);
+    check('main tag (' + lang + '): the bubble username has no tag, and another role room has none', !!mr && mr.users.some(u => u._id === 'r-22222222' && u.username === 'Chief of Staff') && !!ar && ar.roomName === 'Ann');
+  }
 
   // 6. the language button flips en <-> zh-TW in place; the full-screen picker is for the first visit only
   const lb = await run('en', roomApi);
