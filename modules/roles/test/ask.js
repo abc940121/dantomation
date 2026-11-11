@@ -159,6 +159,13 @@ const throws = fn => { try { fn(); return ''; } catch (e) { return e.message; } 
     start(nd, bob.id); finish(nd, 'final: seven'); sweepJob(); sweepJob();
     check('nested: the final answer is delivered once, the interim text never', adds(alice.id).filter(q => /final: seven/.test(q.prompt)).length === 1 && !adds(alice.id).some(q => /interim/.test(q.prompt)));
 
+    // "main" is the main role (ensureMain) once it exists; until then it is the configured main bot.
+    const mrole = M.apiOf(mods, 'roles').main();
+    start('tM3', alice.id);
+    const rq = ask('tM3', 'main', 'hello main role');
+    check('role_ask "main" goes to the main role once it exists', rq.queued && adds(mrole.id).some(q => q.task_id === rq.task_id) && !adds('main').some(q => q.task_id === rq.task_id), JSON.stringify(rq));
+    check('role_ask "main" by the main role name or id reaches the same role', ask('tM3', mrole.name, 'by name').queued && ask('tM3', mrole.id, 'by id').queued);
+
     // The tool is described for the model.
     check('tool description says it does not wait', /does NOT wait/.test(tools.role_ask.description) && /end your turn/.test(tools.role_ask.description));
   } catch (e) { check('suite ran without an exception', false, e && e.stack); }

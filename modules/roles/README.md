@@ -158,11 +158,23 @@ The owner can ask in chat for a group ("make a group called 週末計畫 with An
 
 - Tools: `group_create {name, members}`, `group_update {group, name?, add?, remove?}`, `group_remove {group}` (archives, never deletes), `group_list`. Members are role names or ids; `group` is the `g-<8hex>` id or the current name.
 - Button route (owner): `POST /m/roles/groups {name, members:[role id]}` does what `group_create` does, with no model in between. Name 1-40 characters, 1-20 members, every one an existing role id (a name or unknown id is a 400). Answers 201 with the group; its id is the room id.
+- Button route (owner): `POST /m/roles/roles {name, job}` makes a role by hand with no model in between (the chat page's "New role" button). Name 1-40 characters, job one line of 1-200 characters (stored as the persona); the same store checks as `role_create` apply, so a duplicate name is a 400. Optional `avatar: {data: <base64 png/jpeg/webp>}` (body cap 256 KB, so the page limits pictures to 180 KB) is checked by content like any avatar and stored as `avatars/<id>.<ext>`; it is JSON, not a raw upload, and needs no device-pairing allowlist line. Answers 201 with `{id, name, persona, engine}`. Owner-only: a paired phone needs an allowlist line before it can use it, and none is added. No avatar yet.
 - Stored in `<state>/m/roles/groups.json` (same atomic save and damaged-file handling as `roles.json`). The room id is `g-<8hex>`; the display name is whatever the owner chose, in any language.
 - The main bot is always a member and the lead (a message with no @mention goes to it; `@everyone` wakes all; `@<role id>` wakes one role). Each role member is its own bot (`bot: "r-..."`), so it answers with its own persona, engine and conversation.
 - A role that is archived or removed drops out of the group on read; the stored list is not rewritten.
 - How it reaches the chat page: a job registers a room source with the rooms module (only when rooms is on). The chat page re-reads the room list every 5 seconds, so a new group shows up without a reload.
 - In a group, `@name` wakes that role. A Chinese name works without spaces around it (`@小橘你好`); the longest matching name wins.
+
+## Role card
+
+A role can have a `card`: a map of fields that give it its own manner. Set it by asking in chat (`role_create` / `role_update` take `card`); no form. Known fields (registry in `card.js`; add a line to add a field): `voice`, `talking` (way of talking), `working` (way of working), `avatar`. Fields not in the registry are kept as plain JSON (name: lowercase letters, digits, underscore, max 32; value max 2000 characters as JSON; max 32 fields). `null` or an empty text clears a field. A role without a card behaves exactly as before.
+
+Card routes (owner): `GET /m/roles/avatar/<id>` serves the avatar image (raw route; 404 when there is none; the URL in `/api/bots` carries `?v=<hash>`). `GET /m/roles/cards/<id>` returns `{id, name, fields:[{key,type,max?,label?,description,known}], card, avatar?}`; the field list comes from the registry, so the chat page draws whatever fields exist. `PATCH /m/roles/cards/<id>` takes `{card:{field:value|null}}` and returns the same view; `avatar` is refused there (the image path is read from the task folder, so it is set only through `role_update`). The chat page opens the card from the "Role card" button or by clicking the room header.
+
+- Prompt: the card is added after the persona, under a line saying it shapes manner only and never overrides guard, red lines or the owner's rules. The whole block is capped at 2000 bytes; unknown values are clipped to 300 characters.
+- `role_list` rows show only the card field names (`card_fields`); `role_list {id}` returns the full card.
+- Avatar: a path to a png, jpeg or webp file inside the task folder (max 1 MB, checked by content, path must resolve inside the task folder). The module copies it to `m/roles/avatars/<role id>.<ext>`; the card keeps `{kind:'image', file, hash}`. A replaced or cleared image moves to `avatars/archive/`, never deleted. `kind: "live"` is reserved and refused.
+- `dynamicBots()` returns `avatar: '/m/roles/avatar/<id>?v=<hash8>'` for roles with an image. `api.avatarFile(id)` gives `{path, type, hash}` for the server to serve. Serving that URL needs a raw/binary route result in core (module routes return JSON only); until then the URL returns 404.
 
 ## Known limits
 

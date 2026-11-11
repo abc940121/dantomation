@@ -6,6 +6,11 @@
 <meta name="color-scheme" content="light dark">
 <title>Chat</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%227%22%20fill%3D%22%232f6fed%22%2F%3E%3Cpath%20d%3D%22M8%2010h16v10H15l-5%204v-4H8z%22%20fill%3D%22%23fff%22%2F%3E%3C%2Fsvg%3E">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Taskmote">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -15,7 +20,9 @@
     <span id="claims-badge" class="badge" hidden></span>
     <button id="waiting" class="badge warn" type="button" hidden></button>
     <span id="conn" class="conn" data-state="connecting">connecting</span>
+    <button id="new-role" class="badge" type="button" data-i18n="role.new">New role</button>
     <button id="new-group" class="badge" type="button" data-i18n="group.new">New group</button>
+    <button id="card-btn" class="badge" type="button" data-i18n="card.open" hidden>Role card</button>
     <button id="lang-btn" class="badge" type="button" aria-label="Change language" data-i18n="lang.change" data-i18n-aria-label="lang.change.aria">Language</button>
   </header>
   <section id="strip" aria-live="polite" aria-label="Needs you" data-i18n-aria-label="strip.aria" hidden>
@@ -24,9 +31,27 @@
     <div id="undo"></div>
   </section>
   <p id="send-msg" class="hint" role="status" hidden></p>
+  <section id="hs" aria-live="polite" hidden>
+    <div id="hs-offer">
+      <p class="hint" data-i18n="hs.hint">Open Taskmote straight from your home screen, with no code to type.</p>
+      <button id="hs-add" type="button" data-i18n="hs.add">Add to Home Screen</button>
+      <button id="hs-no" type="button" data-i18n="hs.dismiss">Not now</button>
+    </div>
+    <div id="hs-steps" hidden>
+      <p><strong data-i18n="hs.steps.title">Three taps, then open the new icon</strong></p>
+      <ol>
+        <li data-i18n="hs.step1">Tap the Share button in Safari.</li>
+        <li data-i18n="hs.step2">Choose "Add to Home Screen".</li>
+        <li data-i18n="hs.step3">Tap "Add".</li>
+        <li id="hs-step4"></li>
+      </ol>
+      <button id="hs-done" type="button" data-i18n="hs.done">Done</button>
+    </div>
+    <p id="hs-msg" class="hint" role="status" hidden></p>
+  </section>
   <vue-advanced-chat id="chat" height="100%" responsive-breakpoint="600" current-user-id="me"
     show-files="false" show-audio="false" show-emojis="false" show-reaction-emojis="false" show-add-room="false"
-    show-search="false" show-new-messages-divider="true" show-footer="true"
+    show-search="false" room-info-enabled="true" show-new-messages-divider="true" show-footer="true"
     message-actions="[]" room-actions="[]" menu-actions="[]" text-formatting='{"disabled":false,"italic":"¦","bold":"¤","strike":"¬","underline":"¶","multilineCode":"```","inlineCode":"`"}'
     rooms-loaded="false" messages-loaded="false" theme="light"></vue-advanced-chat>
   <div id="group-dlg" class="overlay" hidden>
@@ -39,6 +64,34 @@
       <div class="btns"><button id="group-cancel" type="button" data-i18n="group.cancel">Cancel</button><button id="group-create" type="submit" data-i18n="group.create">Create</button></div>
     </form>
   </div>
+  <div id="role-dlg" class="overlay" hidden>
+    <form id="role-form" class="dlg" role="dialog" aria-modal="true" aria-labelledby="role-title" novalidate>
+      <h2 id="role-title" data-i18n="role.title">New role</h2>
+      <label for="role-name" data-i18n="role.name">Role name</label>
+      <input id="role-name" type="text" maxlength="40" autocomplete="off" data-i18n-placeholder="role.name.ph" placeholder="e.g. Editor">
+      <label for="role-job" data-i18n="role.job">What it does (one line)</label>
+      <input id="role-job" type="text" maxlength="200" autocomplete="off" data-i18n-placeholder="role.job.ph" placeholder="e.g. Checks my drafts for typos">
+      <label for="role-avatar" data-i18n="role.avatar">Picture (optional)</label>
+      <input id="role-avatar" type="file" accept="image/png,image/jpeg,image/webp">
+      <p class="hint" data-i18n="role.avatar.hint">PNG, JPEG or WebP, up to 180 KB.</p>
+      <p id="role-err" class="hint" role="alert" hidden></p>
+      <div class="btns"><button id="role-cancel" type="button" data-i18n="group.cancel">Cancel</button><button id="role-create" type="submit" data-i18n="group.create">Create</button></div>
+    </form>
+  </div>
+  <section id="card-dlg" role="dialog" aria-modal="true" aria-labelledby="card-title" hidden>
+    <form id="card-form">
+      <div class="card-head">
+        <img id="card-img" alt="" hidden>
+        <h2 id="card-title"></h2>
+      </div>
+      <div id="card-fields"></div>
+      <p id="card-msg" class="hint" role="status"></p>
+      <div class="card-btns">
+        <button id="card-save" type="submit" data-i18n="card.save">Save</button>
+        <button id="card-close" type="button" data-i18n="card.close">Close</button>
+      </div>
+    </form>
+  </section>
   <section id="lang-gate" hidden>
     <div class="lang-box">
       <h2>Choose your language / 請選擇語言</h2>
@@ -50,6 +103,7 @@
     <form id="auth-form">
       <h2 data-i18n="auth.heading">Pair this device</h2>
       <p class="hint" data-i18n="auth.hint">Type the six-digit pairing code from "node bin/harness.js device pair" (or scan its QR). The deprecated alternative is the owner token from "taskmote token new"; prefer pairing. Either is kept in this browser only.</p>
+      <p id="hs-expired" class="hint" role="status" data-i18n="hs.expired" hidden>The pairing of this icon expired. Open Taskmote in Safari, tap 'Add to Home Screen' again, and delete the old icon.</p>
       <p id="pair-msg" class="hint" role="status"></p>
       <input id="token" type="password" autocomplete="off" aria-label="Token" data-i18n-aria-label="auth.token.aria">
       <button type="submit" data-i18n="auth.save">Save</button>
@@ -60,6 +114,7 @@
 <script src="i18n.js"></script>
 <script src="clean.js"></script>
 <script src="state.js"></script>
+<script src="cardform.js"></script>
 <script src="rooms.js"></script>
 <script src="app.js"></script>
 </body>

@@ -143,6 +143,13 @@ async function mockTests() {
     check('create group: an unknown role id is 400, not skipped', r.status === 400);
     r = await call(port, 'POST', '/m/roles/groups', { name: 'Other', members: ['alpha'] });
     check('create group: a plain bot id (not a role) is 400', r.status === 400);
+    r = await call(port, 'GET', '/m/roles/main');
+    check('mock without a main role answers 404 on /m/roles/main (roles module off)', r.status === 404);
+    {
+      const m3 = createMock({ delayMs: 1, mainRole: 'alpha' });
+      await new Promise(rs => m3.server.listen(0, '127.0.0.1', rs));
+      try { const q = await call(m3.server.address().port, 'GET', '/m/roles/main'); check('mock with a main role answers {id, name} on /m/roles/main', q.status === 200 && q.body.id === 'alpha' && q.body.name === 'Alpha', JSON.stringify(q)); } finally { m3.server.close(); }
+    }
     r = await call(port, 'POST', '/api/chat', { bots: [], text: 'x' });
     check('mock chat rejects empty targets', r.status === 400);
     r = await call(port, 'POST', '/api/chat', { bots: ['nobody'], text: 'x' });
@@ -251,20 +258,39 @@ function assetTests() {
     const gk = Object.keys(I0.TABLE.en).filter(k => k.indexOf('group.') === 0);
     check('new-group: every group.* string exists in en and zh-TW, translated', gk.length >= 12 && gk.every(k => I0.TABLE['zh-TW'][k] && I0.TABLE['zh-TW'][k] !== I0.TABLE.en[k]));
     check('new-group: dialog fits a 390px screen (max-width, scroll, 44px targets)', css0.includes('max-width: 420px') && css0.includes('overflow-y: auto') && css0.includes('.dlg .pick { display: flex; align-items: center; gap: 10px; min-height: 44px'));
+    check('new-role button and dialog exist: name, job, error line, cancel and create', ['new-role', 'role-dlg', 'role-form', 'role-name', 'role-job', 'role-err', 'role-cancel', 'role-create'].every(id => html0.includes('id="' + id + '"')) && /id="role-err"[^>]*role="alert"/.test(html0));
+    check('new-role: posts {name, job} to /m/roles/roles and reloads the roster, no model call', app0.includes("post('/m/roles/roles', rol.avatar ? { name, job, avatar: { data: rol.avatar } } : { name, job })") && app0.includes('await loadBots();'));
+    const rk = Object.keys(I0.TABLE.en).filter(k => k.indexOf('role.') === 0);
+    check('new-role: every role.* string exists in en and zh-TW, translated', rk.length >= 10 && rk.every(k => I0.TABLE['zh-TW'][k] && I0.TABLE['zh-TW'][k] !== I0.TABLE.en[k]));
+    check('new-role: create button is styled like the group one', css0.includes('.dlg #role-create'));
     check('auth refusal: sendFrom restores the text and shows no network error for unauthorized', app0.includes("const isAuth = err => !!err && err.message === 'unauthorized'") && app0.includes('fail(null, isAuth(err) ? { auth: true } : true)') && app0.includes('if (err && err.auth) return;') && app0.indexOf('restore(); if (err && err.auth) return;') > 0);
     check('auth refusal: card answer, undo, question answer and New group show no network error for unauthorized', ['ui.cardMsg[c.id] = isAuth(err) ?', "text = isAuth(err) ? '' : tr('undo.fail.net')", 'qs.msg[id] = isAuth(e) ?', "msg = isAuth(err) ? '' : tr('group.err.fail')"].every(x => app0.includes(x)));
     check('New group: 403 shows the device-may-not-create message, in both languages, other errors keep their text', app0.includes("r.status === 403) msg = tr('group.err.forbidden')") && I0.t('en', 'group.err.forbidden') === 'This device may not create groups yet. Create the group on the computer.' && I0.t('zh-TW', 'group.err.forbidden') === '這個裝置還不能建立群組，請在電腦上建立。' && app0.includes("r.body.error === 'string' && r.body.error) || tr('group.err.fail')"));
   }
   const files = fs.readdirSync(UI).filter(f => fs.statSync(path.join(UI, f)).isFile());
   const vendor = fs.readdirSync(path.join(UI, 'vendor'));
-  check('ui has index.html, app.js, style.css, state.js', ['index.html', 'app.js', 'style.css', 'state.js', 'clean.js'].every(f => files.includes(f)) && vendor.includes('vue-advanced-chat.umd.js') && vendor.includes('vue-advanced-chat.LICENSE'));
+  check('ui has index.html, app.js, style.css, state.js', ['index.html', 'app.js', 'style.css', 'state.js', 'clean.js', 'cardform.js'].every(f => files.includes(f)) && vendor.includes('vue-advanced-chat.umd.js') && vendor.includes('vue-advanced-chat.LICENSE'));
   const read = f => fs.readFileSync(path.join(UI, f), 'utf8');
   const html = read('index.html');
   const I = require(path.join(UI, 'i18n.js'));
   const ek = Object.keys(I.TABLE.en).sort(), zk = Object.keys(I.TABLE['zh-TW']).sort();
   check('i18n: en and zh-TW tables have the same keys', ek.length > 40 && JSON.stringify(ek) === JSON.stringify(zk), ek.filter(k => !zk.includes(k)).concat(zk.filter(k => !ek.includes(k))).join(','));
-  const ph = s => (s.match(/{w+}/g) || []).sort().join();
+  const ph = s => (String(s == null ? '' : s).match(/\{\w+\}/g) || []).sort().join();
   check('i18n: every key has the same {placeholders} in both languages and no empty text', ek.every(k => ph(I.TABLE.en[k]) === ph(I.TABLE['zh-TW'][k]) && I.TABLE.en[k] && I.TABLE['zh-TW'][k]));
+  // Strings that exist in only one language: by key, so the failure names them.
+  const gaps = (en, zh) => Object.keys(en).filter(k => !(k in zh)).map(k => k + ' (missing in zh-TW)').concat(Object.keys(zh).filter(k => !(k in en)).map(k => k + ' (missing in en)'));
+  check('i18n: no key exists in only one language', gaps(I.TABLE.en, I.TABLE['zh-TW']).length === 0, gaps(I.TABLE.en, I.TABLE['zh-TW']).join(', '));
+  const noSend = Object.assign({}, I.TABLE['zh-TW']); delete noSend.send;
+  const extraEn = Object.assign({}, I.TABLE.en, { 'only.in.en': 'x' });
+  check('i18n: the gap check does fail when a key is missing in either language', gaps(I.TABLE.en, noSend).join() === 'send (missing in zh-TW)' && gaps(noSend, I.TABLE.en).join() === 'send (missing in en)' && gaps(extraEn, I.TABLE['zh-TW']).join() === 'only.in.en (missing in zh-TW)');
+  // Every key the page asks for (data-i18n*, tr('...')) must exist in both tables, or the user sees a raw key or the other language.
+  const asked = new Set([...html.matchAll(/data-i18n(?:-[a-z-]+)?="([^"]+)"/g)].map(m => m[1]));
+  for (const m of read('app.js').matchAll(/(?:^|[^\w.])tr\('([\w.]+)'/g)) asked.add(m[1]);
+  const unknownKeys = [...asked].filter(k => !(k in I.TABLE.en) || !(k in I.TABLE['zh-TW']));
+  check('i18n: every key used by index.html and app.js exists in both languages (' + asked.size + ' keys)', asked.size > 40 && unknownKeys.length === 0, unknownKeys.join(', '));
+  // Visible text in index.html must come from the table (data-i18n*); only the language picker, which is bilingual by design, and the connection badge (drawn by app.js) may be literal.
+  const bare = [...html.replace(/<(script|style)[\s\S]*?<\/\1>/g, '').matchAll(/<([a-z0-9]+)([^>]*)>([^<]*[A-Za-z\u4e00-\u9fff][^<]*)</g)].filter(m => !/data-i18n=/.test(m[2]) && m[1] !== 'title' && !/data-lang=|id="conn"/.test(m[2]) && !/Choose your language/.test(m[3])).map(m => '<' + m[1] + '> ' + m[3].trim());
+  check('i18n: no visible text in index.html outside data-i18n (picker and connection badge excepted)', bare.length === 0, bare.join(' | '));
   check('i18n: zh-TW is really Chinese for the main words', I.t('zh-TW', 'send') !== I.t('en', 'send') && /[一-鿿]/.test(I.t('zh-TW', 'auth.heading')));
   const qc = { text: 'Go?', options: ['Yes', 'No'], locales: { 'zh-TW': { text: '好嗎？', options: ['好', '不'] } } };
   check('i18n: cardText picks the chosen language, else the default', I.cardText(qc, 'zh-TW').options[0] === '好' && I.cardText(qc, 'en').text === 'Go?' && I.cardText({ text: 'a', options: ['x', 'y'] }, 'zh-TW').text === 'a');
@@ -274,7 +300,7 @@ function assetTests() {
   const ext = all.filter(([, c]) => /(?:https?:)?\/\/[a-z0-9.-]+\.[a-z]{2,}|\bsrc="\/\/|@import|url\(\s*["']?https?:/i.test(c.replace(/\/\/ .*$/gm, '').replace(/\/\*[^]*?\*\//g, '')));
   check('no external URLs in ui files', ext.length === 0, ext.map(x => x[0]).join(','));
   const scripts = [...html.matchAll(/<(?:script|link|img)[^>]+(?:src|href)="([^"]+)"/g)].map(m => m[1]).filter(u => !u.startsWith('data:image/')); // an inline icon needs no file
-  check('html references only relative local files', scripts.length >= 3 && scripts.every(u => !/^([a-z]+:)?\/\//i.test(u) && (files.includes(u) || (/^vendor\//.test(u) && vendor.includes(u.slice(7))))), scripts.join(','));
+  check('html references only relative local files', scripts.length >= 3 && scripts.every(u => !/^([a-z]+:)?\/\//i.test(u) && (files.includes(u) || (/^icons\/[\w-]+\.png$/.test(u) && fs.existsSync(path.join(UI, u))) || (/^vendor\//.test(u) && vendor.includes(u.slice(7))))), scripts.join(','));
   const bad = all.filter(([f, c]) => f.endsWith('.js') && /\b(innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\s*\(|new Function)\b/.test(c.replace(/\/\/.*$/gm, '')));
   check('no innerHTML / outerHTML / insertAdjacentHTML / document.write / eval in js', bad.length === 0, bad.map(x => x[0]).join(','));
   check('no alert/confirm/prompt dialogs', !all.some(([f, c]) => f.endsWith('.js') && /(^|[^.\w])(alert|confirm|prompt)\s*\(/.test(c)));
@@ -284,8 +310,32 @@ function assetTests() {
   check('no names or user paths in module files', !fs.readdirSync(path.join(__dirname, '..'), { recursive: true }).filter(f => /\.(js|html|css|md)$/.test(f) && !/(^|[\\/])vendor[\\/]/.test(f) && fs.statSync(path.join(__dirname, '..', f)).isFile()).some(f => /\bDan\b|C:\\Users|\/Users\//.test(fs.readFileSync(path.join(__dirname, '..', f), 'utf8'))));
   check('manifest: contract 2, one panel, entry exists under ui/, served at /m/chat-ui/ui/', mod.name === 'chat-ui' && mod.contract === 2 && mod.panels.length === 1 && /^ui\//.test(mod.panels[0].entry) && fs.existsSync(path.join(__dirname, '..', mod.panels[0].entry)) && MOUNT === '/m/chat-ui/ui/');
   hashTests();
+  cardTests(html, I);
   roomTests();
   cleanTests();
+}
+
+// Role card: the pure form logic (ui/cardform.js) and the static wiring of the dialog.
+function cardTests(html, I) {
+  const CF = require(path.join(UI, 'cardform.js'));
+  check('card: role ids are recognised, others are not', CF.isRole('r-0123abcd') && !CF.isRole('main') && !CF.isRole('r-0123ABCD') && !CF.isRole(null));
+  const view = { fields: [
+    { key: 'voice', type: 'text', max: 600, label: 'Voice', description: 'd', known: true },
+    { key: 'avatar', type: 'image', known: true },
+    { key: 'mood', type: 'json', known: false }], card: { voice: 'soft', mood: { a: 1 } } };
+  const rows = CF.rows(view);
+  check('card: rows follow the server field list (text, image, json)', rows.length === 3 && rows[0].value === 'soft' && rows[0].max === 600 && rows[1].type === 'image' && rows[1].value === '' && rows[2].type === 'json' && JSON.parse(rows[2].value).a === 1);
+  check('card: a new server field needs no UI change', CF.rows({ fields: [{ key: 'zzz-new', type: 'text' }], card: {} }).length === 1 && CF.rows(null).length === 0 && CF.rows({ fields: [null, { nokey: 1 }] }).length === 0);
+  check('card: nothing edited gives an empty patch', Object.keys(CF.patch(rows, { voice: 'soft', mood: rows[2].value }).patch).length === 0);
+  const p = CF.patch(rows, { voice: '  warm  ', mood: '', avatar: 'x.png' }).patch;
+  check('card: changed text is trimmed, a cleared field is null, the image row is never sent', p.voice === 'warm' && p.mood === null && !('avatar' in p));
+  check('card: json edits are parsed, bad json reports the field', CF.patch(rows, { mood: '{"b":2}' }).patch.mood.b === 2 && CF.patch(rows, { mood: '{bad' }).error === 'mood');
+  const ids = ['card-dlg', 'card-form', 'card-fields', 'card-save', 'card-close', 'card-btn', 'card-msg'];
+  check('card: dialog and header button are in index.html, cardform.js loads before app.js', ids.every(i => html.includes('id="' + i + '"')) && html.indexOf('cardform.js') > 0 && html.indexOf('cardform.js') < html.indexOf('app.js') && /room-info-enabled="true"/.test(html));
+  const keys = ['card.open', 'card.title', 'card.save', 'card.close', 'card.saved', 'card.nochange', 'card.loading', 'card.load.fail', 'card.save.fail', 'card.device.readonly', 'card.forbidden', 'card.save.forbidden', 'card.json.bad', 'card.avatar.note', 'card.json.hint', 'card.f.voice', 'card.f.talking', 'card.f.working', 'card.f.avatar'];
+  check('card: texts exist in both languages, zh-TW differs from en', keys.every(k => I.TABLE.en[k] && I.TABLE['zh-TW'][k] && I.TABLE.en[k] !== I.TABLE['zh-TW'][k]), keys.filter(k => !(I.TABLE.en[k] && I.TABLE['zh-TW'][k])).join(','));
+  const app = fs.readFileSync(path.join(UI, 'app.js'), 'utf8');
+  check('card: avatars go through an authenticated fetch and a blob URL, the card uses GET/PATCH /m/roles/cards', /createObjectURL/.test(app) && /headers: headers\(\)/.test(app) && /\/m\/roles\/cards\//.test(app) && /method: 'PATCH'/.test(app) && /'room-info'/.test(app));
 }
 
 // rooms.js: pure helpers for the room picker, and the app wiring is static-checked.
@@ -325,7 +375,21 @@ function cleanTests() {
   const u = C.avatarUri('alpha', 'Alpha'), svg = decodeURIComponent(u.replace(/^data:image\/svg\+xml;charset=utf-8,/, ''));
   check('avatar: an inline SVG data URI with the initial, same id gives the same colour, other id another', /^data:image\/svg\+xml/.test(u) && />A</.test(svg) && C.avatarUri('alpha', 'Alpha') === u && C.colorOf('alpha') !== C.colorOf('beta'));
   check('avatar: initials for words, CJK and empty; text is escaped', C.initials('Alpha Beta') === 'AB' && C.initials('Alpha') === 'A' && C.initials('\u6e2c\u8a66\u7532') === '\u6e2c' && C.initials('') === '?' && !/<script/.test(C.avatarUri('x', '<script>')));
+  {
+    const sb = D.create(); D.applyBots(sb, [{ id: 'alpha', name: 'Alpha' }, { id: 'main', name: 'Main' }, { id: 'r-1', name: 'Chief of Staff' }]);
+    const sn = D.create(); D.applyBots(sn, [{ id: 'x', name: 'X' }, { id: 'y', name: 'Y' }]);
+    check('main role: the role the roles module names is the main bot, else the config main bot, else the first bot', D.mainBotId(sb, 'r-1') === 'r-1' && D.mainBotId(sb, '') === 'main' && D.mainBotId(sb, 'gone') === 'main' && D.mainBotId(sn, '') === 'x');
+  }
+  {
+    const sb = D.create(); D.applyBots(sb, [{ id: 'alpha', name: 'Alpha' }, { id: 'main', name: 'Main' }, { id: 'r-1', name: 'Chief of Staff' }]);
+    const sn = D.create(); D.applyBots(sn, [{ id: 'x', name: 'X' }]);
+    const se = D.create();
+    check('default chat: with a main role its chat is pinned first (so it opens by default), the other bots follow in order', D.botConvIds(sb, 'r-1').join() === 'bot:r-1,bot:alpha,bot:main');
+    check('default chat: with no main role the config main bot is first; with neither, the first bot; with no bots, bot:main', D.botConvIds(sb, '').join() === 'bot:main,bot:alpha,bot:r-1' && D.botConvIds(sn, '').join() === 'bot:x' && D.botConvIds(se, '').join() === 'bot:main');
+    check('default chat: a main role id the roster does not know is ignored', D.botConvIds(sb, 'r-gone').join() === 'bot:main,bot:alpha,bot:r-1');
+  }
   const I = require(path.join(UI, 'i18n.js'));
+  check('main role: the small Main mark exists in both languages (Main / 主要)', I.TABLE.en['conv.mainTag'] === 'Main' && I.TABLE['zh-TW']['conv.mainTag'] === '主要');
   const keys = ['vac.ROOMS_EMPTY', 'vac.ROOM_EMPTY', 'vac.TYPE_MESSAGE', 'vac.IS_TYPING', 'vac.IS_ONLINE', 'conv.main', 'conv.all', 'back'];
   check('i18n: the chat component labels and conversation names exist in both languages', keys.every(k => I.TABLE.en[k] && I.TABLE['zh-TW'][k] && I.TABLE.en[k] !== I.TABLE['zh-TW'][k]));
 }
@@ -336,7 +400,7 @@ function hashTests() {
   const run = hash => {
     const store = new Map(), handlers = {};
     const location = { hash, pathname: '/m/chat-ui/ui/index.html', search: '' };
-    const win = { DantoI18n: require(path.join(UI, 'i18n.js')), DantoState: D, DantoRooms: require(path.join(UI, 'rooms.js')), DantoClean: require(path.join(UI, 'clean.js')), addEventListener: (ev, f) => { handlers[ev] = f; } };
+    const win = { DantoI18n: require(path.join(UI, 'i18n.js')), DantoState: D, DantoRooms: require(path.join(UI, 'rooms.js')), DantoClean: require(path.join(UI, 'clean.js')), DantoCardForm: require(path.join(UI, 'cardform.js')), addEventListener: (ev, f) => { handlers[ev] = f; } };
     const ctx = { window: win, DantoState: D, location, history: { replaceState: (a, b, url) => { location.hash = ''; ctx.replaced = url; } },
       localStorage: { getItem: k => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)) },
       document: { getElementById: stub, createElement: stub, querySelectorAll: () => [], documentElement: {}, addEventListener: () => {}, body: stub(), hidden: false },
@@ -367,25 +431,26 @@ async function pageTests() {
       addEventListener(ev, f) { h[ev] = f; }, replaceChildren(...k) { o.children = k; }, appendChild(k) { o.children.push(k); }, setAttribute() {}, getAttribute() { return null; }, focus() {}, scrollIntoView() {}, querySelector: () => el(), querySelectorAll: () => [], classList: { add() {}, remove() {}, toggle() {} } };
     return o;
   };
-  const run = async (lang, answer, search = '') => {
-    const els = new Map(), store = new Map(lang ? [[I.KEY, lang]] : []), calls = [], timers = [], handlers = {}, raf = [], ints = [];
+  const run = async (lang, answer, search = '', opt = {}) => {
+    const els = new Map(), store = new Map([...(lang ? [[I.KEY, lang]] : []), ...Object.entries(opt.seed || {})]), calls = [], timers = [], handlers = {}, raf = [], ints = [], urls = [];
     // the static texts of index.html (data-i18n) as elements, so applyStatic() has something real to fill
     const stat = [...html.matchAll(/data-i18n="([^"]+)"/g)].map(m => { const e = el(); e.key = m[1]; e.getAttribute = a => (a === 'data-i18n' ? m[1] : null); return e; });
     const get = id => { if (!els.has(id)) els.set(id, el()); return els.get(id); };
+    for (const m of html.matchAll(/id="(hs[\w-]*)"[^>]*\shidden/g)) get(m[1]).hidden = true; // the home-screen parts start hidden, as in index.html
     const win = { DantoI18n: I, DantoState: D, DantoRooms: require(path.join(UI, 'rooms.js')), DantoClean: require(path.join(UI, 'clean.js')), addEventListener: (ev, f) => { handlers[ev] = f; } };
-    const ctx = { window: win, DantoState: D, location: { hash: '', pathname: '/m/chat-ui/ui/index.html', search, origin: 'http://127.0.0.1:1', href: 'http://127.0.0.1:1/m/chat-ui/ui/' }, history: { replaceState() {} },
+    const ctx = { window: win, DantoState: D, location: { hash: opt.hash || '', pathname: '/m/chat-ui/ui/index.html', search, origin: 'http://127.0.0.1:1', href: 'http://127.0.0.1:1/m/chat-ui/ui/' }, history: { replaceState(a, b, u) { urls.push(u); const i = String(u).indexOf('#'); ctx.location.hash = i < 0 ? '' : String(u).slice(i); } },
       localStorage: { getItem: k => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)) },
       document: { getElementById: get, createElement: () => el(), createTextNode: t => ({ textContent: String(t) }), title: '', querySelectorAll: s => (s === '[data-i18n]' ? stat : s.includes('input:checked') ? [{ value: 'r-11111111' }] : []), documentElement: {}, addEventListener() {}, body: el(), visibilityState: 'visible' },
       fetch: (u, o) => { calls.push(String(u) + ' ' + ((o && o.method) || 'GET')); return Promise.resolve(answer(String(u), o || {})); },
       requestAnimationFrame: f => { raf.push(f); return raf.length; }, setTimeout: f => { timers.push(f); return timers.length; }, setInterval: f => { ints.push(f); return ints.length; }, clearTimeout() {}, clearInterval() {},
-      console: { log() {}, error() {}, warn() {}, info() {} }, AbortController, TextDecoder, URL, navigator: {} };
+      console: { log() {}, error() {}, warn() {}, info() {} }, btoa: s => Buffer.from(s, 'latin1').toString('base64'), AbortController, TextDecoder, URL, navigator: opt.nav || {} };
     ctx.self = ctx.globalThis = ctx;
     vm.runInNewContext(fs.readFileSync(path.join(UI, 'app.js'), 'utf8'), ctx);
     const settle = async () => { for (let i = 0; i < 30; i++) await new Promise(r => setImmediate(r)); };
     await settle();
     const poll = async () => { ints.forEach(f => f()); await settle(); };
     const frame = async () => { for (let i = 0; i < 3; i++) { raf.splice(0).forEach(f => f()); await settle(); } };
-    return { get, calls, timers, handlers, settle, stat, store, frame, poll };
+    return { get, calls, timers, handlers, settle, stat, store, frame, poll, urls, ctx, ints };
   };
   const json = (status, body) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
   const bots = [{ id: 'r-11111111', name: 'Ann', engine: 'claude', status: 'idle', runsOn: 'main' }];
@@ -441,6 +506,60 @@ async function pageTests() {
     }
   }
 
+  // 4b. New role: 403 / 400 stay inside the dialog in both languages; 201 closes it, re-reads the roster and opens the role
+  for (const lang of ['en', 'zh-TW']) {
+    for (const status of [403, 400, 201]) {
+      const r = await run(lang, u => {
+        if (u.startsWith('/m/roles/roles')) return status === 201 ? json(201, { id: 'r-22222222', name: 'Editor', persona: 'Checks drafts', engine: 'claude' }) : json(status, status === 403 ? { error: 'forbidden' } : { error: 'a role named "Editor" already exists' });
+        if (u.startsWith('/api/bots')) return json(200, bots);
+        if (u.startsWith('/api/events')) return new Response('', { status: 200 });
+        return json(200, []);
+      });
+      r.get('new-role').handlers.click();
+      r.get('role-name').value = 'Editor';
+      r.get('role-job').value = 'Checks drafts';
+      await r.get('role-form').handlers.submit({ preventDefault() {} });
+      await r.settle();
+      const e = r.get('role-err');
+      const posted = r.calls.some(c => c === '/m/roles/roles POST');
+      if (status === 201) check(lang + ' 201: New role closes the dialog and re-reads /api/bots', posted && r.get('role-dlg').hidden === true && r.calls.filter(c => c.startsWith('/api/bots')).length >= 2, r.calls.join(','));
+      else {
+        const want = status === 403 ? I.t(lang, 'role.err.forbidden') : 'a role named "Editor" already exists';
+        check(lang + ' ' + status + ': New role shows "' + want + '", keeps the dialog open and the typed text', e.textContent === want && e.hidden === false && r.get('role-dlg').hidden === false && r.get('role-name').value === 'Editor' && posted);
+      }
+    }
+  }
+  // the picture: chosen in the dialog, sent as base64 JSON (no raw upload), checked in the page first
+  check('new-role dialog has a picture input that accepts only png, jpeg, webp', html.includes('id="role-avatar" type="file" accept="image/png,image/jpeg,image/webp"'));
+  check('role.avatar texts exist in both languages', ['role.avatar', 'role.avatar.hint', 'role.err.avatar'].every(k => I.t('en', k) && I.t('zh-TW', k) && I.t('en', k) !== I.t('zh-TW', k)));
+  const PNGB = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from('tiny')]);
+  for (const lang of ['en', 'zh-TW']) {
+    let sent = null;
+    const r = await run(lang, (u, o) => (u.startsWith('/m/roles/roles') ? (sent = JSON.parse(o.body), json(201, { id: 'r-11111111', name: 'Editor' })) : u.startsWith('/api/bots') ? json(200, bots) : u.startsWith('/api/events') ? new Response('', { status: 200 }) : json(200, [])));
+    r.get('new-role').handlers.click();
+    r.get('role-name').value = 'Editor'; r.get('role-job').value = 'Checks drafts';
+    r.get('role-avatar').files = [{ type: 'image/png', size: PNGB.length, arrayBuffer: async () => PNGB.buffer.slice(PNGB.byteOffset, PNGB.byteOffset + PNGB.length) }];
+    await r.get('role-avatar').handlers.change(); await r.settle();
+    await r.get('role-form').handlers.submit({ preventDefault() {} }); await r.settle();
+    check(lang + ' picture: the POST carries it as {avatar: {data: base64}} and the dialog closes', !!sent && sent.name === 'Editor' && sent.avatar && sent.avatar.data === PNGB.toString('base64') && r.get('role-dlg').hidden === true, JSON.stringify(sent));
+    // wrong type / too big: refused in the page with the translated text, nothing sent
+    for (const f of [{ type: 'image/gif', size: 100 }, { type: 'image/png', size: 180001 }]) {
+      const r2 = await run(lang, (u, o) => (u.startsWith('/api/bots') ? json(200, bots) : u.startsWith('/api/events') ? new Response('', { status: 200 }) : json(200, [])));
+      r2.get('new-role').handlers.click();
+      r2.get('role-avatar').files = [{ ...f, arrayBuffer: async () => new ArrayBuffer(4) }];
+      await r2.get('role-avatar').handlers.change(); await r2.settle();
+      check(lang + ' picture ' + f.type + ' ' + f.size + ': refused with the translated text, nothing sent', r2.get('role-err').textContent === I.t(lang, 'role.err.avatar') && r2.get('role-err').hidden === false && !r2.calls.some(c => c === '/m/roles/roles POST'));
+    }
+  }
+  check('new-role: empty name or job is refused in the page without a request', await (async () => {
+    const r = await run('en', u => (u.startsWith('/api/bots') ? json(200, bots) : u.startsWith('/api/events') ? new Response('', { status: 200 }) : json(200, [])));
+    r.get('new-role').handlers.click();
+    r.get('role-name').value = 'Editor'; r.get('role-job').value = '  ';
+    await r.get('role-form').handlers.submit({ preventDefault() {} });
+    await r.settle();
+    return r.get('role-err').textContent === I.t('en', 'role.err.job') && !r.calls.some(c => c === '/m/roles/roles POST');
+  })());
+
   // the page carries its own icon (no /favicon.ico request, no download)
   check('page icon: index.html has an inline data: icon link', html.includes('<link rel="icon" href="data:image/svg+xml,'));
 
@@ -470,6 +589,62 @@ async function pageTests() {
   check('language button: zh-TW -> en in place', lb.store.get(I.KEY) === 'en' && heading() === I.t('en', 'lang.change') && lb.get('lang-gate').hidden === true);
   const first = await run(null, roomApi);
   check('language picker: shown on the first visit (nothing saved yet)', first.get('lang-gate').hidden === false && !first.store.has(I.KEY));
+
+  // 7. home-screen handoff: the icon starts at #h=<code>&lang=<lang>
+  const CODE = 'pc_' + 'a1'.repeat(20), CLEAN = '/m/chat-ui/ui/index.html';
+  const hsApi = (redeemOk = true) => u => {
+    if (u.startsWith('/m/device-pairing/redeem')) return redeemOk ? json(200, { token: 'dev-token-1' }) : json(401, { error: 'wrong or expired code' });
+    if (u.startsWith('/m/device-pairing/handoff')) return json(200, { code: CODE, expiresAt: new Date(Date.now() + 600000).toISOString() });
+    if (u.startsWith('/api/bots')) return json(200, bots);
+    if (u.startsWith('/api/events')) return new Response('', { status: 200 });
+    return json(200, []);
+  };
+  const redeems = r => r.calls.filter(c => c.startsWith('/m/device-pairing/redeem'));
+  const first1 = await run('zh-TW', hsApi(), '', { hash: '#h=' + CODE + '&lang=en' });
+  check('handoff: first launch (no token) redeems once, stores the device token, strips the hash', redeems(first1).length === 1 && first1.store.get('taskmote.token') === 'dev-token-1' && first1.store.get('taskmote.token.device') === '1' && first1.urls[0] === CLEAN && first1.ctx.location.hash === '', JSON.stringify([first1.calls, [...first1.store]]));
+  const nolang = await run(null, hsApi(), '', { hash: '#h=' + CODE + '&lang=zh-TW' });
+  check('handoff: the language in the hash is saved, so the picker is skipped and the page boots', nolang.store.get(I.KEY) === 'zh-TW' && nolang.calls.some(c => c.startsWith('/api/bots')), JSON.stringify(nolang.calls));
+  check('handoff: an unknown language in the hash is ignored', (await run(null, hsApi(), '', { hash: '#h=' + CODE + '&lang=xx' })).store.has(I.KEY) === false);
+  const again = await run('en', hsApi(false), '', { hash: '#h=' + CODE + '&lang=en', seed: { 'taskmote.token': 'kept-token', 'taskmote.token.device': '1' } });
+  check('handoff: a second launch with a used code and a stored token never calls redeem and keeps the token', redeems(again).length === 0 && again.store.get('taskmote.token') === 'kept-token' && again.urls[0] === CLEAN && again.get('hs-expired').hidden === true, JSON.stringify(again.calls));
+  const bad = await run('en', hsApi(false), '', { hash: '#h=' + CODE + '&lang=en' });
+  check('handoff: a used or expired code with no token shows the pairing screen and the expired line, one redeem', redeems(bad).length === 1 && bad.get('pair-msg').textContent === 'wrong or expired code' && bad.get('hs-expired').hidden === false && !bad.store.has('taskmote.token') && bad.urls[0] === CLEAN);
+  await bad.poll(); await bad.poll();
+  check('handoff: still one redeem after more ticks (no retry loop)', redeems(bad).length === 1);
+  const plainP = await run('en', hsApi(), '', { hash: '#p=123456' });
+  check('#p= pairing still redeems and is not treated as a handoff', redeems(plainP).length === 1 && plainP.store.get('taskmote.token') === 'dev-token-1' && plainP.get('hs-expired').hidden === true);
+  check('handoff: a plain open makes no redeem call', redeems(await run('en', hsApi(), '', {})).length === 0);
+
+  // the banner: a paired device, a touch screen, not standalone, not dismissed
+  const seedDev = { 'taskmote.token': 'dev-token-1', 'taskmote.token.device': '1' };
+  const touch = { maxTouchPoints: 5, userAgent: 'iPhone' };
+  const hsRun = async (o, lang = 'en') => { const r = await run(lang, hsApi(), '', o); await r.settle(); return r; };
+  const shown = await hsRun({ seed: seedDev, nav: touch });
+  check('banner: shown on a paired touch device', shown.get('hs').hidden === false);
+  check('banner: hidden when the token is not a device token', (await hsRun({ seed: { 'taskmote.token': 'owner' }, nav: touch })).get('hs').hidden === true);
+  check('banner: hidden when there is no touch screen', (await hsRun({ seed: seedDev, nav: {} })).get('hs').hidden === true);
+  check('banner: hidden when opened from the home screen (standalone)', (await hsRun({ seed: seedDev, nav: { maxTouchPoints: 5, standalone: true } })).get('hs').hidden === true);
+  check('banner: hidden once dismissed (remembered)', (await hsRun({ seed: { ...seedDev, 'taskmote.token.hs-no': '1' }, nav: touch })).get('hs').hidden === true);
+  shown.get('hs-no').handlers.click();
+  check('banner: "Not now" hides it and remembers', shown.get('hs').hidden === true && shown.store.get('taskmote.token.hs-no') === '1');
+  const go = await hsRun({ seed: seedDev, nav: touch }, 'zh-TW');
+  await go.get('hs-add').handlers.click(); await go.settle();
+  const handoffUrl = go.urls.find(u => /#h=/.test(u)) || '';
+  check('banner: the button asks for a code, writes #h=<code>&lang=<lang> and shows the steps', go.calls.includes('/m/device-pairing/handoff POST') && handoffUrl === CLEAN + '#h=' + CODE + '&lang=zh-TW' && go.get('hs-steps').hidden === false && go.get('hs-offer').hidden === true, handoffUrl + ' ' + go.calls);
+  check('banner: the countdown is filled in', /\d:\d\d/.test(go.get('hs-step4').textContent), go.get('hs-step4').textContent);
+  go.get('hs-done').handlers.click();
+  check('banner: Done removes the hash and hides the banner', go.urls[go.urls.length - 1] === CLEAN && go.get('hs').hidden === true && go.ctx.location.hash === '');
+
+  // parsing, head metas, icon, strings in both languages
+  const hr = D.handoffFromHash('#h=' + CODE + '&lang=zh-TW');
+  check('state: handoffFromHash reads code and lang in either order and nothing else', !!hr && hr.code === CODE && hr.lang === 'zh-TW' && D.handoffFromHash('#lang=en&h=' + CODE).code === CODE && D.handoffFromHash('#h=' + CODE).lang === null && D.handoffFromHash('#p=123456') === null && D.handoffFromHash('#h=ab') === null && D.handoffFromHash('') === null && D.handoffFromHash('#xh=' + CODE) === null);
+  check('page: the head has the apple-touch-icon link and the web-app metas, and no manifest', /<link rel="apple-touch-icon" href="icons\/apple-touch-icon\.png">/.test(html) && /apple-mobile-web-app-capable" content="yes"/.test(html) && /name="mobile-web-app-capable" content="yes"/.test(html) && /apple-mobile-web-app-title" content="Taskmote"/.test(html) && /apple-mobile-web-app-status-bar-style/.test(html) && !/rel="manifest"/.test(html));
+  const png = fs.readFileSync(path.join(UI, 'icons', 'apple-touch-icon.png'));
+  check('icon: a 180x180 PNG without an alpha channel', png.subarray(1, 4).toString() === 'PNG' && png.readUInt32BE(16) === 180 && png.readUInt32BE(20) === 180 && png[25] === 2);
+  const hsKeys = Object.keys(I.TABLE.en).filter(k => k.startsWith('hs.'));
+  const ph = s => (String(s).match(/\{\w+\}/g) || []).join();
+  check('i18n: the home-screen strings exist in both languages, zh-TW is translated and keeps the placeholders', hsKeys.length >= 12 && hsKeys.every(k => I.TABLE['zh-TW'][k] && I.TABLE['zh-TW'][k] !== I.TABLE.en[k] && ph(I.TABLE.en[k]) === ph(I.TABLE['zh-TW'][k])) && /\{time\}/.test(I.TABLE.en['hs.step4']), hsKeys.join());
+  check('i18n: every hs.* key used in index.html exists in both languages', [...html.matchAll(/data-i18n="(hs\.[^"]+)"/g)].every(m => I.TABLE.en[m[1]] && I.TABLE['zh-TW'][m[1]]));
 }
 
 (async () => {

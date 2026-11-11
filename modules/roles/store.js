@@ -4,15 +4,18 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const card = require('./card');
 
 const ID_RE = /^r-[0-9a-f]{8}$/;
 const NAME_MAX = 40, PERSONA_MAX = 4000;
 const ENGINES = ['claude', 'codex', 'opencode'];
 const MODEL_MAX = 100;
+const ROLES_MAX = 50; // live (not archived) roles; archived ones cannot be deleted, so they do not count
 const CTRL = /[\u0000-\u001f\u007f]/;
 const CTRL_KEEP_NL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
 
 class RoleError extends Error {}
+class RoleLimitError extends RoleError {} // too many roles in total
 
 const lc = s => String(s).toLowerCase();
 const len = s => [...s].length;
@@ -51,7 +54,13 @@ function checkModel(v) {
   return m;
 }
 
-function createStore(dir) {
+// workdir: the task folder an avatar image path is read from (a function or a path); default is the task folder of this process.
+function createStore(dir, workdir) {
+  const wd = () => (typeof workdir === 'function' ? workdir() : workdir !== undefined ? workdir : process.env.HARNESS_TASK_DIR);
+  const cardOf = (existing, patch, id) => {
+    try { return card.apply(existing, patch, { id, dir: typeof dir === 'function' ? dir() : dir, workdir: wd() }); }
+    catch (e) { throw e instanceof card.CardError ? new RoleError(e.message) : e; }
+  };
   const file = () => path.join(typeof dir === 'function' ? dir() : dir, 'roles.json');
   function read() {
     let j;
@@ -77,37 +86,57 @@ function createStore(dir) {
     return r;
   };
   const copy = r => ({ ...r });
+  const mainOf = roles => live(roles).find(r => r.main === true) || null;
 
   return {
     all: () => read().map(copy),
     list: () => live(read()).map(copy),
     get(key) { const r = find(read(), key); return r ? copy(r) : null; },
-    create({ name, persona, engine, model } = {}) {
+    getMain() { const r = mainOf(read()); return r ? copy(r) : null; },
+    // The one main role. When no live role is marked main, make the default one (a data field, never a fixed name).
+    ensureMain(def) {
+      const roles = read(), have = mainOf(roles);
+      if (have) return copy(have);
+      const n = [def.name, def.name + ' (main)'].find(x => !taken(roles, x)) || def.name + ' ' + crypto.randomBytes(2).toString('hex');
+      let id; do { id = 'r-' + crypto.randomBytes(4).toString('hex'); } while (roles.some(r => r.id === id));
+      const now = new Date().toISOString();
+      const rec = { id, name: checkName(n), persona: checkPersona(def.persona), kind: 'session', engine: 'claude', main: true, created_at: now, updated_at: now };
+      roles.push(rec); write(roles);
+      return copy(rec);
+    },
+    create({ name, persona, engine, model, card: cardPatch } = {}) {
       const n = checkName(name), p = checkPersona(persona), e = engine === undefined || engine === null ? 'claude' : checkEngine(engine);
       const mdl = model === undefined ? null : checkModel(model);
       const roles = read();
       if (taken(roles, n)) throw new RoleError(`a role named "${n}" already exists`);
+      if (live(roles).length >= ROLES_MAX) throw new RoleLimitError(`there are already ${ROLES_MAX} roles; the limit is ${ROLES_MAX} (archived ones do not count)`);
       let id; do { id = 'r-' + crypto.randomBytes(4).toString('hex'); } while (roles.some(r => r.id === id));
-      const now = new Date().toISOString();
-      const rec = { id, name: n, persona: p, kind: 'session', engine: e, ...(mdl ? { model: mdl } : {}), created_at: now, updated_at: now };
+      const c = cardOf(undefined, cardPatch, id), now = new Date().toISOString();
+      const rec = { id, name: n, persona: p, kind: 'session', engine: e, ...(mdl ? { model: mdl } : {}), ...(c ? { card: c } : {}), created_at: now, updated_at: now };
       roles.push(rec); write(roles);
       return copy(rec);
     },
     update(key, patch = {}) {
       const roles = read(), r = need(roles, key);
-      if (patch.name === undefined && patch.persona === undefined && patch.engine === undefined && patch.model === undefined) throw new RoleError('give a new name, persona, engine and/or model');
+      if (patch.name === undefined && patch.persona === undefined && patch.engine === undefined && patch.model === undefined && patch.main === undefined && patch.card === undefined) throw new RoleError('give a new name, persona, engine, model, main and/or card');
+      if (patch.main !== undefined && typeof patch.main !== 'boolean') throw new RoleError('main must be true or false');
+      if (patch.main === false && r.main === true) throw new RoleError('there is always one main role: to change it, mark another role as main');
       const n = patch.name === undefined ? r.name : checkName(patch.name);
       const p = patch.persona === undefined ? r.persona : checkPersona(patch.persona);
       const e = patch.engine === undefined ? (r.engine || 'claude') : checkEngine(patch.engine);
       const mdl = patch.model === undefined ? (r.model || null) : checkModel(patch.model);
       if (taken(roles, n, r.id)) throw new RoleError(`a role named "${n}" already exists`);
+      const c = cardOf(r.card, patch.card, r.id);
       Object.assign(r, { name: n, persona: p, engine: e, updated_at: new Date().toISOString() });
       if (mdl) r.model = mdl; else delete r.model;
+      if (c) r.card = c; else delete r.card;
+      if (patch.main === true) { for (const o of roles) if (o.id !== r.id && o.main) delete o.main; r.main = true; }
       write(roles);
       return copy(r);
     },
     archive(key) {
       const roles = read(), r = need(roles, key);
+      if (r.main === true) throw new RoleError('this is the main role: mark another role as main before removing it');
       r.archived_at = new Date().toISOString();
       write(roles);
       return copy(r);
@@ -115,4 +144,4 @@ function createStore(dir) {
   };
 }
 
-module.exports = { createStore, RoleError, ID_RE, ENGINES, NAME_MAX, PERSONA_MAX, checkName };
+module.exports = { createStore, RoleError, RoleLimitError, ROLES_MAX, ID_RE, ENGINES, NAME_MAX, PERSONA_MAX, checkName };

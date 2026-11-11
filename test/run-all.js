@@ -35,7 +35,6 @@ const CORE_SUITES = [
   ['module-seams', 'test/module-seams.js', [], true],
   ['contract-v6', 'test/contract-v6.js', [], true],
   ['raw-route', 'test/raw-route.js', [], true],
-  ['raw-route', 'test/raw-route.js', [], true],
   ['approve-mcp', 'test/approve-mcp.js', []],
   ['taskmote-mcp', 'test/taskmote-mcp.js', []],
   ['entry', 'test/entry.js', ['guard-base', 'checkpoint']],
@@ -52,6 +51,7 @@ const CORE_SUITES = [
   ['trunk-diff-test', 'test/trunk-diff.test.js', []],
   ['alias', 'test/alias.test.js', []],
   ['gate-lock', 'test/gate-lock.test.js', []],
+  ['review-lane', 'test/review-lane.js', []],
   ['demo', 'test/demo.js', ['guard-base', 'checkpoint', 'approval-cards', 'chat-ui']],
   ['combo-v1', 'test/combo-v1.js', [], true],
 ];

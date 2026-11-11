@@ -16,6 +16,16 @@
       "needs": []
     },
     {
+      "label": "roles-chief",
+      "file": "test/chief.js",
+      "needs": []
+    },
+    {
+      "label": "roles-role-route",
+      "file": "test/role-route.js",
+      "needs": []
+    },
+    {
       "label": "roles-ask",
       "file": "test/ask.js",
       "needs": []
@@ -28,6 +38,16 @@
     {
       "label": "roles-opencode-engine",
       "file": "test/opencode-engine.js",
+      "needs": []
+    },
+    {
+      "label": "roles-card",
+      "file": "test/card.js",
+      "needs": []
+    },
+    {
+      "label": "roles-card-route",
+      "file": "test/card-route.js",
       "needs": []
     }
   ]

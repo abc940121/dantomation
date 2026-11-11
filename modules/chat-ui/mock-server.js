@@ -176,6 +176,7 @@ function createMock(opts = {}) {
       rooms.push(g);
       return send(res, 201, { id: g.id, name: g.name, lead: ids[0], members: ids.map(i => ({ id: i, name: bots.find(x => x.id === i).name })) });
     }
+    if (req.method === 'GET' && p === '/m/roles/main') return opts.mainRole ? send(res, 200, { id: opts.mainRole, name: (bots.find(b => b.id === opts.mainRole) || {}).name || opts.mainRole }) : send(res, 404, { error: 'not found' });
     if (req.method === 'GET' && p === '/api/bots') return send(res, 200, bots);
     if (req.method === 'GET' && p === '/api/tasks') {
       const limit = Math.max(1, Math.min(200, Number(url.searchParams.get('limit')) || 50));
@@ -246,7 +247,7 @@ function createMock(opts = {}) {
 
 if (require.main === module) {
   const port = Number(process.env.PORT) || 7421, host = process.env.HOST || '127.0.0.1';
-  const mock = createMock({ token: process.env.MOCK_TOKEN || '', delayMs: process.env.MOCK_DELAY_MS ? Number(process.env.MOCK_DELAY_MS) : 700, seed: process.env.MOCK_SEED === '1' });
+  const mock = createMock({ token: process.env.MOCK_TOKEN || '', delayMs: process.env.MOCK_DELAY_MS ? Number(process.env.MOCK_DELAY_MS) : 700, seed: process.env.MOCK_SEED === '1', mainRole: process.env.MOCK_MAIN || '' });
   mock.server.listen(port, host, () => console.log(`mock taskmote server on http://${host}:${port}${MOUNT}  (try a message containing "risky" or "fail")`));
 }
 

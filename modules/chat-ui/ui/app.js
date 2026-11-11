@@ -4,6 +4,7 @@
 // component as plain data; no HTML string is ever built. Pure logic: state.js, rooms.js, clean.js.
 (function () {
   const D = window.DantoState;
+  const CF = window.DantoCardForm;
   const C = window.DantoClean;
   // The vendored component probes a CDN for emoji data even with emojis off. This page makes no external
   // requests, so only same-origin (and data:) fetches go through.
@@ -30,7 +31,7 @@
   const RM = window.DantoRooms;
   const rooms = { list: [], msgs: [], busy: false }; // stays empty (and invisible) while the rooms module is off
   const TOKEN_KEY = 'taskmote.token';
-  const ui = { cur: null, confirmUndo: null, cardMsg: {}, busyCards: new Set(), conn: 'connecting', needAuth: false, room: RM.roomFromSearch(location.search) };
+  const ui = { cur: null, mainRole: '', confirmUndo: null, cardMsg: {}, busyCards: new Set(), conn: 'connecting', needAuth: false, room: RM.roomFromSearch(location.search) };
   if (ui.room) ui.cur = 'room:' + ui.room;
   const $ = id => document.getElementById(id);
 
@@ -64,11 +65,16 @@
   // ---- token: a #t= fragment is stripped from the URL and kept in localStorage.
   // Done at load and again on every hashchange (the page re-navigated with a new #t=).
   let token = null;
+  // device: this browser holds a paired-device token (set when a pairing code is redeemed). It may read a role card, not edit it.
+  const DEV_KEY = TOKEN_KEY + '.device';
+  let device = false;
+  try { device = localStorage.getItem(DEV_KEY) === '1'; } catch (e) { device = false; }
+  const setDevice = on => { device = on; try { if (on) localStorage.setItem(DEV_KEY, '1'); else localStorage.removeItem(DEV_KEY); } catch (e) { /* storage blocked */ } };
   function takeHash() {
     let t = null;
     try { t = D.tokenFromHash(location.hash); } catch (e) { t = null; }
     if (!t) return false;
-    token = t;
+    token = t; setDevice(false);
     try { localStorage.setItem(TOKEN_KEY, t); } catch (e) { /* storage blocked: the token only lasts for this page */ }
     try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { /* ignore */ }
     return true;
@@ -84,20 +90,31 @@
     try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { /* ignore */ }
     return true;
   }
-  async function redeemCode(code) {
+  async function redeemCode(code, label) {
     try {
       const ua = String((typeof navigator !== 'undefined' && navigator.userAgent) || '');
-      const r = await fetch('/m/device-pairing/redeem', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: code, label: /iPhone|iPad/.test(ua) ? 'iPhone' : /Android/.test(ua) ? 'Android phone' : 'browser' }) });
+      const r = await fetch('/m/device-pairing/redeem', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: code, label: label || (/iPhone|iPad/.test(ua) ? 'iPhone' : /Android/.test(ua) ? 'Android phone' : 'browser') }) });
       const b = await r.json();
       if (!r.ok || !b || !b.token) return (b && b.error) || tr('auth.pairfail');
-      token = b.token;
+      token = b.token; setDevice(true);
       try { localStorage.setItem(TOKEN_KEY, token); } catch (e) { /* storage blocked: the token only lasts for this page */ }
       return null;
     } catch (e) { return tr('auth.pairfail'); }
   }
   takeHash();
   takePair();
+  // ---- home-screen handoff: the icon is saved with #h=<code>&lang=<lang>. The hash is always removed. It is used only when
+  // this browser holds no token (a second launch keeps its token and never calls redeem, even though the saved code is spent).
+  let handoff = null, handoffFailed = false;
+  try { handoff = D.handoffFromHash(location.hash); } catch (e) { handoff = null; }
+  if (handoff) { try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { /* ignore */ } }
   if (!token) { try { token = localStorage.getItem(TOKEN_KEY); } catch (e) { token = null; } }
+  if (token) handoff = null;
+  if (handoff && !lang && I.isLang(handoff.lang)) { // the language chosen in Safari carries over, so the picker is not asked again
+    lang = handoff.lang;
+    try { localStorage.setItem(I.KEY, lang); } catch (e) { /* storage blocked */ }
+    applyStatic();
+  }
   window.addEventListener('hashchange', () => {
     if (takePair()) { const c = pairCode; pairCode = null; redeemCode(c).then(err => { if (err) { showAuth(); $('pair-msg').textContent = err; } else { $('auth').hidden = true; ui.needAuth = false; boot(); } }); return; }
     if (takeHash()) { $('auth').hidden = true; ui.needAuth = false; if (typeof boot === 'function') boot(); } });
@@ -119,6 +136,7 @@
   function showAuth() { ui.needAuth = true; $('auth').hidden = false; }
   $('auth-form').addEventListener('submit', e => {
     e.preventDefault();
+    $('hs-expired').hidden = true;
     const v = $('token').value.trim();
     if (!v) return;
     if (D.looksLikeCode(v)) { // a pairing code, not the owner token
@@ -150,6 +168,21 @@
 
   const botName = id => (S.bots[id] && S.bots[id].name) || id || '?';
 
+  // ---- avatars: <img src> cannot send the token, so a module avatar is fetched with it and shown as a blob URL.
+  // Until it arrives (or if it fails) the initials avatar is used. One try per URL; the URL carries a hash, so a changed avatar is a new entry.
+  const av = {};
+  function loadAvatar(url) {
+    av[url] = { state: 'loading' };
+    fetch(url, { headers: headers() }).then(r => { if (!r.ok) throw new Error('avatar ' + r.status); return r.blob(); })
+      .then(b => { av[url] = { state: 'ok', src: URL.createObjectURL(b) }; render(); })
+      .catch(() => { av[url] = { state: 'failed' }; });
+  }
+  function avatarOf(id, name) {
+    const u = S.bots[id] && S.bots[id].avatar;
+    if (u) { if (!av[u]) loadAvatar(u); if (av[u].state === 'ok') return av[u].src; }
+    return C.avatarUri(id, name);
+  }
+
   // ---- the chat component
   const chat = $('chat');
   const VAC = window['vue-advanced-chat'];
@@ -169,10 +202,7 @@
 
   // Conversation list: main bot first, then the other bots, then groups, then "All bots" (the broadcast).
   function convs() {
-    const ids = S.order.slice();
-    const main = S.bots.main ? 'main' : ids[0];
-    const botIds = main ? [main].concat(ids.filter(i => i !== main)) : ['main'];
-    const out = botIds.map(id => ({ id: 'bot:' + id, kind: 'bot', bot: id }));
+    const out = D.botConvIds(S, ui.mainRole).map(id => ({ id, kind: 'bot', bot: id.slice(4) }));
     for (const r of rooms.list) out.push({ id: 'room:' + r.id, kind: 'room', room: r });
     out.push({ id: 'all', kind: 'all' });
     return out;
@@ -188,7 +218,7 @@
     const push = (key, sender, name, text, ms, system) => {
       const content = C.cleanText(text);
       if (!content) return;
-      const m = { _id: key, content, senderId: sender, username: name, avatar: C.avatarUri(sender, name), date: fmtDate(ms), timestamp: fmtTime(ms) };
+      const m = { _id: key, content, senderId: sender, username: name, avatar: avatarOf(sender, name), date: fmtDate(ms), timestamp: fmtTime(ms) };
       if (system) m.system = true;
       out.push(m);
     };
@@ -236,8 +266,9 @@
       if (c.kind === 'bot') {
         const b = S.bots[c.bot] || { id: c.bot, name: c.bot, status: 'idle' };
         name = b.name || c.bot; avId = c.bot;
+        if (ui.mainRole && c.bot === ui.mainRole) name += ' · ' + tr('conv.mainTag');
         const online = b.status !== 'offline';
-        users.push({ _id: c.bot, username: name, avatar: C.avatarUri(c.bot, name), status: { state: online ? 'online' : 'offline', lastChanged: online ? '' : word('status', 'offline') } });
+        users.push({ _id: c.bot, username: name, avatar: avatarOf(c.bot, name), status: { state: online ? 'online' : 'offline', lastChanged: online ? '' : word('status', 'offline') } });
         if (b.status === 'busy') typing = [c.bot];
       } else if (c.kind === 'room') {
         name = c.room.name + ' (' + c.room.members + ')'; avId = 'room:' + c.room.id;
@@ -250,12 +281,13 @@
         preview = tr('conv.broadcast');
         users.push({ _id: 'all', username: name, avatar: C.avatarUri('all', name), status: { state: 'online', lastChanged: '' } });
         if (S.order.some(i => S.bots[i].status === 'busy')) typing = ['all'];
-        for (const i of S.order) users.push({ _id: i, username: botName(i), avatar: C.avatarUri(i, botName(i)), status: { state: 'online', lastChanged: '' } }); // names show on each bubble
+        for (const i of S.order) users.push({ _id: i, username: botName(i), avatar: avatarOf(i, botName(i)), status: { state: 'online', lastChanged: '' } }); // names show on each bubble
       }
       const ms = messagesOf(c);
       const lastM = ms.length ? ms[ms.length - 1] : null;
       if (lastM) preview = (lastM.senderId === ME ? tr('conv.you') + ': ' : (c.kind === 'bot' ? '' : lastM.username + ': ')) + oneLine(lastM.content, 60);
-      return { roomId: c.id, roomName: name, avatar: C.avatarUri(avId, name), unreadCount: 0, index: 0,
+      const shown = c.kind === 'bot' && ui.mainRole && c.bot === ui.mainRole ? name + ' · ' + tr('conv.mainTag') : name;
+      return { roomId: c.id, roomName: shown, avatar: avatarOf(avId, name), unreadCount: 0, index: 0,
         lastMessage: { content: preview || tr('conv.noreply'), timestamp: lastM ? lastM.timestamp : '', saved: true, distributed: true, seen: true, new: false }, users, typingUsers: typing };
     });
   }
@@ -285,7 +317,7 @@
     const sig = c.id + '\n' + ms;
     if (last.msgs !== sig) { last.msgs = sig; setProp(chat, 'messages', ms); chat.setAttribute('messages-loaded', 'true'); }
     if (pendingOpen && c.id === pendingOpen) { pendingOpen = null; last.cur = c.id; chat.setAttribute('room-id', c.id); }
-    else if (!last.cur) { last.cur = c.id; if (window.innerWidth > 600) chat.setAttribute('room-id', c.id); }
+    else if (!last.cur) { last.cur = c.id; if (window.innerWidth > 600 || ui.mainRole) chat.setAttribute('room-id', c.id); }
   }
   // Open a conversation from code (the "waiting" button); on a phone this also leaves the list pane.
   function openConv(id) { setCurrent(id); last.cur = id; chat.setAttribute('room-id', id); render(); }
@@ -301,8 +333,65 @@
       const d = e.detail && e.detail[0], id = d && d.room && d.room.roomId;
       if (id && id !== ui.cur) { setCurrent(id); render(); } else if (id) { last.msgs = ''; render(); }
     });
+    chat.addEventListener('room-info', e => { const d = e.detail && e.detail[0]; const id = d && d.roomId; if (id) { if (id !== ui.cur) setCurrent(id); openCard(); } });
     chat.addEventListener('send-message', e => { const d = e.detail && e.detail[0]; if (d) sendFrom(d.roomId || ui.cur, d.content); });
   }
+  // ---- role card: the field list comes from the server (GET /m/roles/cards/<id>), so a new field shows up without a page change.
+  const cardState = { id: null, rows: [], busy: false };
+  const roleOfCur = () => { const c = curConv(); return c && c.kind === 'bot' && CF.isRole(c.bot) ? c.bot : null; };
+  function drawCardBtn() { $('card-btn').hidden = !roleOfCur(); }
+  const cardMsg = t => { $('card-msg').textContent = t || ''; };
+  const fieldLabel = f => { const k = 'card.f.' + f.key; const t = tr(k); return t && t !== k ? t : (f.label || f.key); };
+  function drawCardFields() {
+    const box = $('card-fields'); box.textContent = '';
+    $('card-save').hidden = device;
+    if (device) box.appendChild(h('p', { class: 'hint' }, tr('card.device.readonly')));
+    for (const f of cardState.rows) {
+      if (f.type === 'image') { const n = h('p', { class: 'hint' }, fieldLabel(f) + ': ' + tr('card.avatar.note')); box.appendChild(n); continue; }
+      const ta = h('textarea', { id: 'cf-' + f.key, 'data-key': f.key, rows: f.type === 'json' ? 3 : 4, maxlength: f.max || false, autocomplete: 'off' });
+      ta.value = f.value; if (device) ta.readOnly = true;
+      box.appendChild(h('label', { for: 'cf-' + f.key }, fieldLabel(f), h('span', { class: 'hint' }, f.type === 'json' ? tr('card.json.hint') : (f.description || '')), ta));
+    }
+  }
+  async function openCard() {
+    const id = roleOfCur(); if (!id || ui.needAuth) return;
+    cardState.id = id; cardState.rows = [];
+    $('card-title').textContent = tr('card.title', { name: botName(id) });
+    const img = $('card-img'); img.hidden = true; $('card-fields').textContent = ''; cardMsg(tr('card.loading'));
+    $('card-dlg').hidden = false;
+    try {
+      const r = await api('/m/roles/cards/' + encodeURIComponent(id));
+      if (cardState.id !== id) return;
+      if (r.status === 403) { cardMsg(tr('card.forbidden')); $('card-save').hidden = true; return; }
+      if (!r.ok) { cardMsg(tr('card.load.fail')); return; }
+      cardState.rows = CF.rows(r.body);
+      const u = r.body && r.body.avatar;
+      if (typeof u === 'string' && av[u] && av[u].state === 'ok') { img.src = av[u].src; img.hidden = false; }
+      cardMsg(''); drawCardFields();
+      const first = $('card-fields').querySelector('textarea'); if (first) first.focus();
+    } catch (e) { cardMsg(tr('card.load.fail')); }
+  }
+  function closeCard() { $('card-dlg').hidden = true; cardState.id = null; }
+  $('card-btn').addEventListener('click', openCard);
+  $('card-close').addEventListener('click', closeCard);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('card-dlg').hidden) closeCard(); });
+  $('card-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    if (!cardState.id || cardState.busy || device) return;
+    const edited = {};
+    for (const ta of $('card-fields').querySelectorAll('textarea')) edited[ta.getAttribute('data-key')] = ta.value;
+    const p = CF.patch(cardState.rows, edited);
+    if (p.error) { cardMsg(tr('card.json.bad', { key: p.error })); return; }
+    if (!Object.keys(p.patch).length) { cardMsg(tr('card.nochange')); return; }
+    cardState.busy = true;
+    try {
+      const r = await api('/m/roles/cards/' + encodeURIComponent(cardState.id), { method: 'PATCH', body: JSON.stringify({ card: p.patch }) });
+      if (r.ok) { cardState.rows = CF.rows(r.body); drawCardFields(); cardMsg(tr('card.saved')); refreshBots(); }
+      else if (r.status === 403) cardMsg(tr('card.save.forbidden'));
+      else { const why = r.body && r.body.error; cardMsg(tr('card.save.fail', { why: typeof why === 'string' ? why : String(r.status) })); }
+    } catch (err) { cardMsg(tr('card.save.fail', { why: String(err && err.message || err) })); }
+    cardState.busy = false;
+  });
   const mq = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
   if (mq && mq.addEventListener) mq.addEventListener('change', () => render());
 
@@ -310,7 +399,7 @@
   let queued = false;
   function render() { if (!queued) { queued = true; requestAnimationFrame(() => { queued = false; draw(); }); } }
   function draw() {
-    drawTop(); drawQuestions(); drawCards(); drawUndo();
+    drawTop(); drawQuestions(); drawCards(); drawUndo(); drawCardBtn();
     $('strip').hidden = !($('questions').childNodes.length || $('cards').childNodes.length || $('undo').childNodes.length);
     $('send-msg').hidden = !$('send-msg').textContent;
     drawChat();
@@ -547,8 +636,101 @@
   $('group-form').addEventListener('submit', submitGroup);
   $('group-dlg').addEventListener('keydown', e => { if (e.key === 'Escape') closeGroupDlg(); });
 
+  // The roles module names the main role (and makes the default one on first use); 404 = module off, keep the config main bot.
+  // A 404 (no main role yet, or module off) is remembered for 5 minutes, so the roster refresh does not ask again and again.
+  let mainMissingAt = 0;
+  async function loadMainRole(force) {
+    if (!force && mainMissingAt && Date.now() - mainMissingAt < 300000) return;
+    try { const m = await api('/m/roles/main'); mainMissingAt = m.status === 404 ? Date.now() : 0; ui.mainRole = m.ok && m.body && typeof m.body.id === 'string' ? m.body.id : ''; } catch (err) { /* keep the last one */ }
+  }
+  // ---- "New role": the owner makes a role by hand (name + one-line job), POST /m/roles/roles, no model call.
+  const rol = { busy: false, avatar: null };
+  const AV_MAX = 180000; // the request body cap is 256 KB; base64 adds a third
+  function b64(buf) { const u = new Uint8Array(buf); let s = ''; for (let i = 0; i < u.length; i += 8192) s += String.fromCharCode.apply(null, u.subarray(i, i + 8192)); return btoa(s); }
+  async function pickAvatar() {
+    rol.avatar = null; roleErr('');
+    const f = $('role-avatar').files && $('role-avatar').files[0];
+    if (!f) return;
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(f.type) || f.size > AV_MAX) { $('role-avatar').value = ''; return roleErr(tr('role.err.avatar')); }
+    try { rol.avatar = b64(await f.arrayBuffer()); } catch { $('role-avatar').value = ''; roleErr(tr('role.err.avatar')); }
+  }
+  function roleErr(msg) { const e = $('role-err'); e.textContent = msg || ''; e.hidden = !msg; }
+  function openRoleDlg() { $('role-name').value = ''; $('role-job').value = ''; $('role-avatar').value = ''; rol.avatar = null; roleErr(''); $('role-dlg').hidden = false; $('role-name').focus(); }
+  function closeRoleDlg() { if (rol.busy) return; $('role-dlg').hidden = true; $('new-role').focus(); }
+  async function submitRole(e) {
+    if (e) e.preventDefault();
+    if (rol.busy) return;
+    const name = $('role-name').value.trim(), job = $('role-job').value.trim();
+    if (!name || [...name].length > 40) return roleErr(tr('role.err.name'));
+    if (!job || [...job].length > 200) return roleErr(tr('role.err.job'));
+    rol.busy = true; roleErr(''); $('role-create').disabled = true; $('role-create').textContent = tr('group.creating');
+    let msg = '', made = null;
+    try {
+      const r = await post('/m/roles/roles', rol.avatar ? { name, job, avatar: { data: rol.avatar } } : { name, job });
+      if (r.ok && r.body && typeof r.body.id === 'string') made = r.body;
+      else if (r.status === 403) msg = tr('role.err.forbidden');
+      else msg = (r.body && typeof r.body.error === 'string' && r.body.error) || tr('role.err.fail');
+    } catch (err) { msg = isAuth(err) ? '' : tr('role.err.fail'); }
+    rol.busy = false; $('role-create').disabled = false; $('role-create').textContent = tr('group.create');
+    if (!made) return roleErr(msg);
+    $('role-dlg').hidden = true;
+    await loadBots();
+    if (S.bots[made.id]) openConv(made.id);
+  }
+  $('new-role').addEventListener('click', openRoleDlg);
+  $('role-cancel').addEventListener('click', closeRoleDlg);
+  $('role-form').addEventListener('submit', submitRole);
+  $('role-avatar').addEventListener('change', pickAvatar);
+  $('role-dlg').addEventListener('keydown', e => { if (e.key === 'Escape') closeRoleDlg(); });
+
+  // ---- "Add to Home Screen": a paired phone browser asks the server for a 10-minute code, puts it in the URL hash (which iOS
+  // saves as the icon's start URL), and shows the steps. The icon's first launch redeems it. Gone again when it expires or on Done.
+  const HS_NO = TOKEN_KEY + '.hs-no';
+  let hsTimer = null, hsOn = false;
+  function hsEligible() {
+    try {
+      if (!token || !device || ui.needAuth) return false;
+      if (navigator.standalone === true || (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)) return false;
+      if (!(('ontouchstart' in window) || (navigator.maxTouchPoints || 0) > 0)) return false;
+    } catch (e) { return false; }
+    try { if (localStorage.getItem(HS_NO) === '1') return false; } catch (e) { /* storage blocked: offer it */ }
+    return true;
+  }
+  function hsEnd() {
+    if (hsTimer) { clearInterval(hsTimer); hsTimer = null; }
+    hsOn = false;
+    try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { /* ignore */ }
+    $('hs').hidden = true;
+  }
+  function offerHome() {
+    if (hsOn) return;
+    $('hs').hidden = !hsEligible();
+    $('hs-offer').hidden = false; $('hs-steps').hidden = true; $('hs-msg').hidden = true;
+  }
+  $('hs-no').addEventListener('click', () => { try { localStorage.setItem(HS_NO, '1'); } catch (e) { /* storage blocked */ } $('hs').hidden = true; });
+  $('hs-done').addEventListener('click', hsEnd);
+  $('hs-add').addEventListener('click', async () => {
+    const btn = $('hs-add'), msg = $('hs-msg');
+    btn.disabled = true; msg.hidden = false; msg.textContent = tr('hs.busy');
+    try {
+      const r = await post('/m/device-pairing/handoff', {});
+      if (!r.ok || !r.body || !r.body.code) { msg.textContent = tr('hs.fail'); return; }
+      const until = Date.parse(r.body.expiresAt);
+      hsOn = true;
+      try { history.replaceState(null, '', location.pathname + location.search + '#h=' + encodeURIComponent(r.body.code) + '&lang=' + encodeURIComponent(lang || 'en')); } catch (e) { /* ignore */ }
+      const tick = () => {
+        const left = D.remainingSec(Number.isFinite(until) ? until : Date.now() + 600000, Date.now());
+        if (left <= 0) { hsEnd(); offerHome(); return; }
+        $('hs-step4').textContent = tr('hs.step4', { time: D.fmtCountdown(left) });
+      };
+      $('hs-offer').hidden = true; $('hs-steps').hidden = false; msg.hidden = true;
+      tick(); hsTimer = setInterval(tick, 1000);
+    } catch (err) { if (!isAuth(err)) msg.textContent = tr('hs.fail'); }
+    finally { btn.disabled = false; }
+  });
   async function boot() {
     try {
+      await loadMainRole(true);
       const [b, t, c] = await Promise.all([api('/api/bots'), api('/api/tasks?limit=50'), api('/api/cards?state=pending')]);
       if (b.ok) D.applyBots(S, b.body);
       if (t.ok) D.applyTasks(S, t.body);
@@ -556,6 +738,7 @@
     } catch (err) { /* unauthorized shows the token form; others retry via the stream */ }
     await loadRooms(); await loadQuestions();
     render();
+    offerHome();
     stream().catch(err => console.error('chat-ui: the live stream stopped: ' + ((err && err.message) || err)));
   }
   // Refresh the roster: after each finished task, and every 15 s while the page is visible, so offline/busy
@@ -568,17 +751,19 @@
   }
   async function loadBots() {
     if (ui.needAuth) return;
-    try { const b = await api('/api/bots'); if (b.ok) { D.applyBots(S, b.body); render(); } } catch (err) { if (!isAuth(err)) console.warn('chat-ui: roster refresh failed: ' + ((err && err.message) || err)); }
+    try { await loadMainRole(); const b = await api('/api/bots'); if (b.ok) { D.applyBots(S, b.body); render(); } } catch (err) { if (!isAuth(err)) console.warn('chat-ui: roster refresh failed: ' + ((err && err.message) || err)); }
   }
   setInterval(() => { if (document.visibilityState !== 'hidden') refreshBots(); }, 15000);
   // Re-read the room list every 5 s while visible, so a group made by asking in chat appears without a reload.
   setInterval(async () => { if (document.visibilityState !== 'hidden' && !ui.needAuth) { await loadRooms(true); render(); } }, 5000);
 
   // Redeem a #p= code right away: the fragment is already gone from the URL, so waiting for the language choice would lose it on a reload.
-  const paired = pairCode ? redeemCode(pairCode) : Promise.resolve(null);
-  pairCode = null;
+  const paired = pairCode ? redeemCode(pairCode)
+    : handoff ? redeemCode(handoff.code, 'phone app').then(err => { if (err) handoffFailed = true; return err; })
+    : Promise.resolve(null);
+  pairCode = null; handoff = null;
   function start() {
-    paired.then(err => { if (err) { showAuth(); $('pair-msg').textContent = err; } boot(); });
+    paired.then(err => { if (err) { showAuth(); $('pair-msg').textContent = err; if (handoffFailed) $('hs-expired').hidden = false; } boot(); });
   }
   if (lang) start(); else { afterLang = start; showLangGate(); }
 })();

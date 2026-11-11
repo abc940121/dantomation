@@ -22,10 +22,22 @@
     s.order = [];
     for (const b of list) {
       if (!b || typeof b.id !== 'string') continue;
-      s.bots[b.id] = { id: b.id, name: b.name || b.id, engine: b.engine || '', status: b.status || 'offline', runsOn: b.runsOn || 'main' };
+      s.bots[b.id] = { id: b.id, name: b.name || b.id, engine: b.engine || '', status: b.status || 'offline', runsOn: b.runsOn || 'main', ...(typeof b.avatar === 'string' ? { avatar: b.avatar } : {}) };
       s.order.push(b.id);
     }
     return s;
+  }
+
+  // The main role (chief of staff) is the bot whose id the roles module reports; without one, the configured main bot.
+  function mainBotId(s, roleId) {
+    if (roleId && s.bots[roleId]) return roleId;
+    return s.bots.main ? 'main' : s.order[0];
+  }
+
+  // The bot conversations in list order: the main role (else the config main bot) pinned first, then the rest; 'bot:main' when there are no bots.
+  function botConvIds(s, roleId) {
+    const main = mainBotId(s, roleId);
+    return (main ? [main].concat(s.order.filter(i => i !== main)) : ['main']).map(id => 'bot:' + id);
   }
 
   // GET /api/tasks is assumed newest first; only tasks not yet known are added.
@@ -172,8 +184,16 @@
     const m = /(?:^#|&)p=([\w-]{6,80})(?:&|$)/.exec(String(hash || ''));
     return m ? m[1] : null;
   }
+  // #h=<code>&lang=<lang>: the one-time handoff the home-screen icon is saved with. lang is optional and checked by the caller.
+  function handoffFromHash(hash) {
+    const s = String(hash || '');
+    const m = /(?:^#|&)h=([\w-]{6,120})(?:&|$)/.exec(s);
+    if (!m) return null;
+    const l = /(?:^#|&)lang=([A-Za-z-]{2,10})(?:&|$)/.exec(s);
+    return { code: m[1], lang: l ? l[1] : null };
+  }
   // A typed or pasted value is a pairing code when it is six digits or starts with pc_.
   const looksLikeCode = v => /^\d{3}\s?-?\s?\d{3}$/.test(String(v).trim()) || /^pc_[\w-]{10,80}$/.test(String(v).trim());
 
-  return { pairFromHash, looksLikeCode, create, reduce, applyBots, applyTasks, applyCards, thread, pendingCards, pendingFor, unverifiedTotal, canUndo, remainingSec, fmtCountdown, chatBody, createSSEParser, tokenFromHash };
+  return { botConvIds, mainBotId, pairFromHash, handoffFromHash, looksLikeCode, create, reduce, applyBots, mainBotId, applyTasks, applyCards, thread, pendingCards, pendingFor, unverifiedTotal, canUndo, remainingSec, fmtCountdown, chatBody, createSSEParser, tokenFromHash };
 });

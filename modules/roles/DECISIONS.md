@@ -57,3 +57,9 @@
     message has an owner), role members map to their role bot (`bot: "r-..."`) which the existing `prepareTurn` and
     `chooseEngine` already serve. Removal archives (`archived_at`); archived or removed roles are dropped on read, never from the
     file.
+15. Main role (chief of staff): one live role carries `main: true` (a data field, never a fixed name). The store keeps the
+    rule: `role_update {main:true}` moves the mark, `main:false` and archiving the main role are refused. With no main role,
+    `GET /m/roles/main` (and `api.main()`) creates a default one on first use (`chief.js`), so the role list stays empty until
+    someone asks. The main role's turn context gets a compact roster (count, at most 8 `name — first persona line`, a pointer to
+    `role_list`/`role_ask`), never full role texts. The chat page reads `/m/roles/main` because `/api/bots` carries no flag.
+    Known gap: the group lead and `role_ask` "main" still mean the configured main bot (trunk/ask.js decision).

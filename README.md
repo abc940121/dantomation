@@ -2,17 +2,18 @@
 
 # Taskmote
 
-**Approve Claude Code's risky actions from your phone. Crash-safe, undoable.**
+**A small trunk plus opt-in modules for running Claude Code on your own computer. Crash-safe and undoable.**
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 <!-- demo: docs/demo.gif (phone approval card, 20s) -->
 
 
-- **Phone approval cards:** risky steps wait for your tap before they run.
+- **A small trunk:** journal, one executor lock, engine launch, resume, config and a module loader. Nothing else is on until you turn it on.
+- **Opt-in modules:** each one is a folder plus one config line, and is off until you enable it. Phone approval cards are one module in that list.
+- **Crash-safe:** a journal records every side effect, so you can close the lid mid-task, then run `do` with no request to resume; no side effect runs twice.
+- **Undoable:** a checkpoint is taken before every change, and `undo` steps the task folder back one change.
 - **A guard that blocks red-line commands** before the agent can run them.
-- **A journal that survives crashes:** close the lid mid-task, then run `do` with no request to resume; no side effect runs twice.
-- **One-command undo:** `undo` steps the task folder back one change.
 
 ## Quick start
 
@@ -25,7 +26,7 @@ node bin/taskmote.js status
 node bin/taskmote.js undo
 ```
 
-Phone approval cards need the `v1` preset: see [Try the v1 base](#try-the-v1-base-phone-chat-voice-approval-cards).
+Phone approval cards are an optional module and need the `v1` preset: see [Try the v1 base](#try-the-v1-base-phone-chat-voice-approval-cards).
 
 ## Before you rely on it
 
@@ -49,13 +50,13 @@ Set `TASKMOTE_DEMO_AUTO=yes` (or `no`) to answer the card without the browser.
 
 ## Why
 
-Coding agents are good at doing things, but they are less good at stopping cleanly when your laptop sleeps, telling you honestly whether a test passed, or waiting for you before they spend money. Taskmote is a small wrapper around Claude Code that handles those parts: it keeps a crash-safe journal, gives one task one executor, takes a checkpoint before every change, and stops risky actions until you say yes.
+Coding agents are good at doing things, but they are less good at stopping cleanly when your laptop sleeps, telling you honestly whether a test passed, or waiting for you before they spend money. Taskmote is a small trunk around Claude Code that handles those parts: it keeps a crash-safe journal, gives one task one executor and takes a checkpoint before every change, so a task can resume and be undone. Everything beyond that, including stopping risky actions until you say yes, is an opt-in module.
 
 ## What it is
 
 **It is**
 - A local, single-owner tool. Pure Node.js 18+, no dependencies to install for the core.
-- A small trunk (journal, lock, engine launch, resume, config, module loader) plus opt-in modules: phone chat, voice, approval cards, rooms, a worker on a second machine.
+- A small trunk (journal, lock, engine launch, resume, config, module loader) plus opt-in modules, all off until you enable them: approval cards (on your phone or in the browser), phone chat, voice, rooms, a worker on a second machine.
 - Built to survive a shutdown at any moment: `do` with no request resumes the open task, and no side effect runs twice.
 
 ## Quickstart
@@ -96,6 +97,10 @@ On Windows, `bin\taskmote.cmd` does the same; put `bin` on your PATH to type `ta
 
 `node bin/taskmote.js preset v1` shows what the preset turns on. It never writes a file. The verb is the `presets` module (on by default); with it off, the verb says to turn it on.
 
+### Roll back a stable copy
+
+If a stable copy runs from a second git worktree, one command returns it to the previous release: `git -C <stable-worktree> checkout --detach <previous-main-sha>`. Then restart the server process.
+
 ## How it fits together
 
 ```
@@ -118,8 +123,11 @@ On Windows, `bin\taskmote.cmd` does the same; put `bin` on your PATH to type `ta
 
 ## Features
 
+The trunk gives you the first two points; the rest are modules you switch on.
+
+- **Resume after a crash.** The journal records intent, act and done for every side effect; `do` with no request picks the task up again.
 - **Undo anything the agent changed.** `checkpoint` snapshots before each change; `undo` and `restore` are owner-only.
-- **Risky actions wait for you.** With `approval-cards`, a delete outside the task folder, an install or a paid API call stops until you answer `do yes` or `do no`. No answer in 10 minutes counts as no.
+- **Risky actions wait for you (module `approval-cards`).** One of the modules, answered in the browser or on a paired phone: a delete outside the task folder, an install or a paid API call stops until you answer `do yes` or `do no`. No answer in 10 minutes counts as no.
 - **Honest replies.** `tripwires` flags a reply that claims "tests pass" when the run exited with an error, and with `"tripwires": {"mode": "block"}` in the config it holds that reply back; `claim-audit` checks "done" claims against the journal.
 - **Chat from your phone.** `chat-ui`/`app-ui` with `device-pairing` gives one-time codes and per-device tokens you can revoke.
 - **Voice.** `voice` and `voice-chat` add hands-free turns, including answering approval cards by voice.
@@ -155,7 +163,7 @@ A tool whose module is off answers with text naming the module to turn on. The s
 
 ## Modules
 
-Every module is off by default, except the two safety modules `guard-base` and `checkpoint` and the CLI helper module `presets`. `guard-base` is locked on: a config or preset that turns it off is refused, so `serve` will not start and every tool call is blocked until it is fixed. Turning `approval-cards` off is allowed, but `serve` warns that every red-line step will then be refused. "Can touch" is what the module itself reads or changes beyond the trunk.
+The modules are what you add to the trunk. Phone approval (`approval-cards` with `chat-ui`/`app-ui` and `device-pairing`) is one row below, not the product itself. Every module is off by default, except the two safety modules `guard-base` and `checkpoint` and the CLI helper module `presets`. `guard-base` is locked on: a config or preset that turns it off is refused, so `serve` will not start and every tool call is blocked until it is fixed. Turning `approval-cards` off is allowed, but `serve` warns that every red-line step will then be refused. "Can touch" is what the module itself reads or changes beyond the trunk.
 
 | Module | What it does | Can touch | Default | In v1 |
 |---|---|---|---|---|

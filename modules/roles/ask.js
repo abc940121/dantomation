@@ -52,7 +52,7 @@ const mainId = config => { const b = config && config.bots; return Array.isArray
 // A role key or "main" -> { id, name } or null.
 function resolve(key, ctx, deps) {
   const k = String(key == null ? '' : key).trim();
-  if (k.toLowerCase() === 'main') { const id = mainId(ctx.config); return { id, name: id === 'main' ? 'main' : id }; }
+  if (k.toLowerCase() === 'main') { const m = deps.storeOfCtx(ctx).getMain(); if (m) return { id: m.id, name: m.name }; const id = mainId(ctx.config); return { id, name: id === 'main' ? 'main' : id }; }
   const r = deps.storeOfCtx(ctx).get(k);
   return r && !r.archived_at ? { id: r.id, name: r.name } : null;
 }

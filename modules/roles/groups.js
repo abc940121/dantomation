@@ -13,6 +13,8 @@ const ID_RE = /^g-[0-9a-f]{8}$/;
 const bi = (zh, en) => `${zh}\n${en}`;
 const lc = s => String(s).toLowerCase();
 const mainId = config => { const b = config && config.bots; return Array.isArray(b) && b.length && b[0] && b[0].id ? String(b[0].id) : 'main'; };
+// The one lead: the main role (made by ensureMain) when it exists, else the configured main bot.
+const leadOf = (config, rolesStore) => { const m = rolesStore && rolesStore.getMain && rolesStore.getMain(); return m ? { id: m.id, name: m.name, role: true } : { id: mainId(config), name: mainId(config), role: false }; };
 const roomsOn = ctx => !!(ctx && ctx.config && ctx.config.modules && ctx.config.modules.rooms === true);
 
 function createGroups(dirOf, rolesStore) {
@@ -49,7 +51,8 @@ function createGroups(dirOf, rolesStore) {
   const view = (g, ctx) => {
     const roles = new Map(rolesStore.all().map(r => [r.id, r]));
     const members = g.members.filter(id => roles.has(id) && !roles.get(id).archived_at).map(id => ({ id, name: roles.get(id).name }));
-    return { id: g.id, name: g.name, lead: mainId(ctx && ctx.config), members, ...(g.archived_at ? { archived_at: g.archived_at } : {}) };
+    const lead = leadOf(ctx && ctx.config, rolesStore);
+    return { id: g.id, name: g.name, lead: lead.id, members: members.filter(m => m.id !== lead.id), ...(g.archived_at ? { archived_at: g.archived_at } : {}) };
   };
   const copy = g => ({ ...g, members: g.members.slice() });
 
@@ -110,10 +113,10 @@ function createGroups(dirOf, rolesStore) {
     // A map shaped like settings.rooms, for the rooms module. Never throws: a damaged file adds no rooms.
     rooms(ctx) {
       let gs; try { gs = live(read()); } catch { return {}; }
-      const out = {}, main = mainId(ctx && ctx.config);
+      const out = {}, main = leadOf(ctx && ctx.config, rolesStore);
       for (const g of gs) {
         const v = view(g, ctx);
-        out[g.id] = { name: g.name, lead: main, members: [{ id: main, name: main }, ...v.members.filter(m => m.id !== main).map(m => ({ id: m.id, name: m.name, bot: m.id }))] };
+        out[g.id] = { name: g.name, lead: main.id, members: [{ id: main.id, name: main.name, ...(main.role ? { bot: main.id } : {}) }, ...v.members.map(m => ({ id: m.id, name: m.name, bot: m.id }))] };
       }
       return out;
     },

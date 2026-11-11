@@ -129,6 +129,22 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     check('removing it again is refused', /No group/.test(throws(() => run('group_remove', { group: g.id })) || ''));
     check('an archived group name can be reused', run('group_create', { name: 'Weekend', members: ['Ann'] }).id !== g.id);
 
+    // main-lead: the lead is the main role once it exists; before that it is the configured main bot (old behaviour)
+    const api = M.apiOf(mods, 'roles');
+    const gl = run('group_create', { name: 'Lead check', members: ['Ann'] });
+    const roomOf = id => h('GET', '/rooms')(rctx()).json.rooms.find(r => r.id === id);
+    check('no main role yet: the group lead and the room lead are the configured main bot', gl.lead === 'main' && roomOf(gl.id).lead === 'main' && roomOf(gl.id).members[0].id === 'main' && !roomOf(gl.id).members[0].bot && !api.list().some(r => r.main), JSON.stringify(roomOf(gl.id)));
+    const mrole = api.main();
+    const gl2 = run('group_list', {}).groups.find(x => x.id === gl.id), rl = roomOf(gl.id);
+    check('main role exists: the group lead is the main role, listed once', gl2.lead === mrole.id && gl2.members.map(m => m.id).join() === ann.id, JSON.stringify(gl2));
+    check('main role exists: the room lead is the main role , then the other roles', rl.lead === mrole.id && rl.members.map(m => m.id).join() === [mrole.id, ann.id].join() && rl.members[0].name === mrole.name, JSON.stringify(rl));
+    check('main role exists: a group made after it also leads with it, naming it as a member is harmless', run('group_create', { name: 'Lead two', members: [mrole.name, 'Ann'] }).lead === mrole.id);
+    check('main role exists: a plain line routes to the main role', route('hello', { id: gl.id, lead: rl.lead, members: rl.members }).ids.join() === mrole.id);
+    const bl = enq.length;
+    say(rctx({ params: { id: gl.id }, body: { text: 'plain line' } }));
+    await sleep(300);
+    check('main role exists: a plain line wakes the main role as its own bot', enq.length > bl && enq[enq.length - 1].bot === mrole.id, JSON.stringify(enq.map(e => e.bot)));
+
     // damaged file
     fs.writeFileSync(gfile, '{not json');
     check('a damaged groups.json gives a clear error on the tools', /unreadable/.test(throws(() => run('group_list', {})) || ''));

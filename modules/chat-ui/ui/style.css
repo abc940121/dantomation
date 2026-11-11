@@ -52,6 +52,12 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: .9em; }
 .undo-row { padding: 4px 0; }
 .undo-row .go { background: var(--bad); color: #fff; border: 0; }
 
+#hs { flex: none; padding: 6px calc(12px + env(safe-area-inset-right)) 6px calc(12px + env(safe-area-inset-left)); background: var(--user); border-bottom: 1px solid var(--line); }
+#hs[hidden], #hs [hidden] { display: none; }
+#hs .hint { margin: 0 0 6px; color: var(--text); }
+#hs ol { margin: 4px 0 8px; padding-left: 22px; }
+#hs button { margin-right: 8px; }
+#hs-add { background: var(--accent); color: var(--accent-text); border: 0; font-weight: 700; }
 #auth { position: fixed; inset: 0; display: grid; place-items: center; background: var(--bg); padding: 16px; z-index: 10; }
 #auth[hidden] { display: none; }
 #auth form { width: min(420px, 100%); display: grid; gap: 10px; }
@@ -78,4 +84,18 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: .9em; }
 .dlg .pick { display: flex; align-items: center; gap: 10px; min-height: 44px; overflow-wrap: anywhere; }
 .dlg .pick input { width: 22px; height: 22px; flex: none; }
 .dlg .btns { display: flex; gap: 8px; justify-content: flex-end; }
-.dlg #group-create { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+.dlg #group-create, .dlg #role-create { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+/* role card dialog: a full-screen sheet on a phone, a centred box on a wide screen */
+#card-dlg { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(0,0,0,.45); z-index: 9; padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left)); }
+#card-dlg[hidden] { display: none; }
+#card-form { width: min(560px, 100%); max-height: 100%; overflow-y: auto; display: grid; gap: 12px; padding: 14px; border-radius: 12px; background: var(--bg); border: 1px solid var(--line); }
+.card-head { display: flex; align-items: center; gap: 12px; }
+.card-head h2 { margin: 0; font-size: 1.1rem; overflow-wrap: anywhere; }
+#card-img { width: 64px; height: 64px; border-radius: 50%; object-fit: cover; flex: none; }
+#card-fields { display: grid; gap: 12px; }
+#card-fields label { display: grid; gap: 4px; font-weight: 600; }
+#card-fields .hint { font-weight: 400; margin: 0; }
+#card-fields textarea { min-height: 88px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); resize: vertical; width: 100%; box-sizing: border-box; }
+.card-btns { display: flex; gap: 10px; }
+.card-btns button { flex: 1; }
+#card-save { background: var(--accent); color: var(--accent-text); border: 0; font-weight: 700; }

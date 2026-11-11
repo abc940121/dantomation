@@ -20,7 +20,12 @@ async function pair() {
 async function list() {
   const l = S.list();
   if (!l.length) console.log('no paired devices');
-  for (const d of l) console.log(`${d.id}  ${d.revoked ? 'revoked' : d.expired ? 'expired' : 'active '}  ${d.label}  created ${d.created}  last seen ${d.lastSeen || 'never'}`);
+  // A home-screen app (a device with a parent) is listed right after its parent and marked, so it can be seen and revoked.
+  const ids = new Set(l.map(d => d.id)), kids = {};
+  for (const d of l) if (d.parent && ids.has(d.parent)) (kids[d.parent] = kids[d.parent] || []).push(d);
+  const ordered = [];
+  for (const d of l) if (!(d.parent && ids.has(d.parent))) ordered.push(d, ...(kids[d.id] || []));
+  for (const d of ordered) console.log(`${d.id}  ${d.revoked ? 'revoked' : d.expired ? 'expired' : 'active '}  ${d.label}  created ${d.created}  last seen ${d.lastSeen || 'never'}${d.parent ? `  home-screen app of ${d.parent}` : ''}`);
   return { handled: true, code: 0 };
 }
 async function revoke(args) {
@@ -51,6 +56,12 @@ module.exports = {
       handler: ctx => (byDevice(ctx) ? deny : S.revoke(ctx.params.id) ? { status: 200, json: { revoked: ctx.params.id } } : { status: 404, json: { error: 'no such device' } }) },
     { method: 'POST', path: '/redeem', access: 'public-post', description: 'phone: swap a pairing code {code, label} for a device token',
       handler: ctx => { const b = body(ctx), r = S.redeem(b.code, b.label); return r.ok ? { status: 200, json: { token: r.token, id: r.id, label: r.label } } : { status: r.status, json: { error: r.error } }; } },
+    { method: 'POST', path: '/handoff', description: 'paired device or owner: mint one 10-minute pairing code {code, expiresAt} to carry into the home-screen app (5 an hour per device; a device made from a handoff cannot ask)',
+      handler: ctx => {
+        if (!ctx.actor || ctx.actor.kind !== 'owner') return deny; // fail closed: only a paired device or the owner
+        const r = S.mintHandoff(byDevice(ctx) ? String(ctx.actor.id).slice(7) : null);
+        return r.ok ? { status: 200, json: { code: r.code, expiresAt: r.expiresAt } } : { status: r.status, json: { error: r.error } };
+      } },
   ],
   commands: { device, pair, devices: list, revoke },
   api: { authenticate: S.authenticate, allows: S.allows, audit: S.audit },

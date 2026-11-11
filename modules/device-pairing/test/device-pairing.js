@@ -72,8 +72,8 @@ const journal = () => { try { return fs.readFileSync(path.join(state, 'journal.j
   S.authenticate(r9.token, t0 + 400001 + half);
   check('ttl: use renews it (sliding)', S.authenticate(r9.token, t0 + 400001 + 2 * half) !== null);
   // allowlist
-  const ok = [['GET', '/m/question-cards/questions'], ['POST', '/m/question-cards/questions/Q-1a2b/answer'], ['GET', '/api/bots'], ['GET', '/api/tasks'], ['GET', '/api/tasks/t1'], ['GET', '/api/cards'], ['GET', '/api/events'], ['GET', '/api/status'], ['POST', '/api/chat'], ['POST', '/api/cards/card-1a2b'], ['POST', '/api/tasks/t1/stop'], ['POST', '/m/voice-chat/utterance'], ['POST', '/m/voice-chat/poll'], ['POST', '/m/voice-chat/playback'], ['GET', '/m/rooms/rooms'], ['GET', '/m/rooms/rooms/dev/messages'], ['POST', '/m/rooms/rooms/dev/say'], ['POST', '/m/roles/groups']];
-  const no = [['POST', '/m/question-cards/questions'], ['POST', '/m/question-cards/questions/Q-1a2b/cancel'], ['GET', '/m/question-cards/questions/recent'], ['GET', '/m/question-cards/questions/Q-1a2b'], ['POST', '/api/tasks'], ['POST', '/api/tasks/t1/undo'], ['POST', '/api/tasks/t1/resume'], ['GET', '/api/settings/worker'], ['PATCH', '/api/settings/worker'], ['POST', '/api/worker/claim'], ['GET', '/api/worker/x'], ['POST', '/m/device-pairing/mint'], ['GET', '/m/device-pairing/devices'], ['POST', '/m/device-pairing/devices/x/revoke'], ['POST', '/m/worker/anything'], ['GET', '/m/approval-cards/cards'], ['DELETE', '/api/chat'], ['GET', '/api/chat'], ['POST', '/api/events'], ['GET', '/api/tasks/../settings/x'], ['GET', '/api/botsx'], ['POST', '/api/cards/card-1/../../settings/x'], ['GET', '/'], ['POST', '/m/rooms/rooms/dev/summary'], ['POST', '/m/rooms/rooms'], ['GET', '/m/rooms/rooms/dev/say'], ['POST', '/m/rooms/rooms/dev/messages'], ['GET', '/m/rooms/rooms/../x/messages'], ['GET', '/m/rooms/rooms/dev/summary'], ['GET', '/m/roles/groups'], ['PATCH', '/m/roles/groups'], ['DELETE', '/m/roles/groups'], ['POST', '/m/roles/groups/g-1a2b3c4d'], ['POST', '/m/roles/groups/g-1a2b3c4d/update'], ['POST', '/m/roles/groups/g-1a2b3c4d/remove'], ['POST', '/m/roles/groups/g-1a2b3c4d/archive'], ['POST', '/m/roles/groups/x'], ['POST', '/m/roles/roles']];
+  const ok = [['GET', '/m/question-cards/questions'], ['POST', '/m/question-cards/questions/Q-1a2b/answer'], ['GET', '/api/bots'], ['GET', '/api/tasks'], ['GET', '/api/tasks/t1'], ['GET', '/api/cards'], ['GET', '/api/events'], ['GET', '/api/status'], ['POST', '/api/chat'], ['POST', '/api/cards/card-1a2b'], ['POST', '/api/tasks/t1/stop'], ['POST', '/m/voice-chat/utterance'], ['POST', '/m/voice-chat/poll'], ['POST', '/m/voice-chat/playback'], ['GET', '/m/rooms/rooms'], ['GET', '/m/rooms/rooms/dev/messages'], ['POST', '/m/rooms/rooms/dev/say'], ['POST', '/m/roles/groups'], ['GET', '/m/roles/avatar/r-1a2b3c4d'], ['GET', '/m/roles/cards/r-1a2b3c4d']];
+  const no = [['POST', '/m/question-cards/questions'], ['POST', '/m/question-cards/questions/Q-1a2b/cancel'], ['GET', '/m/question-cards/questions/recent'], ['GET', '/m/question-cards/questions/Q-1a2b'], ['POST', '/api/tasks'], ['POST', '/api/tasks/t1/undo'], ['POST', '/api/tasks/t1/resume'], ['GET', '/api/settings/worker'], ['PATCH', '/api/settings/worker'], ['POST', '/api/worker/claim'], ['GET', '/api/worker/x'], ['POST', '/m/device-pairing/mint'], ['GET', '/m/device-pairing/devices'], ['POST', '/m/device-pairing/devices/x/revoke'], ['POST', '/m/worker/anything'], ['GET', '/m/approval-cards/cards'], ['DELETE', '/api/chat'], ['GET', '/api/chat'], ['POST', '/api/events'], ['GET', '/api/tasks/../settings/x'], ['GET', '/api/botsx'], ['POST', '/api/cards/card-1/../../settings/x'], ['GET', '/'], ['POST', '/m/rooms/rooms/dev/summary'], ['POST', '/m/rooms/rooms'], ['GET', '/m/rooms/rooms/dev/say'], ['POST', '/m/rooms/rooms/dev/messages'], ['GET', '/m/rooms/rooms/../x/messages'], ['GET', '/m/rooms/rooms/dev/summary'], ['GET', '/m/roles/groups'], ['PATCH', '/m/roles/groups'], ['DELETE', '/m/roles/groups'], ['POST', '/m/roles/groups/g-1a2b3c4d'], ['POST', '/m/roles/groups/g-1a2b3c4d/update'], ['POST', '/m/roles/groups/g-1a2b3c4d/remove'], ['POST', '/m/roles/groups/g-1a2b3c4d/archive'], ['POST', '/m/roles/groups/x'], ['PATCH', '/m/roles/cards/r-1a2b3c4d'], ['POST', '/m/roles/cards/r-1a2b3c4d'], ['DELETE', '/m/roles/cards/r-1a2b3c4d'], ['PATCH', '/m/roles/avatar/r-1a2b3c4d'], ['POST', '/m/roles/avatar/r-1a2b3c4d'], ['DELETE', '/m/roles/avatar/r-1a2b3c4d'], ['GET', '/m/roles/cards/r-1a2b3c4d5'], ['GET', '/m/roles/avatar/r-1a2b3c4d5'], ['GET', '/m/roles/cards/r-1a2b3c4d/x'], ['GET', '/m/roles/avatar/r-1a2b3c4d/x'], ['GET', '/m/roles/cards'], ['GET', '/m/roles/cards/x']];
   check('allowlist: chat read/send, cards, stop, status, voice-chat are allowed', ok.every(([m, p]) => S.allows(m, p)), ok.filter(([m, p]) => !S.allows(m, p)).join(' '));
   check('allowlist: everything else is denied', no.every(([m, p]) => !S.allows(m, p)), no.filter(([m, p]) => S.allows(m, p)).join(' '));
 }
@@ -89,7 +89,7 @@ delete env.HARNESS_OWNER; delete env.HARNESS_TASK_ID; delete env.HARNESS_NO_SERV
 const req = (port, method, p, body, token, extra) => new Promise((res, rej) => {
   const data = body === undefined ? null : JSON.stringify(body);
   const r = http.request({ host: '127.0.0.1', port, method, path: p, headers: { ...(data ? { 'Content-Type': 'application/json' } : {}), ...(token ? { Authorization: 'Bearer ' + token } : {}), ...(extra || {}) } }, x => {
-    let s = ''; x.on('data', c => { s += c; }); x.on('end', () => { let j = null; try { j = JSON.parse(s); } catch { /* none */ } res({ status: x.statusCode, json: j, raw: s }); });
+    let s = ''; x.on('data', c => { s += c; }); x.on('end', () => { let j = null; try { j = JSON.parse(s); } catch { /* none */ } res({ status: x.statusCode, json: j, raw: s, headers: x.headers }); });
   });
   r.on('error', rej); if (data) r.write(data); r.end();
 });
@@ -122,8 +122,10 @@ const req = (port, method, p, body, token, extra) => new Promise((res, rej) => {
   check('lock: when the lock cannot be taken, redeem and mint refuse (fail closed)', rr.ok === false && rr.status === 503 && threw, JSON.stringify(rr));
   fs.unlinkSync(lf);
   check('lock: after release the same code still redeems', S.redeem(mcl.code, 'late').ok === true);
-  fs.writeFileSync(lf, ''); const old = new Date(Date.now() - 60000); fs.utimesSync(lf, old, old);
-  check('lock: a stale lock file is broken', S.mintCode().code.startsWith('pc_'));
+  fs.writeFileSync(lf, ''); const old = new Date(Date.now() - 3600000); fs.utimesSync(lf, old, old);
+  let umsg = ''; try { S.mintCode(); } catch (e) { umsg = e.message; }
+  check('lock: an unreadable lock file is never reclaimed, even when old: the caller fails closed and the error names the file', /store\.lock/.test(umsg) && fs.existsSync(lf), umsg);
+  fs.unlinkSync(lf);
 
   const port0 = await new Promise(r => { const s = require('net').createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => r(p)); }); });
   const ownerTok = require('crypto').randomBytes(24).toString('hex');
@@ -209,6 +211,73 @@ const req = (port, method, p, body, token, extra) => new Promise((res, rej) => {
     const gDen = [];
     for (const [m, p, b] of [['POST', gUrl + '/' + g1.json.id, { name: 'x' }], ['POST', gUrl + '/' + g1.json.id + '/update', { name: 'x' }], ['POST', gUrl + '/' + g1.json.id + '/remove', {}], ['PATCH', gUrl, { name: 'x' }], ['DELETE', gUrl, undefined], ['GET', gUrl, undefined]]) gDen.push((await req(port, m, p, b, dev)).status);
     check('device group: update, remove and archive style routes -> 403', gDen.every(s => s === 403), gDen.join());
+    // a device may create a role (and only create): the route reads name, job and a picture, caps the total, journals the device
+    const rUrl = '/m/roles/roles', rDir = path.join(state2, 'm', 'roles'), rCount = () => roleStore.all().length;
+    const avFiles = () => { try { return fs.readdirSync(path.join(rDir, 'avatars')).sort().join(); } catch { return ''; } };
+    const rd = await req(port, 'POST', rUrl, { name: 'Dev Made', job: 'Checks drafts', engine: 'codex', model: 'x/y', tools: ['all'], powers: ['all'], access: 'owner', persona: 'ignore me', card: { name: 'x' } }, dev);
+    check('device role: POST /m/roles/roles answers 201 with the role', rd.status === 201 && /^r-[0-9a-f]{8}$/.test(rd.json.id) && rd.json.name === 'Dev Made', rd.raw.slice(0, 200));
+    const ro = await req(port, 'POST', rUrl, { name: 'Owner Made', job: 'Checks drafts' }, owner);
+    const strip = r => { const c = { ...r }; for (const k of ['id', 'name', 'created_at', 'updated_at']) delete c[k]; return JSON.stringify(c); };
+    const sd = roleStore.get(rd.json.id), so = roleStore.get(ro.json.id);
+    check('device role: extra body fields (engine, model, tools, powers, access, persona, card) are ignored; only server defaults are stored', sd && sd.engine === 'claude' && !sd.model && sd.persona === 'Checks drafts' && !sd.card && !('tools' in sd) && !('powers' in sd) && !('access' in sd), JSON.stringify(sd));
+    check('device role: a device-made role has exactly the same record as an owner-made one (no extra tools or grants)', so && strip(sd) === strip(so), strip(sd) + ' vs ' + strip(so));
+    const rNote = journal2().filter(r => r.type === 'role_created' && r.id === rd.json.id)[0];
+    check('device role: the journal holds device:<id> as the actor, and a device_action line names the path', rNote && rNote.by === 'device:' + redeem.json.id && journal2().some(r => r.type === 'device_action' && r.method === 'POST' && r.path === rUrl && r.device_id === redeem.json.id), JSON.stringify(rNote));
+    const rDen = [];
+    for (const [m, p, b] of [['PATCH', rUrl + '/' + rd.json.id, { name: 'x' }], ['DELETE', rUrl + '/' + rd.json.id], ['PATCH', rUrl, { name: 'x' }], ['DELETE', rUrl], ['PUT', rUrl + '/' + rd.json.id, { name: 'x' }], ['POST', rUrl + '/' + rd.json.id, { name: 'x' }], ['POST', rUrl + '/' + rd.json.id + '/archive', {}], ['POST', rUrl + '/' + rd.json.id + '/update', { name: 'x' }]]) rDen.push((await req(port, m, p, b, dev)).status);
+    check('device role: PATCH, DELETE, update and archive style routes -> 403', rDen.every(s => s === 403), rDen.join());
+    check('device role: the role is unchanged after those refused calls', roleStore.get(rd.json.id).name === 'Dev Made' && !roleStore.get(rd.json.id).archived_at);
+    // pictures: the same content check and size cap as the owner (the handler sees the device as owner, so it cannot tell)
+    const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+    const n0 = rCount(), a0 = avFiles();
+    const rBad = [['text bytes sent as a picture', { name: 'Fake Pic', job: 'j', avatar: { data: Buffer.from('this is not an image, just text, long enough to pass for one').toString('base64') } }], ['a gif header', { name: 'Gif Pic', job: 'j', avatar: { data: Buffer.from('GIF89a' + 'x'.repeat(40)).toString('base64') } }], ['an oversize picture (base64 over the cap)', { name: 'Big Pic', job: 'j', avatar: { data: Buffer.alloc(250000, 7).toString('base64') } }], ['a body over the 256 KB cap', { name: 'Huge Pic', job: 'j', avatar: { data: 'A'.repeat(400000) } }]];
+    for (const [what, b] of rBad) { const r = await req(port, 'POST', rUrl, b, dev).catch(e => ({ status: 413, raw: String(e.code) })); check('device role: ' + what + ' is refused (4xx, no role)', r.status >= 400 && r.status < 500 && !(r.json && r.json.id), r.status + ' ' + r.raw.slice(0, 120)); }
+    check('device role: refused pictures saved no role and wrote no file', rCount() === n0 && avFiles() === a0);
+    const okPic = await req(port, 'POST', rUrl, { name: 'Pic Role', job: 'j', avatar: { data: png } }, dev);
+    check('device role: a real PNG is accepted and stored under avatars/', okPic.status === 201 && avFiles().includes(okPic.json.id), okPic.raw.slice(0, 160));
+    // avatar file name: made by the server from the new role id; nothing in the request reaches a path
+    const aN = avFiles().split(',').filter(Boolean);
+    const sneaky = await req(port, 'POST', rUrl, { name: 'Sneaky Path', job: 'j', id: 'r-00000000', file: '../../evil.png', filename: '../x.png', ext: 'php', path: '/tmp/evil.png', avatar: { data: png, file: '../../evil.png', name: '../x.png', path: '/tmp/evil2.png', ext: '.svg', type: 'text/html' }, card: { avatar: { file: '../../evil3.png', kind: 'image' } } }, dev);
+    const aNew = avFiles().split(',').filter(x => x && !aN.includes(x));
+    check('device role: the avatar file name comes only from the server (avatars/<new id>.png; no request field reaches a path)', sneaky.status === 201 && aNew.length === 1 && aNew[0] === sneaky.json.id + '.png' && sneaky.json.id !== 'r-00000000' && !avFiles().includes('evil') && !fs.existsSync(path.join(rDir, 'evil.png')) && !fs.existsSync(path.join(rDir, '..', 'evil.png')) && roleStore.get(sneaky.json.id).card.avatar.file === sneaky.json.id + '.png', JSON.stringify({ aNew, st: sneaky.status, raw: sneaky.raw.slice(0, 150) }));
+    // avatar GET: nosniff, a fixed content type, and a stored name with any other extension is a 404
+    const avGet = await req(port, 'GET', '/m/roles/avatar/' + okPic.json.id, undefined, dev);
+    check('device avatar GET: 200, X-Content-Type-Options: nosniff and Content-Type image/png from the fixed table', avGet.status === 200 && avGet.headers['x-content-type-options'] === 'nosniff' && avGet.headers['content-type'] === 'image/png', avGet.status + ' ' + JSON.stringify(avGet.headers));
+    const rj = JSON.parse(fs.readFileSync(path.join(rDir, 'roles.json'), 'utf8'));
+    rj.roles.find(r => r.id === okPic.json.id).card.avatar.file = okPic.json.id + '.svg';
+    fs.writeFileSync(path.join(rDir, 'avatars', okPic.json.id + '.svg'), '<svg xmlns="http://www.w3.org/2000/svg"><script>1</script></svg>');
+    fs.writeFileSync(path.join(rDir, 'roles.json'), JSON.stringify(rj));
+    const avSvg = await req(port, 'GET', '/m/roles/avatar/' + okPic.json.id, undefined, dev);
+    check('device avatar GET: a stored file with a non-image extension (.svg) is a 404, never served', avSvg.status === 404 && !avSvg.raw.includes('<svg'), avSvg.status + ' ' + avSvg.raw.slice(0, 80));
+    // card GET: only the listed keys, never the rest of the stored record
+    const cg = await req(port, 'GET', '/m/roles/cards/' + rd.json.id, undefined, dev), cg2 = await req(port, 'GET', '/m/roles/cards/' + sneaky.json.id, undefined, dev);
+    const cardKeys = ['id', 'name', 'fields', 'card', 'avatar'];
+    check('device card GET: the top-level keys are only id, name, fields, card, avatar (no persona, engine, model, created_at, archived_at, avatar file name)', cg.status === 200 && cg2.status === 200 && Object.keys(cg.json).concat(Object.keys(cg2.json)).every(k => cardKeys.includes(k)) && !/"(persona|engine|model|created_at|updated_at|archived_at|file|hash)"/.test(cg.raw + cg2.raw), cg.raw.slice(0, 200));
+    // the cap: 50 live roles (archived ones do not count), over it -> 409 and nothing saved
+    let fillN = 0; while (roleStore.list().length < 50 && fillN < 60) { roleStore.create({ name: 'Fill ' + (fillN++), persona: 'filler' }); }
+    check('device role cap: the store holds 50 live roles', roleStore.list().length === 50, String(roleStore.list().length));
+    const r51 = await req(port, 'POST', rUrl, { name: 'Fifty First', job: 'j' }, dev);
+    check('device role cap: the 51st live role is refused with 409 and a bilingual error', r51.status === 409 && r51.json && r51.json.error && /50/.test(JSON.stringify(r51.json.error)) && roleStore.list().length === 50, r51.status + ' ' + r51.raw.slice(0, 200));
+    roleStore.archive('Fill 0');
+    const r51b = await req(port, 'POST', rUrl, { name: 'After Archive', job: 'j' }, dev);
+    const r51c = await req(port, 'POST', rUrl, { name: 'Again Over', job: 'j' }, dev);
+    check('device role cap: after a role is archived there is room again (201), and the next one is 409 again', r51b.status === 201 && r51c.status === 409, r51b.status + ' ' + r51c.status);
+    // archive is never open to a device: every archive / remove path is 403, the role stays live
+    const arc = [];
+    for (const [m, p, b] of [['POST', rUrl + '/' + rd.json.id + '/archive', {}], ['POST', rUrl + '/' + rd.json.id + '/remove', {}], ['POST', '/m/roles/archive', { role: rd.json.id }], ['POST', rUrl + '/archive', { role: rd.json.id }], ['DELETE', rUrl + '/' + rd.json.id], ['PATCH', rUrl + '/' + rd.json.id, { archived: true }], ['PATCH', '/m/roles/cards/' + rd.json.id, { card: { voice: 'x' } }]]) arc.push((await req(port, m, p, b, dev)).status);
+    check('device role: no archive, remove, delete or patch path works for a device (all 403) and the role stays live', arc.every(s => s === 403) && !roleStore.get(rd.json.id).archived_at && roleStore.get(rd.json.id).name === 'Dev Made', arc.join());
+    // per-device daily limit: 20 creations a day, the 21st is 429 with a journal line; the owner is not limited
+    for (const r of roleStore.list()) if (/^Fill /.test(r.name)) roleStore.archive(r.id);
+    const devActor = 'device:' + redeem.json.id;
+    const madeByDev = () => journal2().filter(r => r.type === 'role_created' && r.by === devActor).length;
+    let rlLast = null;
+    for (let i = 0; i < 25 && !rlLast; i++) { const r = await req(port, 'POST', rUrl, { name: 'RL ' + i, job: 'j' }, dev); if (r.status !== 201) rlLast = r; }
+    check('device role limit: the device made 20 roles in the day, then the 21st is a 429 with an error naming 20', madeByDev() === 20 && rlLast && rlLast.status === 429 && /20/.test(JSON.stringify(rlLast.json && rlLast.json.error)), madeByDev() + ' ' + (rlLast && rlLast.status + ' ' + rlLast.raw));
+    const nBefore = rCount();
+    const again = await req(port, 'POST', rUrl, { name: 'RL x', job: 'j' }, dev);
+    check('device role limit: later attempts create nothing and each writes one role_rate_limited journal line (by device:<id>)', again.status === 429 && rCount() === nBefore && journal2().filter(r => r.type === 'role_rate_limited' && r.by === devActor && r.limit === 20).length === 2);
+    check('device role limit: the owner is not limited (201)', (await req(port, 'POST', rUrl, { name: 'Owner After Limit', job: 'j' }, owner)).status === 201);
+    check('device role limit: a limited device can still read (GET card -> 200)', (await req(port, 'GET', '/m/roles/cards/' + rd.json.id, undefined, dev)).status === 200);
     // audit
     const j = journal2();
     const acts = j.filter(r => r.type === 'device_action');
@@ -223,6 +292,192 @@ const req = (port, method, p, body, token, extra) => new Promise((res, rej) => {
     const rv = await req(port, 'POST', `/m/device-pairing/devices/${redeem.json.id}/revoke`, {}, owner);
     check('revoke: the owner revokes the device', rv.status === 200);
     check('revoke: the device token is dead on the next request', (await req(port, 'POST', '/api/chat', { bots: 'all', text: 'x' }, dev)).status === 401);
+    // handoff: a paired device mints one 10-minute code for the home-screen app
+    const hUrl = '/m/device-pairing/handoff';
+    const pairNew = async label => { const m = await req(port, 'POST', '/m/device-pairing/mint', {}, owner); return (await req(port, 'POST', '/m/device-pairing/redeem', { code: m.json.code, label })).json; };
+    const hp = await pairNew('Parent Device');
+    const hAnon = await req(port, 'POST', hUrl, {}), hBad = await req(port, 'POST', hUrl, {}, 'dvt_00000000.' + 'x'.repeat(43)), hOldDev = await req(port, 'POST', hUrl, {}, dev);
+    check('handoff: anonymous, an unknown device token and a revoked device token are all 401 and mint nothing', hAnon.status === 401 && hBad.status === 401 && hOldDev.status === 401 && !journal2().some(r => r.type === 'device_handoff_minted'), [hAnon.status, hBad.status, hOldDev.status].join());
+    const h1 = await req(port, 'POST', hUrl, {}, hp.token);
+    check('handoff: a paired device gets { code, expiresAt } (a long pc_ code, about 10 minutes)', h1.status === 200 && /^pc_/.test(h1.json.code) && Object.keys(h1.json).sort().join() === 'code,expiresAt' && Math.abs(Date.parse(h1.json.expiresAt) - Date.now() - 600000) < 30000, h1.raw);
+    check('handoff: the owner can mint one too', (await req(port, 'POST', hUrl, {}, owner)).status === 200);
+    const hr = await req(port, 'POST', '/m/device-pairing/redeem', { code: h1.json.code, label: 'phone app' });
+    check('handoff: the code redeems to a normal device token, once only', hr.status === 200 && /^dvt_/.test(hr.json.token) && (await req(port, 'POST', '/m/device-pairing/redeem', { code: h1.json.code })).status === 401);
+    const hl = (await req(port, 'GET', '/m/device-pairing/devices', undefined, owner)).json;
+    check('handoff: the redeemed device records its parent, and list shows it (the parent has none)', hl.find(d => d.id === hr.json.id).parent === hp.id && !('parent' in hl.find(d => d.id === hp.id)));
+    check('handoff: the child works like any device (GET /api/bots 200)', (await req(port, 'GET', '/api/bots', undefined, hr.json.token)).status === 200);
+    const hc = await req(port, 'POST', hUrl, {}, hr.json.token);
+    check('handoff: a child device cannot mint a handoff (403, depth 1)', hc.status === 403, hc.status + ' ' + hc.raw);
+    let h429 = null, hOk = 1; for (let i = 0; i < 6 && !h429; i++) { const r = await req(port, 'POST', hUrl, {}, hp.token); if (r.status === 200) hOk++; else h429 = r; }
+    check('handoff: 5 mints an hour per device, the 6th is 429 with a journal line, and the refusal makes no code', hOk === 5 && h429 && h429.status === 429 && !h429.json.code && journal2().filter(r => r.type === 'device_handoff_limited' && r.device_id === hp.id).length === 1, hOk + ' ' + (h429 && h429.raw));
+    const hp2 = await pairNew('Other Device');
+    check('handoff: the limit is per device (another device can still mint)', (await req(port, 'POST', hUrl, {}, hp2.token)).status === 200);
+    check('handoff: the journal names the device and never holds a code or token', journal2().filter(r => r.type === 'device_handoff_minted' && r.device_id === hp.id).length === 5 && !JSON.stringify(journal2()).includes(h1.json.code) && !JSON.stringify(journal2()).includes(hr.json.token));
+    // a handoff device has the same scope as any device: only the allow-list, never owner routes (whoever minted the code)
+    const oh = await req(port, 'POST', hUrl, {}, owner), ohr = await req(port, 'POST', '/m/device-pairing/redeem', { code: oh.json.code, label: 'phone app' });
+    const noRoutes = [['GET', '/m/device-pairing/devices'], ['POST', '/m/device-pairing/mint'], ['POST', `/m/device-pairing/devices/${hp.id}/revoke`]];
+    const scope = async tok => { const out = []; for (const [m, p] of noRoutes) out.push((await req(port, m, p, m === 'POST' ? {} : undefined, tok)).status); return out; };
+    check('handoff: a child (made by a device) reaches no owner route (403 on list, mint, revoke)', (await scope(hr.json.token)).every(x => x === 403), (await scope(hr.json.token)).join());
+    check('handoff: a device made from an owner handoff is a normal limited device, not an owner (403, and it records no parent)', ohr.status === 200 && (await scope(ohr.json.token)).every(x => x === 403) && !('parent' in (await req(port, 'GET', '/m/device-pairing/devices', undefined, owner)).json.find(d => d.id === ohr.json.id)), (await scope(ohr.json.token)).join());
+    const gWrong = await req(port, 'POST', '/m/device-pairing/redeem', { code: 'pc_' + 'z'.repeat(32) }), gUsed = await req(port, 'POST', '/m/device-pairing/redeem', { code: h1.json.code });
+    check('handoff over HTTP: a device made from an owner handoff cannot POST /handoff (403)', (await req(port, 'POST', hUrl, {}, ohr.json.token)).status === 403);
+    check('handoff: a wrong code and a used handoff code get the same status and the same body', gWrong.status === 401 && gUsed.status === gWrong.status && gUsed.raw === gWrong.raw, gWrong.raw + ' | ' + gUsed.raw);
+    const hRv = await req(port, 'POST', `/m/device-pairing/devices/${hp.id}/revoke`, {}, owner);
+    check('handoff: revoking the parent revokes the child and the child token stops authenticating', hRv.status === 200 && (await req(port, 'POST', '/api/chat', { bots: 'all', text: 'x' }, hr.json.token)).status === 401 && (await req(port, 'POST', '/api/chat', { bots: 'all', text: 'x' }, hp.token)).status === 401, hRv.status);
+    check('handoff: each revoked device has its own device_revoked journal line (the child names its parent)', journal2().filter(r => r.type === 'device_revoked' && r.device_id === hp.id).length === 1 && journal2().filter(r => r.type === 'device_revoked' && r.device_id === hr.json.id && r.parent === hp.id).length === 1);
+    // timing and the store rules, on a fake clock (the in-process store)
+    {
+      const T0 = Date.UTC(2030, 0, 1), MIN = 60000;
+      const par = S.redeem(S.mintCode(T0).code, 'p', T0);
+      const m1 = S.mintHandoff(par.id, T0), m2 = S.mintHandoff(par.id, T0);
+      check('handoff store: a code works at 9m59s', S.redeem(m1.code, 'phone app', T0 + 10 * MIN - 1000).ok === true);
+      check('handoff store: a code is dead after 10 minutes', S.redeem(m2.code, 'phone app', T0 + 10 * MIN + 1000).status === 401);
+      const lim = []; for (let i = 1; i < 4; i++) lim.push(S.mintHandoff(par.id, T0 + i * MIN).ok);
+      check('handoff store: 5 in an hour, the 6th refused (429), and allowed again an hour after the first', lim.every(x => x) && S.mintHandoff(par.id, T0 + 5 * MIN).status === 429 && S.mintHandoff(par.id, T0 + 61 * MIN).ok === true);
+      const gen = S.redeem('pc_' + 'z'.repeat(32), 'x', T0 + 10 * MIN + 2000), exp = S.redeem(m2.code, 'x', T0 + 10 * MIN + 3000);
+      check('handoff store: an expired handoff code and a wrong code give the same status and text', gen.status === 401 && exp.status === gen.status && exp.error === gen.error && !('token' in exp), JSON.stringify([gen, exp]));
+      const m3 = S.mintHandoff(par.id, T0 + 70 * MIN);
+      S.revoke(par.id);
+      check('handoff store: a code whose parent was revoked does not redeem, and a revoked device cannot mint', S.redeem(m3.code, 'x', T0 + 71 * MIN).status === 401 && S.mintHandoff(par.id, T0 + 72 * MIN).status === 403 && S.mintHandoff('ffffffff', T0).status === 403);
+      const ow = S.mintHandoff(null, T0 + 80 * MIN), owc = S.redeem(ow.code, 'phone app', T0 + 81 * MIN);
+      check('handoff store: an owner handoff makes a normal device with no parent', ow.ok && owc.ok && !('parent' in S.list().find(d => d.id === owc.id)));
+      const T1 = T0 + 200 * MIN; // past the 30 s lockout the failed redeems above may have set
+      const plain = S.mintCode(T1), pr = JSON.parse(fs.readFileSync(path.join(S.dir(), 'pending.json'), 'utf8')).codes.find(c => c.exp === T1 + 2 * MIN);
+      check('handoff store: ordinary owner codes are unchanged (2 minutes, six digits, no parent)', Date.parse(plain.expiresAt) === T1 + 2 * MIN && /^[0-9]{6}$/.test(plain.short) && !!pr && !('parent' in pr) && S.redeem(plain.short, 'plain', T1 + MIN).ok === true, plain.short);
+    }
+    // review round: revoke is one write and repairs itself; a child needs a live parent; a device made from a handoff cannot mint;
+    // a handoff redeem leaves the wrong-guess counter alone; the child keeps its own sliding expiry
+    {
+      const T0 = Date.UTC(2031, 0, 1), MIN = 60000, DAY = 24 * 60 * MIN;
+      const devFile = path.join(S.dir(), 'devices.json'), pendFile = path.join(S.dir(), 'pending.json');
+      const rd = () => JSON.parse(fs.readFileSync(devFile, 'utf8'));
+      const rec = id => rd().find(d => d.id === id);
+      const parentAt = t => S.redeem(S.mintCode(t).code, 'p', t);
+      const childOf = (pid, t) => S.redeem(S.mintHandoff(pid, t).code, 'phone app', t + 1000);
+      const unlock = () => { const j = JSON.parse(fs.readFileSync(pendFile, 'utf8')); j.lockedUntil = 0; j.fails = 0; fs.writeFileSync(pendFile, JSON.stringify(j)); };
+      // 1. revoke: one write, idempotent, repairs a half-done revoke, and authenticate checks the parent
+      const par = parentAt(T0), k1 = childOf(par.id, T0 + MIN), k2 = childOf(par.id, T0 + 2 * MIN);
+      let writes = 0; const rn = fs.renameSync;
+      fs.renameSync = (a, b) => { if (path.basename(String(b)) === 'devices.json') writes++; return rn(a, b); };
+      try { S.revoke(par.id); } finally { fs.renameSync = rn; }
+      check('revoke: the parent and all its children are written in one devices.json write', writes === 1 && [par.id, k1.id, k2.id].every(id => rec(id).revoked), writes);
+      check('revoke twice: the second call still answers true and the children stay revoked', S.revoke(par.id) === true && rec(k1.id).revoked && rec(k2.id).revoked && S.authenticate(k1.token, T0 + 3 * MIN) === null && S.authenticate(k2.token, T0 + 3 * MIN) === null);
+      const par2 = parentAt(T0 + 5 * MIN), k3 = childOf(par2.id, T0 + 6 * MIN);
+      { const all = rd(); all.find(d => d.id === par2.id).revoked = true; all.find(d => d.id === k3.id).revoked = false; fs.writeFileSync(devFile, JSON.stringify(all)); } // a revoke that died between the writes
+      check('revoke: with the parent revoked and the child not, the child token does not authenticate', S.authenticate(k3.token, T0 + 7 * MIN) === null && rec(k3.id).revoked === false);
+      check('revoke: a second revoke of the parent marks the leftover child', S.revoke(par2.id) === true && rec(k3.id).revoked === true);
+      const par3 = parentAt(T0 + 8 * MIN), k4 = childOf(par3.id, T0 + 9 * MIN);
+      check('authenticate: a child with a live parent works', S.authenticate(k4.token, T0 + 10 * MIN) !== null);
+      fs.writeFileSync(devFile, JSON.stringify(rd().filter(d => d.id !== par3.id)));
+      check('authenticate: a child whose parent record is missing does not authenticate', S.authenticate(k4.token, T0 + 11 * MIN) === null);
+      // the code of a revoked parent
+      const par4 = parentAt(T0 + 12 * MIN), mr = S.mintHandoff(par4.id, T0 + 13 * MIN);
+      S.revoke(par4.id);
+      const gRev = S.redeem(mr.code, 'x', T0 + 14 * MIN), gWr = S.redeem('pc_' + 'y'.repeat(32), 'x', T0 + 14 * MIN);
+      check('handoff: the code of a revoked parent is a generic 401 (same text as a wrong code) and makes no device', gRev.status === 401 && gRev.error === gWr.error && !('token' in gRev));
+      // 2. a device made from an owner handoff cannot mint
+      const ow = S.mintHandoff(null, T0 + 20 * MIN), od = S.redeem(ow.code, 'phone app', T0 + 21 * MIN);
+      const odm = S.mintHandoff(od.id, T0 + 22 * MIN);
+      check('handoff: a device made from an owner handoff cannot make a handoff (403, same message as a child)', od.ok && rec(od.id).handoff === true && odm.status === 403 && odm.error === 'a device made from a handoff cannot make another', JSON.stringify(odm));
+      const plainDev = parentAt(T0 + 23 * MIN);
+      check('handoff: an ordinary paired device has no handoff mark and can still mint', !('handoff' in rec(plainDev.id)) && S.mintHandoff(plainDev.id, T0 + 24 * MIN).ok === true);
+      // 3. a handoff redeem never resets the wrong-guess counter
+      unlock();
+      const par5 = parentAt(T0 + 30 * MIN), mh = S.mintHandoff(par5.id, T0 + 31 * MIN); // the ordinary mint above reset the counter
+      const tg = T0 + 32 * MIN, wrong = i => S.redeem(String(200000 + i), 'x', tg).status;
+      const w4 = [0, 1, 2, 3].map(wrong), hr = S.redeem(mh.code, 'phone app', tg), w5 = wrong(4), after = S.redeem(String(300000), 'x', tg + 1000);
+      check('handoff: 4 wrong guesses, a good handoff redeem, 1 more wrong guess -> lockout', w4.every(s => s === 401) && hr.ok === true && w5 === 401 && after.status === 429, [w4, hr.ok, w5, after.status].join());
+      unlock();
+      const c6 = S.mintCode(T0 + 40 * MIN); [0, 1, 2, 3].forEach(i => S.redeem(String(400000 + i), 'x', T0 + 41 * MIN));
+      const ord = S.redeem(c6.short, 'x', T0 + 41 * MIN), o1 = S.redeem('500000', 'x', T0 + 41 * MIN), o2 = S.redeem('500001', 'x', T0 + 41 * MIN);
+      check('pairing: an ordinary pairing redeem still resets the counter (one wrong guess after it is just 401)', ord.ok === true && o1.status === 401 && o2.status === 401, [ord.ok, o1.status, o2.status].join());
+      unlock();
+      // 4. the child keeps its own sliding expiry: an expired (not revoked) parent does not end it
+      const ep = parentAt(T0 + 50 * MIN), ec = childOf(ep.id, T0 + 51 * MIN);
+      check('expiry: the child used within 30 days of its own last use authenticates', S.authenticate(ec.token, T0 + 20 * DAY) !== null);
+      check('expiry: the parent unused for 40 days is expired but not revoked, and the child still authenticates', S.authenticate(ep.token, T0 + 40 * DAY) === null && rec(ep.id).revoked === false && S.list(T0 + 40 * DAY).find(d => d.id === ep.id).expired === true && S.authenticate(ec.token, T0 + 40 * DAY) !== null);
+    }
+    // review round 2: the store lock is owned (pid + nonce); a lost lock makes the late write throw; only a dead or very old holder is reclaimed
+    {
+      const lockFile = path.join(S.dir(), 'store.lock'), devFile = path.join(S.dir(), 'devices.json');
+      const rd = () => JSON.parse(fs.readFileSync(devFile, 'utf8'));
+      const T = Date.UTC(2032, 0, 1), MIN = 60000;
+      const clean = () => { for (const f of fs.readdirSync(S.dir())) if (f === 'store.lock' || f.startsWith('store.lock.')) try { fs.unlinkSync(path.join(S.dir(), f)); } catch { /* ignore */ } };
+      const putLock = (o, ageMs) => { fs.writeFileSync(lockFile, JSON.stringify(o)); const t = (Date.now() - ageMs) / 1000; fs.utimesSync(lockFile, t, t); };
+      clean();
+      let held = null; S.withLock(() => { held = JSON.parse(fs.readFileSync(lockFile, 'utf8')); });
+      check('lock: while held the lock file names this pid and a random nonce, and it is gone after release', held && held.pid === process.pid && /^[0-9a-f]{16,}$/.test(held.nonce) && !fs.existsSync(lockFile), JSON.stringify(held));
+      // the interleaving: a redeem has read devices.json, then loses the lock; another process revokes the parent and releases; the late write must not land
+      const par = S.redeem(S.mintCode(T).code, 'p', T);
+      let late = null;
+      try {
+        S.withLock(() => {
+          const stale = rd();                                  // what the paused redeem read (parent not revoked)
+          fs.unlinkSync(lockFile);                             // the lock is taken from under it
+          const other = rd(); other.find(d => d.id === par.id).revoked = true; fs.writeFileSync(devFile, JSON.stringify(other)); // the other process revokes, then releases
+          S._write('devices.json', stale);                     // the late write-back
+        });
+      } catch (e) { late = e; }
+      check('lock: a write after the lock was lost throws and the other holder\'s revoke stays', !!late && rd().find(d => d.id === par.id).revoked === true && !fs.readdirSync(S.dir()).some(f => f.endsWith('.tmp')), late && late.message);
+      clean();
+      S.withLock(() => { fs.unlinkSync(lockFile); fs.writeFileSync(lockFile, JSON.stringify({ pid: process.pid, nonce: 'other-holder' })); });
+      check('lock: release does not remove a lock another holder now owns', fs.existsSync(lockFile) && JSON.parse(fs.readFileSync(lockFile, 'utf8')).nonce === 'other-holder');
+      clean();
+      const dead = spawnSync(process.execPath, ['-e', '0'], { windowsHide: true }).pid;
+      putLock({ pid: dead, nonce: 'gone' }, 1000);
+      const t0 = Date.now(), mc = S.mintCode(T + 5 * MIN);
+      check('lock: a lock whose holder pid is dead is reclaimed at once', !!mc.code && Date.now() - t0 < 2000 && !fs.existsSync(lockFile) && !fs.readdirSync(S.dir()).some(f => f.startsWith('store.lock.')), Date.now() - t0);
+      putLock({ pid: process.pid, nonce: 'very-old' }, 3600 * 1000);
+      const tOld = Date.now(); let oldMsg = ''; try { S.mintCode(T + 6 * MIN); } catch (e) { oldMsg = e.message; }
+      check('lock: a live holder\'s lock is not reclaimed at any age (an hour old: the caller waits, then fails closed with busy)', /busy/.test(oldMsg) && Date.now() - tOld >= 2500 && JSON.parse(fs.readFileSync(lockFile, 'utf8')).nonce === 'very-old', oldMsg);
+      putLock({ pid: process.pid, nonce: 'live-holder' }, 11 * 1000);
+      const busy = S.redeem('123456', 'x', T + 7 * MIN);
+      check('lock: a live holder\'s 11 s old lock is not stolen (the caller gets busy, 503)', busy.status === 503 && fs.existsSync(lockFile) && JSON.parse(fs.readFileSync(lockFile, 'utf8')).nonce === 'live-holder', JSON.stringify(busy));
+      clean();
+      clean();
+      // a pid that exists but cannot be signalled (EPERM) is a live holder: never stolen from
+      const realKill = process.kill;
+      process.kill = (p, sig) => { if (p === 424242) { const e = new Error('operation not permitted'); e.code = 'EPERM'; throw e; } return realKill.call(process, p, sig); };
+      let eperm; try { putLock({ pid: 424242, nonce: 'eperm-holder' }, 3600 * 1000); eperm = S.redeem('123456', 'x', T + 8 * MIN); } finally { process.kill = realKill; }
+      check('lock: a holder pid that answers EPERM counts as live (busy, lock kept)', eperm.status === 503 && JSON.parse(fs.readFileSync(lockFile, 'utf8')).nonce === 'eperm-holder', JSON.stringify(eperm));
+      clean();
+      // two waiters both saw dead holder D; the first reclaims and a live holder L takes the lock; the second's stale verdict must not touch L
+      let stale = null, stillOwned = false;
+      S.withLock(() => { S._reclaim(lockFile, { pid: dead, nonce: 'D' }); stale = JSON.parse(fs.readFileSync(lockFile, 'utf8')); stillOwned = true; });
+      check('lock: a waiter holding a stale dead-holder verdict leaves a live holder lock alone (the lock is still ours, no reclaim file left)', stillOwned && stale && stale.pid === process.pid && !fs.readdirSync(S.dir()).some(f => f.endsWith('.reclaim')), JSON.stringify(stale));
+      putLock({ pid: dead, nonce: 'D' }, 1000);
+      S._reclaim(lockFile, { pid: dead, nonce: 'D' });
+      check('lock: the same reclaim removes the lock when it is still the dead holder', !fs.existsSync(lockFile) && !fs.readdirSync(S.dir()).some(f => f.endsWith('.reclaim')));
+      // a reclaim file left by a crashed process is never auto-reclaimed: the caller fails closed
+      putLock({ pid: dead, nonce: 'D2' }, 1000); fs.writeFileSync(lockFile + '.reclaim', '');
+      let rmsg = ''; try { S.mintCode(T + 9 * MIN); } catch (e) { rmsg = e.message; }
+      check('lock: a leftover store.lock.reclaim file is not taken over (busy, both files kept)', /busy/.test(rmsg) && fs.existsSync(lockFile) && fs.existsSync(lockFile + '.reclaim'), rmsg);
+      clean();
+      // acquiring after the wait limit has already passed: release and throw busy, no write
+      const realNow = Date.now; let calls = 0, ran = false, dmsg = '';
+      const pendBefore = fs.existsSync(path.join(S.dir(), 'pending.json')) ? fs.readFileSync(path.join(S.dir(), 'pending.json'), 'utf8') : null;
+      Date.now = () => realNow() + (calls++ ? 5000 : 0);
+      try { S.withLock(() => { ran = true; }); } catch (e) { dmsg = e.message; } finally { Date.now = realNow; }
+      const pendAfter = fs.existsSync(path.join(S.dir(), 'pending.json')) ? fs.readFileSync(path.join(S.dir(), 'pending.json'), 'utf8') : null;
+      check('lock: a lock acquired after the wait limit is released and the caller gets busy, nothing runs or is written', /busy/.test(dmsg) && !ran && !fs.existsSync(lockFile) && pendBefore === pendAfter, dmsg);
+      // devices.json and pending.json cannot be written without holding the lock; seen.json can
+      const devBefore = fs.readFileSync(devFile, 'utf8'); let wmsg = '';
+      try { S._write('devices.json', []); } catch (e) { wmsg = e.message; }
+      let pmsg = ''; try { S._write('pending.json', { codes: [] }); } catch (e) { pmsg = e.message; }
+      let seenOk = true; try { S._write('seen.json', {}); } catch { seenOk = false; }
+      check('lock: devices.json and pending.json writes throw without the lock (seen.json is exempt)', /lock/.test(wmsg) && /lock/.test(pmsg) && fs.readFileSync(devFile, 'utf8') === devBefore && seenOk, wmsg + ' | ' + pmsg);
+    }
+    // taskmote device list: a home-screen app is shown right after its parent
+    {
+      const cmd = require('../index').commands, TT = Date.UTC(2033, 0, 1);
+      const par = S.redeem(S.mintCode(TT).code, 'parent phone', TT);
+      const other = S.redeem(S.mintCode(TT).code, 'other phone', TT);
+      const h = S.mintHandoff(par.id, TT), kid = S.redeem(h.code, 'home-screen', TT);
+      const lines = []; const log = console.log; console.log = s => lines.push(String(s));
+      try { await cmd.device(['list']); } finally { console.log = log; }
+      const at = id => lines.findIndex(l => l.startsWith(id));
+      check('cli: device list shows a home-screen app right after its parent, marked with the parent id', h.ok && kid.ok && at(kid.id) === at(par.id) + 1 && lines[at(kid.id)].includes('home-screen app of ' + par.id) && !lines[at(par.id)].includes('home-screen app of') && at(other.id) >= 0, lines.join(' | '));
+    }
     // lockout over HTTP
     await req(port, 'POST', '/m/device-pairing/mint', {}, owner);
     let st = 0; for (let i = 0; i < 6; i++) st = (await req(port, 'POST', '/m/device-pairing/redeem', { code: String(100000 + i) })).status;

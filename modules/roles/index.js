@@ -2,18 +2,29 @@
 // roles: owner-made roles. A role is a bot registered at run time: its own conversation (a full agent
 // session) plus a persona text added to its prompt. The core lists dynamicBots() of every module next
 // to the configured bots, so a new role needs no restart. Off by default. See README.md.
+const fs = require('fs');
 const path = require('path');
 const J = require('../../lib/journal');
-const { createStore, RoleError, ENGINES } = require('./store');
+const { createStore, RoleError, RoleLimitError, ROLES_MAX, ENGINES } = require('./store');
 const limits = require('./engines/limits');
 const ask = require('./ask');
+const card = require('./card');
 const { createGroups, roomsOn, bi } = require('./groups');
+const chief = require('./chief');
 
 // api functions run with this.ctx when a module calls them (ctx.api) and without it when core does:
 // then the state folder is the same fixed path the loader gives this module.
 const dirOf = self => (self && self.ctx && self.ctx.state ? self.ctx.state.dir : path.join(J.STATE, 'm', 'roles'));
 const storeOf = self => createStore(() => dirOf(self));
 const storeOfCtx = ctx => createStore(() => ctx.state.dir);
+const roleOfParam = ctx => { const id = String(ctx.params && ctx.params.id || ''); const r = /^r-[0-9a-f]{8}$/.test(id) ? storeOfCtx(ctx).get(id) : null; return r && r.id === id && !r.archived_at ? r : null; };
+// Known fields first (from the registry), then any other field the card holds; the UI draws what this lists.
+const cardView = r => {
+  const c = card.view(r.card) || {};
+  const fields = Object.entries(card.FIELDS).map(([key, f]) => ({ key, type: f.type, ...(f.max ? { max: f.max } : {}), ...(f.label ? { label: f.label } : {}), description: f.description, known: true }));
+  for (const key of Object.keys(c)) if (!card.FIELDS[key]) fields.push({ key, type: 'json', known: false });
+  return { id: r.id, name: r.name, fields, card: c, ...(card.avatarUrl(r) ? { avatar: card.avatarUrl(r) } : {}) };
+};
 const groupsOfCtx = ctx => createGroups(() => ctx.state.dir, storeOfCtx(ctx));
 const needRooms = ctx => { if (!roomsOn(ctx)) throw new Error(bi('群組聊天需要先開啟 rooms 模組（在設定裡把 modules.rooms 設為 true，並重新啟動一次）。', 'Group chats need the rooms module to be on (set modules.rooms to true in the config and restart once).')); };
 const MAX_GROUP_MEMBERS = 16; // the most role members a group made through the route may have
@@ -21,10 +32,25 @@ const groupNote = (ctx, type, g, more) => { try { ctx.state.append({ type, id: g
 const GROUP_KEY = { type: 'string', description: 'Group id (g-...) or its current name.' };
 const ROLE_LIST = d => ({ type: 'array', items: { type: 'string' }, description: d });
 
-const pub = r => ({ id: r.id, name: r.name, persona: r.persona, engine: r.engine || 'claude', ...(r.model ? { model: r.model } : {}) });
+const pub = r => ({ id: r.id, name: r.name, persona: r.persona, engine: r.engine || 'claude', ...(r.model ? { model: r.model } : {}), ...(r.main === true ? { main: true } : {}), ...(card.view(r.card) ? { card: card.view(r.card) } : {}) });
+// A list row stays short: the card is only named by its field names; role_list {id} gives the whole card.
+const row = r => { const { card: c, ...rest } = pub(r); return { ...rest, ...(c ? { card_fields: card.keys(r.card) } : {}) }; };
+const CARD_PROP = { type: 'object', description: 'The character card of the role: its own voice, way of talking, way of working and chat avatar. Only the fields you give are changed; a field set to null or "" is cleared; other fields are kept. Known fields: ' + Object.entries(card.FIELDS).map(([k, f]) => `${k} (${f.description})`).join('; ') + '. Any other lowercase field name is kept as it is. It shapes manner only and never overrides guard, red lines or the owner rules. Optional.', additionalProperties: true };
 const ENGINE_PROP = { type: 'string', enum: ENGINES, description: 'Which agent runs this role: "claude" (default) "codex" (OpenAI Codex, "GPT") or "opencode" (OpenCode). Use "codex" when the owner asks for GPT / Codex / OpenAI, "opencode" when the owner asks for OpenCode. Optional.' };
 const MODEL_PROP = { type: 'string', description: 'Only for engine "opencode": the provider/model id passed to OpenCode, e.g. "opencode/big-pickle". Only opencode/deepseek-v4.1-flash-free and opencode-go/deepseek-v4.1-flash work by default; any other model is refused unless the owner lists it in the roles config (opencode_extra_paid_models). Without a model the free one is used first, then the Go plan one. Empty string clears it. Optional.' };
-const note = (ctx, type, r) => { try { ctx.state.append({ type, id: r.id, name: r.name }); } catch { /* the journal note is best effort */ } };
+// Per-device daily count of role creations, kept in this module's own state (device-creates.json: {day, counts:{'device:<id>': n}}).
+// Returns today's count for the device; with bump it adds one first. A new UTC day starts the counts again.
+const DEVICE_DAILY_MAX = 20;
+function deviceCreates(dir, devId, bump) {
+  const f = path.join(dir, 'device-creates.json'), day = new Date().toISOString().slice(0, 10);
+  let j = null; try { j = JSON.parse(fs.readFileSync(f, 'utf8')); } catch { /* none yet */ }
+  const counts = j && j.day === day && j.counts && typeof j.counts === 'object' ? j.counts : {};
+  if (!bump) return Number.isInteger(counts[devId]) ? counts[devId] : 0;
+  counts[devId] = (Number.isInteger(counts[devId]) ? counts[devId] : 0) + 1;
+  try { fs.mkdirSync(dir, { recursive: true }); const tmp = f + '.' + process.pid + '.tmp'; fs.writeFileSync(tmp, JSON.stringify({ day, counts }), { mode: 0o600 }); fs.renameSync(tmp, f); } catch { /* best effort */ }
+  return counts[devId];
+}
+const note = (ctx, type, r, extra) => { try { ctx.state.append({ type, id: r.id, name: r.name, ...(extra || {}) }); } catch { /* the journal note is best effort */ } };
 const asError = e => (e instanceof RoleError ? new Error(e.message) : e);
 const guard = fn => (args, ctx) => { try { return fn(args && typeof args === 'object' ? args : {}, ctx); } catch (e) { throw asError(e); } };
 const roleKey = a => { if (typeof a.role !== 'string' || !a.role.trim()) throw new Error('role is required (a role id or name)'); return a.role; };
@@ -32,20 +58,23 @@ const roleKey = a => { if (typeof a.role !== 'string' || !a.role.trim()) throw n
 const mcpTools = [
   { name: 'role_create',
     description: 'Create a custom role (a named persona the owner can pick in the chat page and talk to as its own separate conversation). Use when the owner asks to create or add a role or character, e.g. "make a role called X who is ..." in any language. The role appears in the chat page within seconds. It keeps all tools; the persona changes only voice and character.',
-    inputSchema: { type: 'object', properties: { name: { type: 'string', description: 'Short name, 1-40 characters, any language. Must be unique among roles.' }, persona: { type: 'string', description: 'The persona text: who the role is and how it speaks and behaves (max 4000 characters).' }, engine: ENGINE_PROP, model: MODEL_PROP }, required: ['name', 'persona'] },
-    run: guard((a, ctx) => { const r = storeOfCtx(ctx).create({ name: a.name, persona: a.persona, engine: a.engine, model: a.model }); note(ctx, 'role_created', r); return pub(r); }) },
+    inputSchema: { type: 'object', properties: { name: { type: 'string', description: 'Short name, 1-40 characters, any language. Must be unique among roles.' }, persona: { type: 'string', description: 'The persona text: who the role is and how it speaks and behaves (max 4000 characters).' }, engine: ENGINE_PROP, model: MODEL_PROP, card: CARD_PROP }, required: ['name', 'persona'] },
+    run: guard((a, ctx) => { const r = storeOfCtx(ctx).create({ name: a.name, persona: a.persona, engine: a.engine, model: a.model, card: a.card }); note(ctx, 'role_created', r); return pub(r); }) },
   { name: 'role_update',
-    description: 'Change the name, persona, engine and/or model of an existing role. Use when the owner asks to rename a role, to change its personality, voice or instructions, or to move it to GPT / Codex / OpenAI (engine "codex"), to OpenCode (engine "opencode", optional model) or back to Claude (engine "claude"). The role is an id (from role_list) or its current name. Its conversation history is kept.',
-    inputSchema: { type: 'object', properties: { role: { type: 'string', description: 'Role id or current name.' }, name: { type: 'string', description: 'New name (optional).' }, persona: { type: 'string', description: 'New persona text, replacing the old one (optional).' }, engine: ENGINE_PROP, model: MODEL_PROP }, required: ['role'] },
-    run: guard((a, ctx) => { const r = storeOfCtx(ctx).update(roleKey(a), { name: a.name, persona: a.persona, engine: a.engine, model: a.model }); note(ctx, 'role_updated', r); return pub(r); }) },
+    description: 'Change the name, persona, engine, model and/or character card (voice, way of talking, way of working, avatar) of an existing role. Use when the owner asks to rename a role, to change its personality, voice or instructions, or to move it to GPT / Codex / OpenAI (engine "codex"), to OpenCode (engine "opencode", optional model) or back to Claude (engine "claude"). The role is an id (from role_list) or its current name. Main makes it the main role. Its conversation history is kept.',
+    inputSchema: { type: 'object', properties: { role: { type: 'string', description: 'Role id or current name.' }, name: { type: 'string', description: 'New name (optional).' }, persona: { type: 'string', description: 'New persona text, replacing the old one (optional).' }, engine: ENGINE_PROP, model: MODEL_PROP, card: CARD_PROP, main: { type: 'boolean', description: 'true makes this role the main role (the chief of staff the owner talks to first); the old main role is unmarked. Exactly one role is main, so false is refused. Optional.' } }, required: ['role'] },
+    run: guard((a, ctx) => { const r = storeOfCtx(ctx).update(roleKey(a), { name: a.name, persona: a.persona, engine: a.engine, model: a.model, card: a.card, main: a.main }); note(ctx, 'role_updated', r); return pub(r); }) },
   { name: 'role_remove',
     description: 'Remove a role from the chat page. Use when the owner asks to delete or remove a role. Nothing is deleted: the role is only hidden (archived) and its conversation is kept. The role is an id or its name.',
     inputSchema: { type: 'object', properties: { role: { type: 'string', description: 'Role id or name.' } }, required: ['role'] },
     run: guard((a, ctx) => { const r = storeOfCtx(ctx).archive(roleKey(a)); note(ctx, 'role_archived', r); return { id: r.id, name: r.name, archived: true }; }) },
   { name: 'role_list',
-    description: 'List the current roles with id, name, persona, engine (claude, codex or opencode) and model, plus opencode_go_turns_today (how many OpenCode Go plan turns all roles used today). Use before changing or removing a role, or when the owner asks which roles exist.',
-    inputSchema: { type: 'object', properties: {} },
-    run: guard((a, ctx) => ({ roles: storeOfCtx(ctx).list().map(pub), opencode_go_turns_today: limits.goCount(ctx.state.dir) })) },
+    description: 'List the current roles with id, name, persona, engine (claude, codex or opencode) and model, plus card_fields (the names of the fields on its character card, when it has one) and opencode_go_turns_today (how many OpenCode Go plan turns all roles used today). Use before changing or removing a role, or when the owner asks which roles exist. With id (a role id or name) it returns only that role with its full character card.',
+    inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'Role id or name: return just this role with its whole card (optional).' } } },
+    run: guard((a, ctx) => {
+      if (a.id !== undefined) { const r = storeOfCtx(ctx).get(a.id); if (!r || r.archived_at) throw new Error(`no role "${String(a.id).slice(0, 60)}"`); return { role: pub(r) }; }
+      return { roles: storeOfCtx(ctx).list().map(row), opencode_go_turns_today: limits.goCount(ctx.state.dir) };
+    }) },
   { name: 'role_ask',
     description: 'Send a message to another role (or "main", the owner\'s main bot) and get its answer later, whatever engine either one runs on. It does NOT wait: it returns at once with queued:true, and the answer arrives as a new message in your own conversation when the other role has finished its turn. After calling it, end your turn right away: do not wait, do not poll, do not invent the answer. The role is an id or name from role_list. Refused for an unknown or archived role, yourself, a role already in the ask chain, or when the chain is too deep or too long; then answer with what you have. Only usable inside a role conversation, not from outside one.',
     inputSchema: { type: 'object', properties: { role: { type: 'string', description: 'Role id or name, or "main".' }, message: { type: 'string', description: 'What to say or ask. Give the other role all the context it needs; it does not see your conversation.' } }, required: ['role', 'message'] },
@@ -92,6 +121,40 @@ module.exports = {
   // The chat page's "new group" button. Same effect as the group_create tool, for the owner, with no model in between.
   // Members must be existing role ids (a name or an unknown id is a 400, never skipped); the answer carries the room id.
   routes: [
+    // The chat page's "new role" button: the owner makes a role by hand, no model in between. Same store and
+    // checks as the role_create tool, so the role looks the same to groups and to every other route.
+    { method: 'POST', path: '/roles', access: 'owner', description: 'create a role by hand {name, job (one line), avatar?: {data: base64 png/jpeg/webp}}; answers 201 {id, name, persona, engine}; 409 at 50 live roles (archived ones do not count); 429 after 20 creations by one paired device in a day. Only name, job and avatar are read, so a paired device gets exactly what the owner gets',
+      handler(ctx) {
+        const bad = error => ({ status: 400, json: { error } });
+        const b = ctx.body && typeof ctx.body === 'object' ? ctx.body : {};
+        const name = typeof b.name === 'string' ? b.name.trim() : '';
+        const job = typeof b.job === 'string' ? b.job.trim() : '';
+        if (!name || [...name].length > 40) return bad(bi('角色名稱要 1-40 個字', 'the role name must be 1-40 characters'));
+        if (!job || [...job].length > 200 || /[\r\n]/.test(job)) return bad(bi('職責要寫成 1-200 個字的一行', 'the job must be one line of 1-200 characters'));
+        // A paired device (the server rewrites it to an owner actor named device:<id>) may make DEVICE_DAILY_MAX roles a day; the owner is not limited.
+        const dev = ctx.actor && typeof ctx.actor.id === 'string' && ctx.actor.id.startsWith('device:') ? ctx.actor.id : null;
+        if (dev && deviceCreates(ctx.state.dir, dev) >= DEVICE_DAILY_MAX) {
+          try { ctx.state.append({ type: 'role_rate_limited', by: dev, limit: DEVICE_DAILY_MAX }); } catch { /* best effort */ }
+          return { status: 429, json: { error: bi(`這個裝置今天已建立 ${DEVICE_DAILY_MAX} 個角色，明天再試`, `this device has already made ${DEVICE_DAILY_MAX} roles today; try again tomorrow`) } };
+        }
+        // Optional picture: {data: base64}. JSON, not a raw upload; the body cap (256 KB) keeps it small, the card checks the content.
+        let card;
+        if (b.avatar !== undefined && b.avatar !== null) {
+          const d = b.avatar && typeof b.avatar === 'object' ? b.avatar.data : undefined;
+          if (typeof d !== 'string' || !d || d.length > 300000 || !/^[A-Za-z0-9+/]+={0,2}$/.test(d) || d.length % 4) return bad(bi('頭像圖檔無法讀取', 'the avatar image could not be read'));
+          card = { avatar: { bytes: Buffer.from(d, 'base64') } };
+        }
+        try {
+          const r = storeOfCtx(ctx).create({ name, persona: job, ...(card ? { card } : {}) });
+          if (dev) deviceCreates(ctx.state.dir, dev, true);
+          note(ctx, 'role_created', r, ctx.actor && ctx.actor.id ? { by: ctx.actor.id } : undefined);
+          return { status: 201, json: pub(r) };
+        } catch (e) {
+          if (e instanceof RoleLimitError) return { status: 409, json: { error: bi(`角色已達上限（最多 ${ROLES_MAX} 個，已封存的不算）`, `role limit reached (at most ${ROLES_MAX} roles, archived ones do not count)`) } };
+          if (!(e instanceof RoleError)) throw e;
+          return bad(bi('無法建立角色：' + e.message, e.message));
+        }
+      } },
     { method: 'POST', path: '/groups', access: 'owner', description: 'create a group chat {name, members:[role id]}; answers 201 {id (the room id), name, lead, members}',
       handler(ctx) {
         const bad = error => ({ status: 400, json: { error } });
@@ -120,6 +183,36 @@ module.exports = {
         try { needRooms(ctx); const g = groupsOfCtx(ctx).create({ name, members: ids }, ctx); groupNote(ctx, 'group_created', g, { members: ids, by }); return { status: 201, json: g }; }
         catch (e) { return bad(String(e && e.message || 'could not create the group').slice(0, 300)); }
       } },
+    // The chat page asks which role is the main one. The owner side makes the default main role on first use; anyone but the owner only reads it (404 until it exists).
+    { method: 'GET', path: '/main', description: 'the main role {id, name}; for the owner it creates the default chief-of-staff role when none is marked main, for a paired device it is read-only (404 until then)',
+      handler: ctx => { try { const owner = !!ctx.actor && ctx.actor.kind === 'owner' && ctx.actor.id === undefined; const r = owner ? storeOfCtx(ctx).ensureMain(chief.DEFAULT) : storeOfCtx(ctx).getMain(); if (!r) return { status: 404, json: { error: 'no main role yet' } }; return { status: 200, json: { id: r.id, name: r.name } }; } catch { return { status: 500, json: { error: 'internal error' } }; } } },
+    // Role card (owner). The avatar is served as a raw image; the card routes give the field registry with the values, so the page draws its fields from data.
+    { method: 'GET', path: '/avatar/:id', access: 'owner', raw: true, description: 'the role avatar image (png, jpeg or webp); 404 when the role has none',
+      handler(ctx) {
+        const id = String(ctx.params && ctx.params.id || '');
+        const r = /^r-[0-9a-f]{8}$/.test(id) ? storeOfCtx(ctx).get(id) : null;
+        const f = r && r.id === id && !r.archived_at ? card.avatarFile(r, ctx.state.dir) : null;
+        if (!f) return { status: 404, json: { error: 'no avatar' } };
+        let body; try { if (fs.statSync(f.path).size > require('../../lib/modules').RAW_MAX) return { status: 413, json: { error: 'avatar too large' } }; body = fs.readFileSync(f.path); } catch { return { status: 404, json: { error: 'no avatar' } }; }
+        return { status: 200, body, type: f.type, etag: String(f.hash || '').replace(/[^A-Za-z0-9._-]/g, '').slice(0, 64) || undefined };
+      } },
+    { method: 'GET', path: '/cards/:id', access: 'owner', description: 'one role card: {id, name, fields:[{key, type, max?, label?, description?, known}], card}',
+      handler(ctx) {
+        const r = roleOfParam(ctx);
+        if (!r) return { status: 404, json: { error: 'no such role' } };
+        return { status: 200, json: cardView(r) };
+      } },
+    { method: 'PATCH', path: '/cards/:id', access: 'owner', description: 'save card fields {card:{field:value|null}} (text and plain JSON fields; the avatar image is not set here); answers the new card',
+      handler(ctx) {
+        const r = roleOfParam(ctx);
+        if (!r) return { status: 404, json: { error: 'no such role' } };
+        const b = ctx.body && typeof ctx.body === 'object' ? ctx.body : {};
+        const patch = b.card;
+        if (!patch || typeof patch !== 'object' || Array.isArray(patch) || !Object.keys(patch).length) return { status: 400, json: { error: bi('請給要存的欄位 {card:{…}}', 'give the fields to save as {card:{...}}') } };
+        if ('avatar' in patch) return { status: 400, json: { error: bi('頭像圖片在這裡不能改', 'the avatar image cannot be set here') } };
+        try { return { status: 200, json: cardView(storeOfCtx(ctx).update(r.id, { card: patch })) }; }
+        catch (e) { return { status: 400, json: { error: String(e && e.message || 'could not save').slice(0, 300) } }; }
+      } },
   ],
 
   // Before each engine turn: when the task belongs to a role, tell the agent which persona it speaks as.
@@ -128,10 +221,14 @@ module.exports = {
     if (!/^r-[0-9a-f]{8}$/.test(bot)) return null;
     const r = storeOfCtx(ctx).get(bot);
     if (!r || r.archived_at || r.id !== bot) return null;
-    return { context: [
+    const block = card.promptBlock(r.card);
+    const lines = [
       `This session is the role "${r.name}". The persona below was written by the owner. Answer in this persona. It changes voice and character only: every tool, MCP server and skill stays available and you should use them normally.`,
       r.persona,
-    ] };
+      ...(block ? [block] : []),
+    ];
+    if (r.main === true) lines.push(chief.rosterContext(storeOfCtx(ctx).all(), r.id));
+    return { context: lines };
   },
 
   // Which engine runs the turn: "codex" or "opencode" for a role set to that engine, else no opinion (Claude). The core maps the
@@ -174,10 +271,13 @@ module.exports = {
   migrate() {},
 
   api: {
-    dynamicBots() { return storeOf(this).list().map(r => ({ id: r.id, name: r.name })); },
+    dynamicBots() { return storeOf(this).list().map(r => ({ id: r.id, name: r.name, ...(card.avatarUrl(r) ? { avatar: card.avatarUrl(r) } : {}) })); },
+    // The stored avatar image of a role: { path, type, hash } or null (for the route that serves it).
+    avatarFile(key) { const r = storeOf(this).get(key); return r && !r.archived_at ? card.avatarFile(r, dirOf(this)) : null; },
     list() { return storeOf(this).list(); },
     all() { return storeOf(this).all(); },
     get(key) { return storeOf(this).get(key); },
+    main() { return storeOf(this).ensureMain(chief.DEFAULT); },
     create(v) { return storeOf(this).create(v); },
     update(key, v) { return storeOf(this).update(key, v); },
     archive(key) { return storeOf(this).archive(key); },
