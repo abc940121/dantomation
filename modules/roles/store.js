@@ -115,4 +115,4 @@ function createStore(dir) {
   };
 }
 
-module.exports = { createStore, RoleError, ID_RE, ENGINES, NAME_MAX, PERSONA_MAX };
+module.exports = { createStore, RoleError, ID_RE, ENGINES, NAME_MAX, PERSONA_MAX, checkName };

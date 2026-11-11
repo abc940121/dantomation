@@ -274,6 +274,7 @@ function roomTests() {
   check('rooms: picker is a select filled from the room list and kept in sync with the URL', /id="room-pick"/.test(fs.readFileSync(path.join(UI, 'index.html'), 'utf8')) && /drawRoomPick/.test(app) && app.includes('RM.withRoom(location.search, ui.room)') && app.includes('RM.roomFromSearch(location.search)') && app.includes('selectRoom(e.target.value || null)'));
   check('rooms: a failed list (401, offline) is not a successful one, so it cannot drop ?room=', RM.listOk({ ok: true, body: { rooms: [] } }) === true && RM.listOk({ ok: false, status: 401, body: null }) === false && RM.listOk(null) === false && RM.listOk({ ok: true, body: {} }) === false && /ok && ui.room && !rooms.list.some/.test(app));
   check('rooms: index.html loads rooms.js before app.js', /rooms\.js[^]*app\.js/.test(fs.readFileSync(path.join(UI, 'index.html'), 'utf8')));
+  check('rooms: the list is re-read on a timer (a new group shows without a reload) and a failed refresh keeps the picker', /loadRooms\(true\)/.test(app) && /, 5000\);/.test(app) && /keepOnError\) rooms\.list = prev/.test(app));
 }
 
 // app.js run in a vm with a stub DOM: the #t= token is taken at load and again on hashchange.

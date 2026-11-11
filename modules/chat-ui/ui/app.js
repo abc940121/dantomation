@@ -196,9 +196,11 @@
     rooms.busy = false;
   }
   setInterval(pollRoom, 3000);
-  async function loadRooms() {
+  async function loadRooms(keepOnError) {
     let ok = false;
+    const prev = rooms.list;
     try { const r = await api(RM.listPath()); rooms.list = RM.parseRooms(r); ok = RM.listOk(r); } catch (err) { rooms.list = []; }
+    if (!ok && keepOnError) rooms.list = prev; // a failed refresh keeps the picker as it was
     // Only a successful list can say the requested room is gone; a 401 or network error keeps ?room= until the next try.
     if (ok && ui.room && !rooms.list.some(r => r.id === ui.room)) { ui.room = null; roomGen++; }
   }
@@ -449,6 +451,8 @@
     try { const b = await api('/api/bots'); if (b.ok) { D.applyBots(S, b.body); defaultTarget(); render(); } } catch (err) { /* ignore */ }
   }
   setInterval(() => { if (document.visibilityState !== 'hidden') refreshBots(); }, 15000);
+  // Re-read the room list every 5 s while visible, so a group made by asking in chat appears without a reload.
+  setInterval(async () => { if (document.visibilityState !== 'hidden' && !ui.needAuth) { await loadRooms(true); render(); } }, 5000);
 
   // Redeem a #p= code right away: the fragment is already gone from the URL, so waiting for the language choice would lose it on a reload.
   const paired = pairCode ? redeemCode(pairCode) : Promise.resolve(null);

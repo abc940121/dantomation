@@ -16,11 +16,26 @@ const TERMINAL = new Set(['done', 'failed', 'stopped']);
 const deliverers = new Map();
 function registerDeliverer(name, fn) { deliverers.set(name, fn); return () => { if (deliverers.get(name) === fn) deliverers.delete(name); }; }
 
-let cached = null; // { key, engine }
+// Another module may supply rooms at run time: registerRoomSource(fn), fn() -> a map shaped like settings.rooms.
+// It is read on every request, so a new room shows up without a restart. A config room wins an id clash.
+// A source that throws or returns a non-object adds nothing.
+const sources = new Set();
+function registerRoomSource(fn) { if (typeof fn !== 'function') throw new Error('registerRoomSource needs a function'); sources.add(fn); return () => { sources.delete(fn); }; }
+function allRooms(ctx) {
+  const out = {};
+  for (const fn of sources) {
+    let got; try { got = fn(); } catch { continue; }
+    if (got && typeof got === 'object' && !Array.isArray(got)) for (const [id, r] of Object.entries(got)) if (!Object.prototype.hasOwnProperty.call(out, id)) out[id] = r;
+  }
+  return { ...out, ...(ctx.settings.rooms || {}) };
+}
+
+let cached = null; // { key, engine, roomsKey }
 function engineFor(ctx) {
   const s = ctx.settings;
-  const key = JSON.stringify([s.rooms, s.human_label]);
-  if (cached && cached.key === key) return cached.engine;
+  const rooms = allRooms(ctx), roomsKey = JSON.stringify(rooms);
+  const key = JSON.stringify([s.human_label]);
+  if (cached && cached.key === key) { if (cached.roomsKey !== roomsKey) { cached.engine.setRooms(rooms); cached.roomsKey = roomsKey; } return cached.engine; }
   const store = {
     append: rec => ctx.state.append(rec),
     all: () => J.readAll().records.filter(r => r.module === 'rooms'),
@@ -63,8 +78,8 @@ function engineFor(ctx) {
       await sleep(s.poll_ms);
     }
   };
-  const engine = createEngine({ rooms: s.rooms, store, deliver, humanLabel: s.human_label });
-  cached = { key, engine };
+  const engine = createEngine({ rooms, store, deliver, humanLabel: s.human_label });
+  cached = { key, engine, roomsKey };
   return engine;
 }
 
@@ -104,13 +119,13 @@ module.exports = {
         return { status: 200, json: { id: e.setSummary(ctx.params.id, text).id } };
       }) },
   ],
-  statusLines: (J2, ctx) => { const n = Object.keys(ctx.settings.rooms || {}).length; return [`rooms: ${n} configured`]; },
+  statusLines: (J2, ctx) => { const n = Object.keys(allRooms(ctx)).length; return [`rooms: ${n} configured`]; },
   settings: {
-    rooms: { type: 'object', default: {}, description: 'rooms by id: { lead?, window?, members: [{id, name?, bot?, engine?, endpoint?, voice?, neverLead?, noRoomMemory?, addressedOnly?, window?, contextLines?}] }' },
+    rooms: { type: 'object', default: {}, description: 'rooms by id: { name?, lead?, window?, members: [{id, name?, bot?, engine?, endpoint?, voice?, neverLead?, noRoomMemory?, addressedOnly?, window?, contextLines?}] }' },
     human_label: { type: 'string', default: 'human', description: 'speaker label shown for the human' },
     reply_timeout_s: { type: 'number', default: 180, min: 1, description: 'give up on one member turn after this many seconds' },
     reply_grace_s: { type: 'number', default: 15, min: 0, max: 120, description: 'after a bot task is done, wait up to this many seconds for its reply record' },
     poll_ms: { type: 'number', default: 500, min: 10, description: 'how often to check a member task' },
   },
-  api: { createEngine, registerDeliverer },
+  api: { createEngine, registerDeliverer, registerRoomSource },
 };

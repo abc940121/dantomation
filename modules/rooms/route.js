@@ -21,6 +21,25 @@ function candidates(token, members) {
   return [...ids];
 }
 
+// Names with non-ASCII letters (for example Chinese) are written without spaces around them, so they cannot be
+// cut into tokens. Each "@" is checked against the member names instead: the longest name that follows it wins,
+// and a tie between two members is dropped.
+const NON_ASCII = /[^\x00-\x7f]/;
+function nameMentions(text, members) {
+  const s = maskCode(text).toLowerCase(), ids = [];
+  const named = members.filter(m => NON_ASCII.test(String(m.name))).map(m => ({ id: m.id, name: String(m.name).toLowerCase() }));
+  if (!named.length) return ids;
+  for (let i = s.indexOf('@'); i !== -1; i = s.indexOf('@', i + 1)) {
+    if (i > 0 && /[\w@]/.test(s[i - 1])) continue;
+    let best = 0, hit = [];
+    for (const m of named) if (s.startsWith(m.name, i + 1)) {
+      if (m.name.length > best) { best = m.name.length; hit = [m.id]; } else if (m.name.length === best && !hit.includes(m.id)) hit.push(m.id);
+    }
+    if (hit.length === 1 && !ids.includes(hit[0])) ids.push(hit[0]);
+  }
+  return ids;
+}
+
 // Unambiguous mentions only: a token that names two members (a same-name tie) is dropped.
 function mentioned(text, members) {
   const ids = [];
@@ -29,6 +48,7 @@ function mentioned(text, members) {
     const c = candidates(t, members);
     if (c.length === 1 && !ids.includes(c[0])) ids.push(c[0]);
   }
+  for (const id of nameMentions(text, members)) if (!ids.includes(id)) ids.push(id);
   return ids;
 }
 

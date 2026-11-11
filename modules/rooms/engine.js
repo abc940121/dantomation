@@ -37,7 +37,7 @@ function normalize(rooms) {
     const lm = members.find(m => m.id === lead);
     if (lead && !lm) { problems.push(`room ${id}: lead "${lead}" is not a member (room has no lead)`); lead = null; }
     else if (lm && (lm.neverLead || lm.addressedOnly)) { problems.push(`room ${id}: member "${lead}" is flagged never-lead (room has no lead)`); lead = null; }
-    out[id] = { id, lead, window: Number.isInteger(r.window) && r.window >= 0 ? r.window : DEFAULT_WINDOW, members };
+    out[id] = { id, ...(typeof r.name === 'string' && r.name.trim() ? { name: r.name.trim().slice(0, 80) } : {}), lead, window: Number.isInteger(r.window) && r.window >= 0 ? r.window : DEFAULT_WINDOW, members };
   }
   // A voice id held by an engine member belongs to it alone: every other member loses it.
   const owner = new Map();
@@ -49,7 +49,7 @@ function normalize(rooms) {
 }
 
 function createEngine({ rooms, store, deliver, now = Date.now, humanLabel = 'human', maxHopTargets = 3 }) {
-  const norm = normalize(rooms);
+  let norm = normalize(rooms);
   const st = new Map();
   const state = id => { if (!st.has(id)) st.set(id, { queue: [], current: null, gen: 0, drain: null, inflight: new Set(), budget: createBudget(now), floorUntil: 0 }); return st.get(id); };
   const room = id => norm.rooms[id] || null;
@@ -151,8 +151,10 @@ function createEngine({ rooms, store, deliver, now = Date.now, humanLabel = 'hum
   const labelOf = (roomId, sp) => (sp === 'human' ? humanLabel : ((room(roomId).members.find(x => x.id === sp) || {}).name || sp));
 
   return {
-    problems: norm.problems,
-    rooms: () => Object.values(norm.rooms).map(r => ({ id: r.id, lead: r.lead, window: r.window,
+    get problems() { return norm.problems; },
+    // Swap the room table at run time (rooms from a source module); queues, budgets and transcripts of kept rooms stay.
+    setRooms(next) { norm = normalize(next); },
+    rooms: () => Object.values(norm.rooms).map(r => ({ id: r.id, ...(r.name ? { name: r.name } : {}), lead: r.lead, window: r.window,
       members: r.members.map(m => ({ id: m.id, name: m.name, neverLead: !!m.neverLead, noRoomMemory: !!m.noRoomMemory, addressedOnly: !!m.addressedOnly })) })),
     // The human speaks: every pending bot turn is flushed first, then the line is stored and routed.
     async say(roomId, text, opts = {}) {

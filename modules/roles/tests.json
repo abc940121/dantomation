@@ -6,6 +6,11 @@
       "needs": []
     },
     {
+      "label": "roles-groups",
+      "file": "test/groups.js",
+      "needs": []
+    },
+    {
       "label": "roles-ask",
       "file": "test/ask.js",
       "needs": []

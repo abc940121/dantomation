@@ -45,6 +45,10 @@ const idLines = p => p.split('\n').filter(l => l.startsWith('- [id='));
   check('no mention goes to the lead', JSON.stringify(route('hello', R)) === '{"kind":"lead","ids":["ann"]}');
   check('a mention in code does not wake', route('run `@bob` here', R).kind === 'lead');
   check('email-like text is not a mention', route('mail me a@bob.com', R).kind === 'lead');
+  const Z = { lead: 'ann', members: [{ id: 'ann', name: 'ann' }, { id: 'r-1', name: '小橘' }, { id: 'r-2', name: '小橘子' }, { id: 'r-3', name: '阿鐵' }] };
+  check('a Chinese name is a mention without spaces', JSON.stringify(route('@小橘你好', Z)) === '{"kind":"mention","ids":["r-1"]}');
+  check('the longest Chinese name wins', JSON.stringify(route('請@小橘子 和 @阿鐵,看一下', Z).ids) === '["r-2","r-3"]');
+  check('a Chinese name after a word character or in code does not wake', route('a@小橘 `@阿鐵`', Z).kind === 'lead');
   const tie = { id: 't', lead: 'ann', members: [{ id: 'ann', name: 'Ann' }, { id: 'x1', name: 'Sam' }, { id: 'x2', name: 'sam' }] };
   check('same-name tie is dropped (falls to lead)', JSON.stringify(route('@sam hi', tie)) === '{"kind":"lead","ids":["ann"]}');
   check('id/name collision across members is a tie', route('@bo', { id: 't', members: [{ id: 'bo', name: 'A' }, { id: 'z', name: 'Bo' }] }).kind === 'none');
@@ -418,6 +422,36 @@ const idLines = p => p.split('\n').filter(l => l.startsWith('- [id='));
     check('status route: 200 with {busy, queue, lead, floor}', ok.status === 200 && typeof ok.json.busy === 'boolean' && Array.isArray(ok.json.queue) && 'lead' in ok.json && typeof ok.json.floor === 'boolean', ok);
     const nf = sh.handler(sctx({ params: { id: 'zz' } }));
     check('status route: unknown room is 404', nf.status === 404, nf);
+  }
+
+  // ---- room sources: another module supplies rooms at run time
+  {
+    const gctx = (rooms, extra) => ({ settings: { rooms, human_label: 'human', reply_timeout_s: 30, poll_ms: 10 }, state: { append: r => r }, tasks: {}, query: {}, body: {}, ...extra });
+    const list = ctx => h('GET', '/rooms')(ctx).json;
+    let dyn = {};
+    const un = mod.api.registerRoomSource(() => dyn);
+    check('source: nothing supplied, config rooms only', list(gctx(ROOM())).rooms.map(r => r.id).join() === 'dev');
+    dyn = { 'g-0a1b2c3d': { lead: 'ann', members: [{ id: 'ann', name: 'Ann' }, { id: 'r-00000001', name: 'Bob', bot: 'r-00000001' }] } };
+    const l2 = list(gctx(ROOM())).rooms;
+    check('source: a new room appears on the next read, no restart', l2.map(r => r.id).join() === 'dev,g-0a1b2c3d' || l2.map(r => r.id).sort().join() === 'dev,g-0a1b2c3d', l2.map(r => r.id));
+    dyn = { dev: { lead: 'bob', members: [{ id: 'bob', name: 'Bob' }] } };
+    const l3 = list(gctx(ROOM())).rooms.find(r => r.id === 'dev');
+    check('source: config wins an id clash', l3.lead === 'ann' && l3.members.length === 3, l3);
+    dyn = null;
+    check('source: a non-object result adds nothing', list(gctx(ROOM())).rooms.length === 1);
+    un();
+    const un2 = mod.api.registerRoomSource(() => { throw new Error('boom'); });
+    check('source: a throwing source adds nothing and breaks nothing', list(gctx(ROOM())).rooms.length === 1);
+    un2();
+    let bad = false; try { mod.api.registerRoomSource('x'); } catch { bad = true; }
+    check('source: registering a non-function throws', bad);
+    const un3 = mod.api.registerRoomSource(() => ({ 'g-11111111': { lead: 'ann', members: [{ id: 'ann', name: 'Ann' }] } }));
+    check('source: statusLines counts source rooms', mod.statusLines(null, gctx(ROOM()))[0] === 'rooms: 2 configured', mod.statusLines(null, gctx(ROOM())));
+    un3();
+    const un4 = mod.api.registerRoomSource(() => ({ 'g-22222222': { name: '  Weekend plan  ', lead: 'ann', members: [{ id: 'ann', name: 'Ann' }] } }));
+    const named = list(gctx(ROOM())).rooms.find(r => r.id === 'g-22222222');
+    check('source: a room name is passed through (trimmed); config rooms have none', named && named.name === 'Weekend plan' && list(gctx(ROOM())).rooms.filter(r => r.id !== 'g-22222222').every(r => !('name' in r)), JSON.stringify(named));
+    un4();
   }
 
   console.log(`result: ${pass} passed, ${fail} failed`);

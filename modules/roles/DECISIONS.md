@@ -49,3 +49,11 @@
     task may never emit `task.end`, and a restart must not lose answers. The entry is marked delivered before the reply is queued
     (reverted if queueing fails) under a lock directory, so delivery is once. Chain depth (3) and size (12) are capped, and loops
     are refused, so two roles cannot talk forever. Engine tool timeouts are left alone.
+14. Owner-made groups are rooms supplied by the roles module, not a new chat feature. Groups are stored in `groups.json` and the
+    rooms module gained a small seam (`registerRoomSource`) that is merged with config rooms on every read (config wins an id
+    clash), so a new group needs no restart and no trunk change. The seam is reached with an in-process `require` from a roles
+    job, not `dependsOn`: a hard dependency would drop roles whenever rooms is off, and the tools only need rooms for display.
+    The tools refuse with a bilingual error when `modules.rooms` is not true. The main bot is always the lead (so a plain
+    message has an owner), role members map to their role bot (`bot: "r-..."`) which the existing `prepareTurn` and
+    `chooseEngine` already serve. Removal archives (`archived_at`); archived or removed roles are dropped on read, never from the
+    file.

@@ -151,6 +151,18 @@ Roles on the Codex and OpenCode engines count their turns per role and local day
 The cap is the config key `roles.daily_turn_cap` (default 200, `0` = off). When a role reaches it, the turn is not run and the
 reply states the cap and that it resets tomorrow, in English and Traditional Chinese. Refused turns are not counted.
 
+## Group chats
+
+The owner can ask in chat for a group ("make a group called 週末計畫 with Ann and Bob"): no config edit and no restart. Needs `modules.rooms: true`; with rooms off the tools answer with a bilingual error that says so.
+群組聊天：直接在聊天裡說「開一個群組」即可，不用改設定也不用重新啟動；需要先開啟 rooms 模組，沒開時工具會回覆中英文說明。
+
+- Tools: `group_create {name, members}`, `group_update {group, name?, add?, remove?}`, `group_remove {group}` (archives, never deletes), `group_list`. Members are role names or ids; `group` is the `g-<8hex>` id or the current name.
+- Stored in `<state>/m/roles/groups.json` (same atomic save and damaged-file handling as `roles.json`). The room id is `g-<8hex>`; the display name is whatever the owner chose, in any language.
+- The main bot is always a member and the lead (a message with no @mention goes to it; `@everyone` wakes all; `@<role id>` wakes one role). Each role member is its own bot (`bot: "r-..."`), so it answers with its own persona, engine and conversation.
+- A role that is archived or removed drops out of the group on read; the stored list is not rewritten.
+- How it reaches the chat page: a job registers a room source with the rooms module (only when rooms is on). The chat page re-reads the room list every 5 seconds, so a new group shows up without a reload.
+- In a group, `@name` wakes that role. A Chinese name works without spaces around it (`@小橘你好`); the longest matching name wins.
+
 ## Known limits
 
 - A Codex or OpenCode role can read any file the user can read. Only Codex writes are sandboxed (to the work folder); OpenCode has no OS sandbox.

@@ -7,12 +7,18 @@ const J = require('../../lib/journal');
 const { createStore, RoleError, ENGINES } = require('./store');
 const limits = require('./engines/limits');
 const ask = require('./ask');
+const { createGroups, roomsOn, bi } = require('./groups');
 
 // api functions run with this.ctx when a module calls them (ctx.api) and without it when core does:
 // then the state folder is the same fixed path the loader gives this module.
 const dirOf = self => (self && self.ctx && self.ctx.state ? self.ctx.state.dir : path.join(J.STATE, 'm', 'roles'));
 const storeOf = self => createStore(() => dirOf(self));
 const storeOfCtx = ctx => createStore(() => ctx.state.dir);
+const groupsOfCtx = ctx => createGroups(() => ctx.state.dir, storeOfCtx(ctx));
+const needRooms = ctx => { if (!roomsOn(ctx)) throw new Error(bi('群組聊天需要先開啟 rooms 模組（在設定裡把 modules.rooms 設為 true，並重新啟動一次）。', 'Group chats need the rooms module to be on (set modules.rooms to true in the config and restart once).')); };
+const groupNote = (ctx, type, g) => { try { ctx.state.append({ type, id: g.id, name: g.name }); } catch { /* best effort */ } };
+const GROUP_KEY = { type: 'string', description: 'Group id (g-...) or its current name.' };
+const ROLE_LIST = d => ({ type: 'array', items: { type: 'string' }, description: d });
 
 const pub = r => ({ id: r.id, name: r.name, persona: r.persona, engine: r.engine || 'claude', ...(r.model ? { model: r.model } : {}) });
 const ENGINE_PROP = { type: 'string', enum: ENGINES, description: 'Which agent runs this role: "claude" (default) "codex" (OpenAI Codex, "GPT") or "opencode" (OpenCode). Use "codex" when the owner asks for GPT / Codex / OpenAI, "opencode" when the owner asks for OpenCode. Optional.' };
@@ -43,6 +49,22 @@ const mcpTools = [
     description: 'Send a message to another role (or "main", the owner\'s main bot) and get its answer later, whatever engine either one runs on. It does NOT wait: it returns at once with queued:true, and the answer arrives as a new message in your own conversation when the other role has finished its turn. After calling it, end your turn right away: do not wait, do not poll, do not invent the answer. The role is an id or name from role_list. Refused for an unknown or archived role, yourself, a role already in the ask chain, or when the chain is too deep or too long; then answer with what you have. Only usable inside a role conversation, not from outside one.',
     inputSchema: { type: 'object', properties: { role: { type: 'string', description: 'Role id or name, or "main".' }, message: { type: 'string', description: 'What to say or ask. Give the other role all the context it needs; it does not see your conversation.' } }, required: ['role', 'message'] },
     run: guard((a, ctx) => ask.ask(a, ctx, askDeps)) },
+  { name: 'group_create',
+    description: 'Create a group chat (a room) the owner can pick in the chat page, like making a group in a messaging app. Use when the owner asks to make or start a group chat with some roles, in any language. members are role names or ids (from role_list; create the roles first if they do not exist). The main bot is always in the group and is its lead: a message with no @mention goes to it, "@everyone" wakes all, "@<role id>" wakes one role. Each role answers with its own persona, engine and conversation. The group appears in the chat page within seconds. Needs the rooms module to be on.',
+    inputSchema: { type: 'object', properties: { name: { type: 'string', description: 'The group name the owner chose, 1-40 characters, any language. Must be unique among groups.' }, members: ROLE_LIST('Role names or ids to put in the group (at least one).') }, required: ['name', 'members'] },
+    run: guard((a, ctx) => { needRooms(ctx); const g = groupsOfCtx(ctx).create({ name: a.name, members: a.members }, ctx); groupNote(ctx, 'group_created', g); return g; }) },
+  { name: 'group_update',
+    description: 'Rename a group chat and/or add roles to it and/or remove roles from it. Use when the owner asks to rename a group, to add someone to it or to take someone out. The group is an id (from group_list) or its current name. The main bot cannot be removed. The conversation history is kept. Needs the rooms module to be on.',
+    inputSchema: { type: 'object', properties: { group: GROUP_KEY, name: { type: 'string', description: 'New name (optional).' }, add: ROLE_LIST('Role names or ids to add (optional).'), remove: ROLE_LIST('Role names or ids to take out (optional).') }, required: ['group'] },
+    run: guard((a, ctx) => { needRooms(ctx); if (typeof a.group !== 'string' || !a.group.trim()) throw new Error('group is required (a group id or name)'); const g = groupsOfCtx(ctx).update(a.group, { name: a.name, add: a.add, remove: a.remove }, ctx); groupNote(ctx, 'group_updated', g); return g; }) },
+  { name: 'group_remove',
+    description: 'Remove a group chat from the chat page. Use when the owner asks to delete or close a group. Nothing is deleted: the group is only hidden (archived) and its transcript is kept. The group is an id or its name.',
+    inputSchema: { type: 'object', properties: { group: GROUP_KEY }, required: ['group'] },
+    run: guard((a, ctx) => { needRooms(ctx); if (typeof a.group !== 'string' || !a.group.trim()) throw new Error('group is required (a group id or name)'); const g = groupsOfCtx(ctx).archive(a.group, ctx); groupNote(ctx, 'group_archived', g); return { id: g.id, name: g.name, archived: true }; }) },
+  { name: 'group_list',
+    description: 'List the group chats with id, name, lead and members (id and name). Use before changing or removing a group, or when the owner asks which groups exist. Needs the rooms module to be on.',
+    inputSchema: { type: 'object', properties: {} },
+    run: guard((a, ctx) => { needRooms(ctx); return { groups: groupsOfCtx(ctx).list(ctx) }; }) },
 ];
 
 // The bot of a task, as bot-persona finds it: the task_start record, else HARNESS_BOT, else the default bot.
@@ -103,7 +125,12 @@ module.exports = {
   // role_ask return leg: a finished task may be the answer to an ask. The interval job also catches stopped or failed tasks
   // (they may never emit task.end) and anything left over by a restart.
   on: { 'task.end': (data, ctx) => sweepAsks(ctx) },
-  jobs: [{ id: 'ask-sweep', every: 5, description: 'deliver role_ask answers to the asking role', run: ctx => { sweepAsks(ctx); } }],
+  jobs: [{ id: 'ask-sweep', every: 5, description: 'deliver role_ask answers to the asking role', run: ctx => { sweepAsks(ctx); } },
+    { id: 'rooms-source', description: 'let the rooms module list the owner-made groups (only when rooms is on)',
+    start(ctx) {
+      if (!roomsOn(ctx)) return () => {};
+      try { return require('../rooms').api.registerRoomSource(() => groupsOfCtx(ctx).rooms(ctx)); } catch { return () => {}; }
+    } }],
 
   stateVersion: 1,
   migrate() {},
