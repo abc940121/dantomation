@@ -24,20 +24,22 @@ const throws = fn => { try { fn(); return null; } catch (e) { return e.message; 
     const mod = require('..');
     const route = mod.routes.find(r => r.path === '/main');
 
-    // a paired device only reads: on a fresh state it writes nothing and gets 200 {id:null}; the owner path still creates
+    // the owner and a paired device create the default once; every other caller only reads: on a fresh state it writes nothing and gets 200 {id:null}
     const octx = Object.assign({}, ctx, { actor: { kind: 'owner' } }); // what lib/server.js sets for the owner token: no id
     const dctx = Object.assign({}, ctx, { actor: { kind: 'owner', id: 'device:d-test' } });
     const rolesFile = () => fs.existsSync(path.join(tmp, 'state')) ? fs.readdirSync(path.join(tmp, 'state'), { recursive: true }).map(String).filter(p => fs.statSync(path.join(tmp, 'state', p)).isFile()).sort().join() : '';
     const before = rolesFile();
-    const rd = route.handler(dctx);
-    check('device GET /main on a fresh state is read-only: 200 {id:null}, no role, no file written', rd.status === 200 && JSON.stringify(rd.json) === '{"id":null}' && api.list().length === 0 && api.dynamicBots().length === 0 && rolesFile() === before, JSON.stringify(rd) + ' ' + before + ' -> ' + rolesFile());
-
     const others = [undefined, null, {}, { kind: 'worker' }, { kind: 'anonymous' }, { kind: 'device', id: 'd-1' }, { kind: 'owner', id: 'x' }, { kind: 'owner', id: '' }, { kind: 'Owner' }];
     const ro = others.map(a => route.handler(Object.assign({}, ctx, { actor: a })));
     check('GET /main by an actor that is neither the owner nor a device fails closed: {id:null}, no role, no file written', ro.every(x => x.status === 200 && x.json.id === null && Object.keys(x.json).join() === 'id') && api.list().length === 0 && api.dynamicBots().length === 0 && rolesFile() === before, JSON.stringify(ro.map(x => x.status)) + ' ' + before + ' -> ' + rolesFile());
 
     check('no main role exists before first use', api.list().length === 0 && api.dynamicBots().length === 0);
+    const rd = route.handler(dctx);
+    check('a paired device GET /main on a fresh state creates the default once: 200 {id, name}', rd.status === 200 && /^r-[0-9a-f]{8}$/.test(rd.json.id) && rd.json.name === 'Chief of Staff' && api.list().length === 1 && api.get(rd.json.id).main === true, JSON.stringify(rd));
+    const rd2 = route.handler(dctx);
+    check('a second device call returns the same id and creates nothing more', rd2.status === 200 && rd2.json.id === rd.json.id && api.list().length === 1);
     const r1 = route.handler(octx);
+    check('the owner token gets the same default role', r1.status === 200 && r1.json.id === rd.json.id && r1.json.name === 'Chief of Staff' && api.list().length === 1, JSON.stringify(r1));
     check('first use creates the default main role', r1.status === 200 && /^r-[0-9a-f]{8}$/.test(r1.json.id) && r1.json.name === 'Chief of Staff', JSON.stringify(r1));
     const rec = api.get(r1.json.id);
     check('the default is flagged main, with the chief text', rec.main === true && /chief of staff/.test(rec.persona) && /specialist/.test(rec.persona) && /ask once/.test(rec.persona) && /assumed/.test(rec.persona), rec.persona);
@@ -83,6 +85,62 @@ const throws = fn => { try { fn(); return null; } catch (e) { return e.message; 
         return m.main === true && m.name !== 'Chief of Staff' && s.list().length === 2;
       } finally { fs.rmSync(d, { recursive: true, force: true }); }
     })());
+    // the default is made only when it is safe: never resurrected, same write + journal path as POST /roles, counts toward the cap
+    const { createStore, ROLES_MAX } = require('../store');
+    const DEF = require('../chief').DEFAULT;
+    const fresh = fn => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'roles-chief3-')); try { return fn(d); } finally { fs.rmSync(d, { recursive: true, force: true }); } };
+    const fake = (d, log) => ({ state: { dir: d, append: e => { log.push(e); } }, config: cfg, actor: { kind: 'owner', id: 'device:d-test' } });
+    check('(a) a main role that was archived is not resurrected: store gives null, writes nothing', fresh(d => {
+      fs.writeFileSync(path.join(d, 'roles.json'), JSON.stringify({ roles: [{ id: 'r-00000001', name: 'Old main', persona: 'p', kind: 'session', engine: 'claude', main: true, archived_at: '2026-01-01T00:00:00Z', created_at: 'x', updated_at: 'x' }] }));
+      const s = createStore(d), b4 = fs.readFileSync(path.join(d, 'roles.json'), 'utf8');
+      return s.ensureMain(DEF) === null && s.getMain() === null && fs.readFileSync(path.join(d, 'roles.json'), 'utf8') === b4;
+    }));
+    check('(a) the route answers 200 {id:null} for that state, for a device and for the owner token', fresh(d => {
+      fs.writeFileSync(path.join(d, 'roles.json'), JSON.stringify({ roles: [{ id: 'r-00000001', name: 'Old main', persona: 'p', kind: 'session', engine: 'claude', main: true, archived_at: '2026-01-01T00:00:00Z', created_at: 'x', updated_at: 'x' }] }));
+      const log = [], c = fake(d, log), o = Object.assign({}, c, { actor: { kind: 'owner' } });
+      const x = route.handler(c), y = route.handler(o);
+      return x.status === 200 && x.json.id === null && y.status === 200 && y.json.id === null && createStore(d).all().length === 1 && log.length === 0;
+    }));
+    check('(a) a default that lost main to another role is not made again, even if that role is later unmarked by hand', fresh(d => {
+      const s = createStore(d), m = s.ensureMain(DEF), o = s.create({ name: 'Other', persona: 'p' });
+      s.update(o.id, { main: true });
+      const j = JSON.parse(fs.readFileSync(path.join(d, 'roles.json'), 'utf8'));
+      for (const r of j.roles) delete r.main; // hand edit: no live main left
+      fs.writeFileSync(path.join(d, 'roles.json'), JSON.stringify(j));
+      return s.ensureMain(DEF) === null && s.all().length === 2 && s.get(m.id).seeded === true;
+    }));
+    check('(a) a state with a live main gives that role every time (api.main() callers keep working)', fresh(d => {
+      const s = createStore(d);
+      return s.ensureMain(DEF).main === true && s.ensureMain(DEF).main === true;
+    }));
+    check('(b) the default goes through the same store write as POST /roles and is journalled as role_created', fresh(d => {
+      const log = [], r = route.handler(fake(d, log));
+      return r.status === 200 && log.length === 1 && log[0].type === 'role_created' && log[0].id === r.json.id && log[0].main === true && log[0].by === 'device:d-test' && route.handler(fake(d, log)).json.id === r.json.id && log.length === 1;
+    }));
+    check('(b) a write error answers an error status, never 200 with a role', fresh(d => {
+      fs.mkdirSync(path.join(d, 'roles.json')); // a directory where the file should be: read and write both fail
+      const log = [], r = route.handler(fake(d, log));
+      return r.status === 500 && r.json.id === undefined && log.length === 0;
+    }));
+    check('(b) when the rename fails, nothing half-written is left and the route answers 500', fresh(d => {
+      const orig = fs.renameSync; fs.renameSync = () => { throw new Error('rename failed'); };
+      let r; try { r = route.handler(fake(d, [])); } finally { fs.renameSync = orig; }
+      return r.status === 500 && !fs.existsSync(path.join(d, 'roles.json')) && fs.readdirSync(d).filter(n => /.tmp$/.test(n)).length === 0;
+    }));
+    check('(c) at ROLES_MAX live roles the default is not made: store null, route 200 {id:null}, nothing written', fresh(d => {
+      const s = createStore(d);
+      for (let i = 0; i < ROLES_MAX; i++) s.create({ name: 'R' + i, persona: 'p' });
+      const b4 = fs.readFileSync(path.join(d, 'roles.json'), 'utf8'), log = [];
+      const x = route.handler(fake(d, log));
+      return s.ensureMain(DEF) === null && x.status === 200 && x.json.id === null && s.all().length === ROLES_MAX && fs.readFileSync(path.join(d, 'roles.json'), 'utf8') === b4 && log.length === 0;
+    }));
+    check('(c) archived roles do not count: at the cap minus archived ones the default is made', fresh(d => {
+      const s = createStore(d);
+      for (let i = 0; i < ROLES_MAX; i++) s.create({ name: 'R' + i, persona: 'p' });
+      s.archive('R0');
+      const m = s.ensureMain(DEF);
+      return !!m && m.main === true && s.list().length === ROLES_MAX;
+    }));
     check('role_update tool offers a main property', !!tools.role_update.inputSchema.properties.main);
   } catch (e) { check('suite ran without an exception', false, e && e.stack); }
   finally { try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* temp dir */ } }

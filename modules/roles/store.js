@@ -94,14 +94,20 @@ function createStore(dir, workdir) {
     get(key) { const r = find(read(), key); return r ? copy(r) : null; },
     getMain() { const r = mainOf(read()); return r ? copy(r) : null; },
     // The one main role. When no live role is marked main, make the default one (a data field, never a fixed name).
-    ensureMain(def) {
+    // Returns null, and writes nothing, when the default must not be made: a main role existed before (any record, archived
+    // included, that is main or was seeded as the default: it is not resurrected), or the live roles are at ROLES_MAX.
+    // onCreate(rec) runs once after the write, only when a default was made (the route journals it there).
+    ensureMain(def, onCreate) {
       const roles = read(), have = mainOf(roles);
       if (have) return copy(have);
+      if (roles.some(r => r.main === true || r.seeded === true)) return null;
+      if (live(roles).length >= ROLES_MAX) return null;
       const n = [def.name, def.name + ' (main)'].find(x => !taken(roles, x)) || def.name + ' ' + crypto.randomBytes(2).toString('hex');
       let id; do { id = 'r-' + crypto.randomBytes(4).toString('hex'); } while (roles.some(r => r.id === id));
       const now = new Date().toISOString();
-      const rec = { id, name: checkName(n), persona: checkPersona(def.persona), kind: 'session', engine: 'claude', main: true, created_at: now, updated_at: now };
+      const rec = { id, name: checkName(n), persona: checkPersona(def.persona), kind: 'session', engine: 'claude', main: true, seeded: true, created_at: now, updated_at: now };
       roles.push(rec); write(roles);
+      if (typeof onCreate === 'function') { try { onCreate(copy(rec)); } catch { /* the journal note is best effort */ } }
       return copy(rec);
     },
     create({ name, persona, engine, model, card: cardPatch } = {}) {
