@@ -77,7 +77,7 @@ function closeLiveCards(task_id, why) {
 
 function ensureWorkdir(dir) {
   fs.mkdirSync(dir, { recursive: true });
-  if (!fs.existsSync(path.join(dir, '.git'))) execFileSync('git', ['init', '-q'], { cwd: dir });
+  if (!fs.existsSync(path.join(dir, '.git'))) execFileSync('git', ['init', '-q'], { cwd: dir, windowsHide: true });
 }
 
 // The engine command: binary, argv, stripped env. Exported so a long-lived
@@ -192,7 +192,7 @@ function withholdOutput(file, from, plain, taskId) {
 function killEngineTree(pid) {
   if (!Number.isInteger(pid) || pid === process.pid) return;
   try {
-    if (process.platform === 'win32') execFileSync('taskkill', ['/T', '/F', '/PID', String(pid)], { stdio: 'ignore' });
+    if (process.platform === 'win32') execFileSync('taskkill', ['/T', '/F', '/PID', String(pid)], { stdio: 'ignore', windowsHide: true });
     else process.kill(-pid, 'SIGKILL');
   } catch { /* already gone */ }
 }

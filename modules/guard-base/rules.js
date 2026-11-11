@@ -50,7 +50,7 @@ function shellRules(cmd, cwd) {
 }
 
 function hardResetRisk(cwd) {
-  const g = args => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  const g = args => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }).trim();
   try {
     if (g(['status', '--porcelain'])) return 'uncommitted changes';
     try { g(['rev-parse', '--abbrev-ref', '@{u}']); } catch { return 'no upstream, commits not pushed'; }

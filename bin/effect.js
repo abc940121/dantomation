@@ -23,7 +23,7 @@ const J = require('../lib/journal');
 const OWNER = require('../lib/config').owner();
 
 const sha = s => crypto.createHash('sha256').update(s).digest('hex');
-const git = (args, opts = {}) => execFileSync('git', args, { encoding: 'utf8', ...opts }).trim();
+const git = (args, opts = {}) => execFileSync('git', args, { encoding: 'utf8', windowsHide: true, ...opts }).trim();
 const quiet = { stdio: ['ignore', 'pipe', 'pipe'] };
 const stdin = () => { try { return fs.readFileSync(0, 'utf8'); } catch { return ''; } };
 const say = (m) => process.stdout.write(m + '\n');
@@ -160,7 +160,7 @@ function main(argv) {
       if (!tip) return false;
       if (tip === intent.local_sha) return true;
       try { git(['fetch', '-q', remote, `refs/heads/${branch}`], { ...quiet, timeout: 60000 }); } catch { return 'unknown'; }
-      const r = spawnSync('git', ['merge-base', '--is-ancestor', intent.local_sha, 'FETCH_HEAD'], quiet);
+      const r = spawnSync('git', ['merge-base', '--is-ancestor', intent.local_sha, 'FETCH_HEAD'], { ...quiet, windowsHide: true });
       return r.status === 0 ? true : r.status === 1 ? false : 'unknown';
     });
   }

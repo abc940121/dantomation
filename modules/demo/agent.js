@@ -15,7 +15,7 @@ const arg = k => { const i = args.indexOf(k); return i >= 0 ? args[i + 1] : null
 const prompt = arg('-p') || '';
 const task = (prompt.match(/task_id: (\S+?)\)/) || [])[1];
 const EFFECT = path.join(__dirname, '..', '..', 'bin', 'effect.js');
-const eff = a => spawnSync(process.execPath, [EFFECT, ...a], { encoding: 'utf8' });
+const eff = a => spawnSync(process.execPath, [EFFECT, ...a], { encoding: 'utf8', windowsHide: true });
 const event = o => fs.appendFileSync(process.env.TASKMOTE_DEMO_EVENTS, JSON.stringify(o) + '\n');
 const readJson = f => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return {}; } };
 const hooks = (readJson(arg('--settings')).hooks) || {};
@@ -26,7 +26,7 @@ let n = 0;
 function hook(kind, tool, input, id) {
   const h = hooks[kind] && hooks[kind][0] && hooks[kind][0].hooks[0];
   if (!h) return { id, code: 0, decision: null, reason: '' };
-  const r = spawnSync(h.command, { shell: true, encoding: 'utf8', input: JSON.stringify({ session_id: 'demo', tool_name: tool, tool_input: input, cwd: process.cwd(), tool_use_id: id, tool_response: {} }) });
+  const r = spawnSync(h.command, { shell: true, encoding: 'utf8', windowsHide: true, input: JSON.stringify({ session_id: 'demo', tool_name: tool, tool_input: input, cwd: process.cwd(), tool_use_id: id, tool_response: {} }) });
   let out = {};
   try { out = JSON.parse(r.stdout || '{}').hookSpecificOutput || {}; } catch { /* plain output */ }
   return { id, code: r.status, decision: out.permissionDecision || null, reason: (out.permissionDecisionReason || r.stderr || '').trim() };
@@ -37,7 +37,7 @@ const pre = (tool, input) => hook('PreToolUse', tool, input, `toolu_demo${++n}`)
 function askPromptTool(tool, input, id) {
   return new Promise(resolve => {
     if (!mcp) return resolve({ behavior: 'deny', message: 'no permission-prompt tool configured' });
-    const p = spawn(mcp.command, mcp.args || [], { env: { ...process.env, ...(mcp.env || {}) }, stdio: ['pipe', 'pipe', 'ignore'] });
+    const p = spawn(mcp.command, mcp.args || [], { env: { ...process.env, ...(mcp.env || {}) }, stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true });
     let buf = '';
     p.stdout.setEncoding('utf8');
     p.stdout.on('data', d => {
@@ -89,7 +89,7 @@ function askPromptTool(tool, input, id) {
   // A journaled side effect (bin/effect.js: intent, act, done). The demo kills this process
   // between the act and its done line; the resumed run re-runs the same command, which
   // reconciles (the file is already there) instead of writing twice.
-  const w = spawnSync(process.execPath, [EFFECT, 'write', task, 'demo-summary', 'summary.md'], { encoding: 'utf8', input: 'Launch: Friday.\n' });
+  const w = spawnSync(process.execPath, [EFFECT, 'write', task, 'demo-summary', 'summary.md'], { encoding: 'utf8', windowsHide: true, input: 'Launch: Friday.\n' });
   event({ step: 'effect', out: (w.stdout || '').trim() });
 
   // (c) risky but allowed with the owner's yes: a call to a paid API

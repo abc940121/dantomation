@@ -14,7 +14,7 @@ const UI = path.join(APP, 'ui');
 const SERVER = path.join(APP, '..', '..', 'lib', 'server.js');
 
 function run(args) {
-  const r = spawnSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', args, { cwd: WEB, stdio: 'inherit', shell: process.platform === 'win32' });
+  const r = spawnSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', args, { cwd: WEB, stdio: 'inherit', shell: process.platform === 'win32', windowsHide: true });
   if (r.status !== 0) { console.error('app-ui build: npm ' + args.join(' ') + ' failed'); process.exit(1); }
 }
 

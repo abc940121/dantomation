@@ -46,6 +46,7 @@ const CORE_SUITES = [
   ['executor-race', 'test/executor-race.js', []],
   ['push-reconcile', 'test/push-reconcile.js', []],
   ['server', 'test/server.js', []],
+  ['windows-hide', 'test/windows-hide.js', []],
   ['server-jobs', 'test/server-jobs.js', [], true], // scratch modules appear under modules/ while it runs: other suites must not see them
   ['integration', 'test/integration.js', ['chat-ui', 'approval-cards']],
   ['trunk-diff', 'test/trunk-diff.js', []],

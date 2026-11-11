@@ -38,7 +38,7 @@ if (process.argv[2] === 'demo' && !process.env.TASKMOTE_DEMO_SANDBOX) {
   for (const k of ['HARNESS_OWNER', 'HARNESS_TASK_ID', 'HARNESS_TASK_DIR', 'HARNESS_NO_SERVER', 'HARNESS_ENGINE_SCRIPT']) delete env[k];
   // The demo agent is scripted and makes no model or network call; model keys are removed anyway, so nothing in it can spend money.
   for (const k of Object.keys(env)) if (/^(ANTHROPIC|OPENAI|OPENROUTER|GEMINI|GOOGLE_API|DEEPSEEK|AZURE_OPENAI|MISTRAL|GROQ|XAI)_|_API_KEY$|_AUTH_TOKEN$/i.test(k)) delete env[k];
-  const child = require('child_process').spawn(process.execPath, process.argv.slice(1), { env, stdio: 'inherit' });
+  const child = require('child_process').spawn(process.execPath, process.argv.slice(1), { env, stdio: 'inherit', windowsHide: true });
   const clean = () => { try { fs.rmSync(sb, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); } catch (e) { console.error(`taskmote: could not remove the demo sandbox ${sb}: ${e.message}`); } };
   process.on('SIGINT', () => {}); // Ctrl-C reaches the child too (same console / process group); it stops its own processes first
   for (const sig of ['SIGTERM', 'SIGHUP']) process.on(sig, () => { try { child.kill(); } catch { /* gone */ } });
@@ -72,7 +72,7 @@ async function doVerb(args) {
     const res = await answer(request ? [request] : [], { J, EXEC_LOCK: require('./harness').EXEC_LOCK });
     if (res && res.handled) {
       if (!res.resume) process.exit(res.code || 0);
-      const r = spawnSync(process.execPath, [HARNESS, 'resume'], { stdio: 'inherit', env: process.env });
+      const r = spawnSync(process.execPath, [HARNESS, 'resume'], { stdio: 'inherit', env: process.env, windowsHide: true });
       process.exit(r.status === null ? 1 : r.status);
     }
   }
@@ -92,7 +92,7 @@ async function doVerb(args) {
   function direct() {
   if (!open && !request) fail('nothing to resume. Start a task with: taskmote do "<what you want>"');
   const a = open ? ['resume'] : ['start', ...args];
-  const r = spawnSync(process.execPath, [HARNESS, ...a], { stdio: 'inherit', env: process.env });
+  const r = spawnSync(process.execPath, [HARNESS, ...a], { stdio: 'inherit', env: process.env, windowsHide: true });
   process.exit(r.status === null ? 1 : r.status);
   }
 }

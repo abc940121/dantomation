@@ -41,12 +41,12 @@ function request(port, token, method, p, body) {
   });
 }
 
-const git = (cwd, ...a) => spawnSync('git', ['-c', 'user.name=demo', '-c', 'user.email=demo@example.invalid', '-c', 'commit.gpgsign=false', ...a], { cwd, encoding: 'utf8' });
+const git = (cwd, ...a) => spawnSync('git', ['-c', 'user.name=demo', '-c', 'user.email=demo@example.invalid', '-c', 'commit.gpgsign=false', ...a], { cwd, encoding: 'utf8', windowsHide: true });
 
 // Kill a process and its children, hard (no cleanup runs: a crash).
 function kill(pid) {
   if (!Number.isInteger(pid) || pid <= 0) return;
-  if (process.platform === 'win32') spawnSync('taskkill', ['/T', '/F', '/PID', String(pid)], { stdio: 'ignore' });
+  if (process.platform === 'win32') spawnSync('taskkill', ['/T', '/F', '/PID', String(pid)], { stdio: 'ignore', windowsHide: true });
   else { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } }
 }
 
@@ -182,7 +182,7 @@ async function demo(args, ctx) {
       await sleep(100);
     }
     const before = git(work, 'diff', '--', 'notes.md').stdout.split('\n').filter(l => /^[+-][^+-]/.test(l));
-    const u = spawnSync(process.execPath, [TASKMOTE, 'undo'], { env: process.env, encoding: 'utf8' });
+    const u = spawnSync(process.execPath, [TASKMOTE, 'undo'], { env: process.env, encoding: 'utf8', windowsHide: true });
     result.undone = u.status === 0 && git(work, 'status', '--porcelain').stdout.trim() === '';
     say('(d) undo', '32', result.undone ? `taskmote undo put notes.md back (the agent's change: ${before.map(l => (l[0] === '+' ? paint('32', l) : paint('31', l))).join(' ')})` : `unexpected: ${(u.stdout + u.stderr).trim().split('\n')[0]}`);
 
