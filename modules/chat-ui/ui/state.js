@@ -179,6 +179,10 @@
     try { return decodeURIComponent(m[1]) || null; } catch { return null; }
   }
 
+  // First open of the chat pane: null = not decided yet, true = open the first (main) chat, false = stay on the list.
+  // A wide screen always preselects it. A phone waits for the first boot, so the main role is known, and opens it only when there is one.
+  const firstOpen = (wide, booted, mainRole) => (wide ? true : booted ? !!mainRole : null);
+
   // Pairing: take "p=<pairing code>" out of a location hash (the QR or link from device-pairing).
   function pairFromHash(hash) {
     const m = /(?:^#|&)p=([\w-]{6,80})(?:&|$)/.exec(String(hash || ''));
@@ -195,5 +199,5 @@
   // A typed or pasted value is a pairing code when it is six digits or starts with pc_.
   const looksLikeCode = v => /^\d{3}\s?-?\s?\d{3}$/.test(String(v).trim()) || /^pc_[\w-]{10,80}$/.test(String(v).trim());
 
-  return { botConvIds, mainBotId, pairFromHash, handoffFromHash, looksLikeCode, create, reduce, applyBots, mainBotId, applyTasks, applyCards, thread, pendingCards, pendingFor, unverifiedTotal, canUndo, remainingSec, fmtCountdown, chatBody, createSSEParser, tokenFromHash };
+  return { firstOpen, botConvIds, mainBotId, pairFromHash, handoffFromHash, looksLikeCode, create, reduce, applyBots, mainBotId, applyTasks, applyCards, thread, pendingCards, pendingFor, unverifiedTotal, canUndo, remainingSec, fmtCountdown, chatBody, createSSEParser, tokenFromHash };
 });

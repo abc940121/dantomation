@@ -294,6 +294,7 @@
 
   // ---- push state into the component only when it changed (a rewritten array would reset the scroll position)
   let pendingOpen = ui.cur; // a ?room= conversation opens once the group list has loaded
+  let booted = false; // set at the end of boot(): until then a phone does not choose between the list and the main chat
   const last = { rooms: '', msgs: '', tm: '', styles: '', theme: '', cur: '' };
   const dark = () => { try { return !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches); } catch (e) { return false; } };
   function chatStyles(isDark) {
@@ -317,7 +318,7 @@
     const sig = c.id + '\n' + ms;
     if (last.msgs !== sig) { last.msgs = sig; setProp(chat, 'messages', ms); chat.setAttribute('messages-loaded', 'true'); }
     if (pendingOpen && c.id === pendingOpen) { pendingOpen = null; last.cur = c.id; chat.setAttribute('room-id', c.id); }
-    else if (!last.cur) { last.cur = c.id; if (window.innerWidth > 600 || ui.mainRole) chat.setAttribute('room-id', c.id); }
+    else if (!last.cur) { const fo = D.firstOpen(window.innerWidth > 600, booted, ui.mainRole); if (fo !== null) { last.cur = c.id; if (fo) chat.setAttribute('room-id', c.id); } }
   }
   // Open a conversation from code (the "waiting" button); on a phone this also leaves the list pane.
   function openConv(id) { setCurrent(id); last.cur = id; chat.setAttribute('room-id', id); render(); }
@@ -637,11 +638,11 @@
   $('group-dlg').addEventListener('keydown', e => { if (e.key === 'Escape') closeGroupDlg(); });
 
   // The roles module names the main role (and makes the default one on first use); 404 = module off, keep the config main bot.
-  // A 404 (no main role yet, or module off) is remembered for 5 minutes, so the roster refresh does not ask again and again.
+  // No main role yet is {id:null} (an old server answers 404, module off too); either is remembered for 5 minutes, so the roster refresh does not ask again and again.
   let mainMissingAt = 0;
   async function loadMainRole(force) {
     if (!force && mainMissingAt && Date.now() - mainMissingAt < 300000) return;
-    try { const m = await api('/m/roles/main'); mainMissingAt = m.status === 404 ? Date.now() : 0; ui.mainRole = m.ok && m.body && typeof m.body.id === 'string' ? m.body.id : ''; } catch (err) { /* keep the last one */ }
+    try { const m = await api('/m/roles/main'); mainMissingAt = m.status === 404 || (m.ok && m.body && m.body.id === null) ? Date.now() : 0; ui.mainRole = m.ok && m.body && typeof m.body.id === 'string' ? m.body.id : ''; } catch (err) { /* keep the last one */ }
   }
   // ---- "New role": the owner makes a role by hand (name + one-line job), POST /m/roles/roles, no model call.
   const rol = { busy: false, avatar: null };
@@ -737,6 +738,7 @@
       if (c.ok) D.applyCards(S, c.body);
     } catch (err) { /* unauthorized shows the token form; others retry via the stream */ }
     await loadRooms(); await loadQuestions();
+    booted = true;
     render();
     offerHome();
     stream().catch(err => console.error('chat-ui: the live stream stopped: ' + ((err && err.message) || err)));

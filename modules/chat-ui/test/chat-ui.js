@@ -388,7 +388,9 @@ function cleanTests() {
     check('default chat: with no main role the config main bot is first; with neither, the first bot; with no bots, bot:main', D.botConvIds(sb, '').join() === 'bot:main,bot:alpha,bot:r-1' && D.botConvIds(sn, '').join() === 'bot:x' && D.botConvIds(se, '').join() === 'bot:main');
     check('default chat: a main role id the roster does not know is ignored', D.botConvIds(sb, 'r-gone').join() === 'bot:main,bot:alpha,bot:r-1');
   }
+  check('first open: a wide screen always preselects the first chat; a phone waits for boot (null), then opens it only with a main role', D.firstOpen(true, false, '') === true && D.firstOpen(true, true, 'r-1') === true && D.firstOpen(false, false, '') === null && D.firstOpen(false, false, 'r-1') === null && D.firstOpen(false, true, 'r-1') === true && D.firstOpen(false, true, '') === false);
   const I = require(path.join(UI, 'i18n.js'));
+  check('first open: the main chat is shown in both languages with its mark (en Main, zh-TW 主要), the rule itself has no language input', D.firstOpen.length === 3 && ['en', 'zh-TW'].every(l => I.TABLE[l]['conv.mainTag']));
   check('main role: the small Main mark exists in both languages (Main / 主要)', I.TABLE.en['conv.mainTag'] === 'Main' && I.TABLE['zh-TW']['conv.mainTag'] === '主要');
   const keys = ['vac.ROOMS_EMPTY', 'vac.ROOM_EMPTY', 'vac.TYPE_MESSAGE', 'vac.IS_TYPING', 'vac.IS_ONLINE', 'conv.main', 'conv.all', 'back'];
   check('i18n: the chat component labels and conversation names exist in both languages', keys.every(k => I.TABLE.en[k] && I.TABLE['zh-TW'][k] && I.TABLE.en[k] !== I.TABLE['zh-TW'][k]));

@@ -24,17 +24,17 @@ const throws = fn => { try { fn(); return null; } catch (e) { return e.message; 
     const mod = require('..');
     const route = mod.routes.find(r => r.path === '/main');
 
-    // a paired device only reads: on a fresh state it writes nothing and gets 404; the owner path still creates
+    // a paired device only reads: on a fresh state it writes nothing and gets 200 {id:null}; the owner path still creates
     const octx = Object.assign({}, ctx, { actor: { kind: 'owner' } }); // what lib/server.js sets for the owner token: no id
     const dctx = Object.assign({}, ctx, { actor: { kind: 'owner', id: 'device:d-test' } });
     const rolesFile = () => fs.existsSync(path.join(tmp, 'state')) ? fs.readdirSync(path.join(tmp, 'state'), { recursive: true }).map(String).filter(p => fs.statSync(path.join(tmp, 'state', p)).isFile()).sort().join() : '';
     const before = rolesFile();
     const rd = route.handler(dctx);
-    check('device GET /main on a fresh state is read-only: 404, no role, no file written', rd.status === 404 && api.list().length === 0 && api.dynamicBots().length === 0 && rolesFile() === before, JSON.stringify(rd) + ' ' + before + ' -> ' + rolesFile());
+    check('device GET /main on a fresh state is read-only: 200 {id:null}, no role, no file written', rd.status === 200 && JSON.stringify(rd.json) === '{"id":null}' && api.list().length === 0 && api.dynamicBots().length === 0 && rolesFile() === before, JSON.stringify(rd) + ' ' + before + ' -> ' + rolesFile());
 
     const others = [undefined, null, {}, { kind: 'worker' }, { kind: 'anonymous' }, { kind: 'device', id: 'd-1' }, { kind: 'owner', id: 'x' }, { kind: 'owner', id: '' }, { kind: 'Owner' }];
     const ro = others.map(a => route.handler(Object.assign({}, ctx, { actor: a })));
-    check('GET /main by an actor that is neither the owner nor a device fails closed: 404, no role, no file written', ro.every(x => x.status === 404) && api.list().length === 0 && api.dynamicBots().length === 0 && rolesFile() === before, JSON.stringify(ro.map(x => x.status)) + ' ' + before + ' -> ' + rolesFile());
+    check('GET /main by an actor that is neither the owner nor a device fails closed: {id:null}, no role, no file written', ro.every(x => x.status === 200 && x.json.id === null && Object.keys(x.json).join() === 'id') && api.list().length === 0 && api.dynamicBots().length === 0 && rolesFile() === before, JSON.stringify(ro.map(x => x.status)) + ' ' + before + ' -> ' + rolesFile());
 
     check('no main role exists before first use', api.list().length === 0 && api.dynamicBots().length === 0);
     const r1 = route.handler(octx);

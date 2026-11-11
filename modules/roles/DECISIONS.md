@@ -61,5 +61,5 @@
     rule: `role_update {main:true}` moves the mark, `main:false` and archiving the main role are refused. With no main role,
     `GET /m/roles/main` (and `api.main()`) creates a default one on first use (`chief.js`), so the role list stays empty until
     someone asks. The main role's turn context gets a compact roster (count, at most 8 `name — first persona line`, a pointer to
-    `role_list`/`role_ask`), never full role texts. The chat page reads `/m/roles/main` because `/api/bots` carries no flag.
+    `role_list`/`role_ask`), never full role texts. The chat page reads `/m/roles/main` because `/api/bots` carries no flag. Read-only callers with no main role yet get 200 `{id: null}` (not 404), so a page load leaves no failed request; the page still treats an old server's 404 the same way.
     Known gap: the group lead and `role_ask` "main" still mean the configured main bot (trunk/ask.js decision).

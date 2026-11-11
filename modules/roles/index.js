@@ -183,9 +183,9 @@ module.exports = {
         try { needRooms(ctx); const g = groupsOfCtx(ctx).create({ name, members: ids }, ctx); groupNote(ctx, 'group_created', g, { members: ids, by }); return { status: 201, json: g }; }
         catch (e) { return bad(String(e && e.message || 'could not create the group').slice(0, 300)); }
       } },
-    // The chat page asks which role is the main one. The owner side makes the default main role on first use; anyone but the owner only reads it (404 until it exists).
-    { method: 'GET', path: '/main', description: 'the main role {id, name}; for the owner it creates the default chief-of-staff role when none is marked main, for a paired device it is read-only (404 until then)',
-      handler: ctx => { try { const owner = !!ctx.actor && ctx.actor.kind === 'owner' && ctx.actor.id === undefined; const r = owner ? storeOfCtx(ctx).ensureMain(chief.DEFAULT) : storeOfCtx(ctx).getMain(); if (!r) return { status: 404, json: { error: 'no main role yet' } }; return { status: 200, json: { id: r.id, name: r.name } }; } catch { return { status: 500, json: { error: 'internal error' } }; } } },
+    // The chat page asks which role is the main one. The owner side makes the default main role on first use; anyone but the owner only reads it (200 {id:null} until it exists, so the page's polling is not a 404).
+    { method: 'GET', path: '/main', description: 'the main role {id, name}; for the owner it creates the default chief-of-staff role when none is marked main, for a paired device it is read-only ({id:null} with status 200 until then)',
+      handler: ctx => { try { const owner = !!ctx.actor && ctx.actor.kind === 'owner' && ctx.actor.id === undefined; const r = owner ? storeOfCtx(ctx).ensureMain(chief.DEFAULT) : storeOfCtx(ctx).getMain(); if (!r) return { status: 200, json: { id: null } }; return { status: 200, json: { id: r.id, name: r.name } }; } catch { return { status: 500, json: { error: 'internal error' } }; } } },
     // Role card (owner). The avatar is served as a raw image; the card routes give the field registry with the values, so the page draws its fields from data.
     { method: 'GET', path: '/avatar/:id', access: 'owner', raw: true, description: 'the role avatar image (png, jpeg or webp); 404 when the role has none',
       handler(ctx) {
