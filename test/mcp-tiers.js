@@ -194,9 +194,48 @@ const sizeOf = (tools, cats, expanded) => bytes(T.listTools(tools, { categories:
     const eq = JSON.parse((await rpc('tools/call', { name: 'expand_tools', arguments: { query: 'cache' } })).result.content[0].text);
     check('when: a query match, even a tier 3 name, shows the line (no schema)', eq.matches.every(m => m.when) && !/inputSchema/.test(JSON.stringify(eq.matches)) && eq.matches.some(m => m.name === 'nuke_cache' && /stale/.test(m.when)), eq.matches);
   }
+  // call-time check: guard-base content rules also apply to a call that reaches the server without the engine hook
+  {
+    const ran0 = ran, secret = 'sk-ant-' + 'a1B2c3D4e5F6';
+    const bl = await rpc('tools/call', { name: 'nuke_cache', arguments: { content: 'key=' + secret } });
+    const jb = journal().filter(r => r.type === 'tool_blocked');
+    check('call-time (1): a tier 3 tool whose args guard-base blocks is refused by tools/call, not run, one journal line', bl.result.isError && /refused/.test(bl.result.content[0].text) && ran === ran0 && jb.length === 1 && jb[0].tool === 'nuke_cache' && !JSON.stringify(journal()).includes(secret), [bl.result.content[0].text, jb]);
+    const ok = await rpc('tools/call', { name: 'nuke_cache', arguments: { content: 'plain text' } });
+    check('call-time (2): an allowed unlisted tool still runs', !ok.result.isError && /wiped/.test(ok.result.content[0].text) && ran === ran0 + 1 && journal().filter(r => r.type === 'tool_blocked').length === 1, ok.result.content[0].text);
+    ran = ran0;
+    let askRan = 0;
+    S.extraTools.push({ name: 'ask_other', when: 'A tool another module asks about', tier: 2, category: 'misc', description: 'Asks.', inputSchema: { type: 'object', properties: {} }, run: () => { askRan++; return { fine: true }; } });
+    const before = journal().length;
+    const ak = await rpc('tools/call', { name: 'ask_other', arguments: { note: 'rm -rf later' } });
+    const added = journal().slice(before);
+    check('call-time (3): a tool another module would ask about still runs; our check adds nothing (no block line, no card/spend/snapshot)', !ak.result.isError && askRan === 1 && added.every(r => r.type !== 'tool_blocked'), [ak.result.content[0].text, added]);
+    S.extraTools.pop();
+    // (4)(5) stub the guard answers: guard-base is patched at the module-loader seam, restored in finally
+    const Mods = require('../lib/modules'), realApiOf = Mods.apiOf;
+    const snap = () => { const o = {}; const walk = p => { for (const e of fs.readdirSync(p, { withFileTypes: true })) { const f = path.join(p, e.name); if (e.isDirectory()) walk(f); else o[path.relative(env.HARNESS_STATE_DIR, f)] = fs.statSync(f).size; } }; try { walk(env.HARNESS_STATE_DIR); } catch { /* none yet */ } return JSON.stringify(o); };
+    let asked = 0, ranAsk = 0, ranThrow = 0;
+    S.extraTools.push({ name: 'ask_stub', when: 'A tool a guard would ask about', tier: 2, category: 'misc', description: 'Asks.', inputSchema: { type: 'object', properties: {} }, run: () => { ranAsk++; return { fine: true }; } });
+    S.extraTools.push({ name: 'throw_stub', when: 'A tool whose guard throws', tier: 2, category: 'misc', description: 'Throws.', inputSchema: { type: 'object', properties: {} }, run: () => { ranThrow++; return { fine: true }; } });
+    try {
+      Mods.apiOf = (mods, name) => (name === 'guard-base' ? { beforeTool: () => { asked++; return ['ask:install', 'installs software']; } } : realApiOf(mods, name));
+      const jBefore = JSON.stringify(journal()), sBefore = snap();
+      const ak2 = await rpc('tools/call', { name: 'ask_stub', arguments: {} });
+      check('call-time (4): an ASK from the guard passes through untouched: the tool runs, no approval is used, no spend line, no snapshot, journal and state files unchanged', !ak2.result.isError && asked === 1 && ranAsk === 1 && JSON.stringify(journal()) === jBefore && snap() === sBefore, [ak2.result.content[0].text, asked, ranAsk]);
+      Mods.apiOf = (mods, name) => (name === 'guard-base' ? { beforeTool: () => { throw new Error('guard exploded'); } } : name === 'guard-private-rules' ? { privateRules: () => { throw new Error('rules exploded'); } } : realApiOf(mods, name));
+      const jb2 = journal().filter(r => r.type === 'tool_blocked').length;
+      const th = await rpc('tools/call', { name: 'throw_stub', arguments: {} });
+      check('call-time (5): a guard (and private rules) that throws does not block the call: it runs, no tool_blocked line', !th.result.isError && ranThrow === 1 && journal().filter(r => r.type === 'tool_blocked').length === jb2, th.result.content[0].text);
+      // (6) guard-base asks, private rules block: the ask must not hide the block
+      Mods.apiOf = (mods, name) => (name === 'guard-base' ? { beforeTool: () => ['ask:install', 'installs software'] } : name === 'guard-private-rules' ? { privateRules: () => ['private_rule', 'a private rule'] } : realApiOf(mods, name));
+      const jb3 = journal().filter(r => r.type === 'tool_blocked'), ran3 = ranThrow;
+      const bo = await rpc('tools/call', { name: 'throw_stub', arguments: {} });
+      const jb4 = journal().filter(r => r.type === 'tool_blocked');
+      check('call-time (6): guard-base asks and private rules block -> refused, not run, exactly one new tool_blocked line (the ask does not skip the private rules)', bo.result.isError && /refused/.test(bo.result.content[0].text) && ranThrow === ran3 && jb4.length === jb3.length + 1 && jb4[jb4.length - 1].kind === 'private_rule', [bo.result.content[0].text, jb4.length - jb3.length]);
+    } finally { Mods.apiOf = realApiOf; S.extraTools.pop(); S.extraTools.pop(); }
+  }
   const d3 = await rpc('tools/call', { name: 'nuke_cache', arguments: {} });
   const jc = journal().filter(r => r.type === 'tool_call');
-  check('a direct call of a tier 3 tool runs and is journaled {type:tool_call, tier:3}', !d3.result.isError && /wiped/.test(d3.result.content[0].text) && ran === 1 && jc.length === 1 && jc[0].tool === 'nuke_cache' && jc[0].tier === 3, [d3.result, jc]);
+  check('a direct call of a tier 3 tool runs and is journaled {type:tool_call, tier:3}', !d3.result.isError && /wiped/.test(d3.result.content[0].text) && ran === 1 && jc.length === 2 /* call-time (2) ran it once before */ && jc[1].tool === 'nuke_cache' && jc[1].tier === 3, [d3.result, jc]);
   // privacy: a secret-looking argument value never reaches the journal (assembled at run time)
   const secret = ['sk', 'live', 'Zx9' + 'Qw7' + 'Lm4'].join('_');
   await rpc('tools/call', { name: 'expand_tools', arguments: { name: 'nuke_cache' } });

@@ -298,10 +298,29 @@ function expandTools(a) {
   return out;
 }
 // Runs any registered tool by name (the same code path as tools/call). Tier 3 calls are journaled.
+// Block-only call-time check: the pure content rules of guard-base and guard-private-rules, under the registered server name.
+// A block refuses and is journaled; an ask or anything else passes through (the engine hook owns approvals). No other module runs here.
+const CALL_SERVER = 'taskmote-tools';
+function callTimeBlock(name, a) {
+  const L = loaded();
+  if (L.err) return null;
+  const tool = 'mcp__' + CALL_SERVER + '__' + name;
+  const run = (mod, fn) => {
+    let api; try { api = M.apiOf(L.mods, mod); } catch { return null; }
+    if (!api || typeof api[fn] !== 'function') return null;
+    try { return fn === 'beforeTool' ? api.beforeTool({ tool, ti: a, cwd: process.cwd() }) : api.privateRules(tool, a); } catch { return null; }
+  };
+  // Evaluate both: an ask/allow answer from one must not hide a block from the other. First block wins.
+  const isBlock = g => Array.isArray(g) && typeof g[0] === 'string' && !/^(ask|allow):/.test(g[0]);
+  const a1 = run('guard-base', 'beforeTool'), a2 = run('guard-private-rules', 'privateRules');
+  return isBlock(a1) ? a1 : isBlock(a2) ? a2 : null;
+}
 async function runTool(name, a, reqId) {
   const t = T.find(allTools(), name);
   if (!t && has(IMPL, name)) return IMPL[name](a, reqId);
   if (!t) throw new ToolError(`unknown tool ${clip(name, 40)}`);
+  const blk = callTimeBlock(name, a);
+  if (blk) { J.append({ type: 'tool_blocked', tool: name, kind: clip(blk[0], 40), task_id: taskIdNow() }); throw new ToolError(`${clip(name, 40)} refused: ${clip(blk[1], 160)} (${clip(blk[0], 40)})`); }
   if (T.tierOf(allTools(), name, warn) === 3) J.append({ type: 'tool_call', tool: name, tier: 3, task_id: taskIdNow() });
   if (t.module === 'core') return has(IMPL, name) ? IMPL[name](a, reqId) : t.run(a, reqId);
   if (!t.module) return t.run(a, reqId); // in-process test seam (extraTools)
