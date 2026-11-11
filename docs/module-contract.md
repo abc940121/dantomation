@@ -48,6 +48,7 @@ Manifest fields (unknown fields are a load error):
 | `runsOn` | `"main"` and/or `"worker"` |
 | `priority` | order within dependency order |
 | `dependsOn` | modules reached through `ctx.api(name)` |
+| `optionalDependsOn` | like `dependsOn`, but the module still loads without them and `ctx.api(name)` returns `null`. An optional dependency that is loaded but stuck in a dependency cycle still drops this module, as a hard dependency would |
 | `beforeTool(ctx)` | guard hook, `null` allows, `[kind, reason]` blocks |
 | `statusLines(J, ctx)` | lines for `taskmote status` |
 | `prepareTurn(ctx)` | context strings added to the engine prompt |

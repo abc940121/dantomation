@@ -183,7 +183,7 @@ async function main() {
   const rl = mkEnv('roles', { roles: true });
   const rs = startServer(rl.env);
   const rnames = ((await rs.call('tools/list', {})).result.tools || []).map(t => t.name).sort();
-  check('module tools: the six plus the four role tools, each with a schema', JSON.stringify(rnames) === JSON.stringify([...ALL, 'role_create', 'role_list', 'role_remove', 'role_update'].sort()), rnames);
+  check('module tools: the six plus the role and group tools, each with a schema', JSON.stringify(rnames) === JSON.stringify([...ALL, 'group_create', 'group_list', 'group_remove', 'group_update', 'role_ask', 'role_create', 'role_list', 'role_remove', 'role_update'].sort()), rnames);
   const rcr = await rs.tool('role_create', { name: 'Captain', persona: 'You are a calm ship captain.' });
   check('role_create: returns the role', !rcr.err && rcr.json && /^r-[0-9a-f]{8}$/.test(rcr.json.id) && rcr.json.name === 'Captain', rcr);
   const rfile = path.join(rl.env.HARNESS_STATE_DIR, 'm', 'roles', 'roles.json');

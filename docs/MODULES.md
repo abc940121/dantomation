@@ -86,8 +86,12 @@ Order within the dependency order: lower runs first, ties keep config order. Har
 `priority: 50`
 
 ### `dependsOn`: `[name]`, default `[]`
-Modules this one calls through `ctx.api(name)`. `ctx.api` throws for a name not listed here, so `dependsOn` is the only way to reach another module. A listed module that is missing, off, not run on this role or failed to load makes this one a load error (`x: depends on "y", which is off in config "modules"`), and so does a cycle (`x: dependency cycle: x -> y -> x`).
+Modules this one calls through `ctx.api(name)`. `ctx.api` throws for a name not listed here, so `dependsOn` (or `optionalDependsOn`, below) is the only way to reach another module. A listed module that is missing, off, not run on this role or failed to load makes this one a load error (`x: depends on "y", which is off in config "modules"`), and so does a cycle (`x: dependency cycle: x -> y -> x`).
 `dependsOn: ['guard-base']`
+
+### `optionalDependsOn`: `[name]`, default `[]`
+Like `dependsOn`, for a module that can work without the other one. If the listed module is loaded, this one loads after it and `ctx.api(name)` works as usual. If it is missing, off or failed, this module still loads, there is no error, and `ctx.api(name)` returns `null`. Call `ctx.api(name)` when you need it and handle `null`; do not keep the result from load time. A name may not be in both lists. A cycle through optional dependencies is a load error like any cycle.
+`optionalDependsOn: ['rooms']`
 
 ### `beforeTool(ctx) -> null | [kind, reason]`
 Runs in the guard before every tool call, in load order, with ctx `{input, tool, ti, cwd, config, settings, secret, state, api, emit, tasks, signal}`. The first hit blocks.
@@ -221,7 +225,7 @@ Handlers in the same process see each other's emits; a nested emit deeper than 8
 `registry(cfg, {role})` returns:
 
 - `mods`, `errors`
-- `modules()`: `[{name, contract, runsOn, dependsOn, secrets: {key: 'configured'|'missing'}, stateVersion}]`
+- `modules()`: `[{name, contract, runsOn, dependsOn, optionalDependsOn, secrets: {key: 'configured'|'missing'}, stateVersion}]`
 - `listCommands()`
 - `listRoutes()`: `[{module, method, path, handler, description, access}]`
 - `listPanels()`: `[{module, id, title, mount, entry, url, file}]`

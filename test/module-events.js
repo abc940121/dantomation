@@ -110,6 +110,28 @@ const mods = (cfg, names) => { const r = M.load(cfg); return [r, r.mods.map(m =>
     e = M.load({ modules: { [ca]: true, [cb]: true, [fast]: true } });
     check('dependency cycle is a load error; other modules still load', e.mods.map(m => m.name).join() === fast && e.errors.some(x => x.includes(`dependency cycle: ${ca} -> ${cb} -> ${ca}`)), e.errors.join(' | '));
 
+    // ---- optionalDependsOn (modules change only at restart: load() builds peers once, there is no reload path)
+    const opt = N('opt');
+    mod(opt, `{ contract: 1, name: '${opt}', priority: 0, optionalDependsOn: ['${base}'],
+      beforeTool({ ti, api }) { if (ti.command === 'opt') { const b = api('${base}'); return ['opt', b ? b.hi() : 'null']; } if (ti.command === 'sneak') api('${fast}'); return null; } }`);
+    [r] = mods({ modules: { [opt]: true } });
+    let op = await M.beforeTool(r.mods, { tool: 'Bash', ti: { command: 'opt' } });
+    check('optionalDependsOn: dep off -> module loads without error, ctx.api returns null', r.errors.length === 0 && r.mods.length === 1 && op && op[1] === 'null', JSON.stringify(op) + r.errors.join(' | '));
+    [r] = mods({ modules: { [opt]: true, [base]: true } });
+    op = await M.beforeTool(r.mods, { tool: 'Bash', ti: { command: 'opt' } });
+    check('optionalDependsOn: dep on -> loaded after it, ctx.api works', r.errors.length === 0 && r.mods.map(m => m.name).join() === [base, opt].join() && op && op[1] === 'from base', JSON.stringify(op) + r.mods.map(m => m.name));
+    const sn2 = await M.beforeTool(r.mods, { tool: 'Bash', ti: { command: 'sneak' } });
+    check('optionalDependsOn: a name in neither list still throws', sn2 && /without listing it in dependsOn/.test(sn2[1]), JSON.stringify(sn2));
+    const both = N('both');
+    mod(both, `{ contract: 1, name: '${both}', dependsOn: ['${base}'], optionalDependsOn: ['${base}'] }`);
+    e = M.load({ modules: { [both]: true, [base]: true } });
+    check('optionalDependsOn: a name in both lists is a load error', e.errors.some(x => x.startsWith(`${both}:`) && /both/.test(x)), e.errors.join(' | '));
+    const oa = N('oa'), ob = N('ob');
+    mod(oa, `{ contract: 1, name: '${oa}', optionalDependsOn: ['${ob}'] }`);
+    mod(ob, `{ contract: 1, name: '${ob}', dependsOn: ['${oa}'] }`);
+    e = M.load({ modules: { [oa]: true, [ob]: true } });
+    check('optionalDependsOn: a cycle through an optional dep is a load error', e.errors.some(x => /dependency cycle/.test(x)), e.errors.join(' | '));
+
     // ---- events
     const seen = [];
     global.__zzSeen = seen;

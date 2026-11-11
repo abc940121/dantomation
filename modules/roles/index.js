@@ -86,6 +86,7 @@ module.exports = {
   description: 'Owner-made roles: bots registered at run time, each its own conversation with a persona text.',
   runsOn: 'main',
   priority: 61,
+  optionalDependsOn: ['rooms'],
 
   // Before each engine turn: when the task belongs to a role, tell the agent which persona it speaks as.
   prepareTurn(ctx) {
@@ -129,7 +130,10 @@ module.exports = {
     { id: 'rooms-source', description: 'let the rooms module list the owner-made groups (only when rooms is on)',
     start(ctx) {
       if (!roomsOn(ctx)) return () => {};
-      try { return require('../rooms').api.registerRoomSource(() => groupsOfCtx(ctx).rooms(ctx)); } catch { return () => {}; }
+      try {
+        const rooms = ctx.api('rooms');
+        return rooms ? rooms.registerRoomSource(() => groupsOfCtx(ctx).rooms(ctx)) : () => {};
+      } catch { return () => {}; }
     } }],
 
   stateVersion: 1,

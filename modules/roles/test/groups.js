@@ -85,7 +85,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
     // rooms module: the group is served through its own routes
     const job = rolesMod.jobs.find(j => j.id === 'rooms-source');
-    const stop = job.start({ state, config: conf });
+    const stop = job.start({ state, config: conf, api: n => (n === 'rooms' ? M.apiOf(mods, 'rooms') : null) });
     check('the rooms-source job registers a source and returns a stop function', typeof stop === 'function');
     const enq = [];
     const rctx = (extra = {}) => ({

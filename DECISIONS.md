@@ -89,5 +89,6 @@ Layout: each module keeps its own log in `modules/<name>/DECISIONS.md` and `modu
 - Chat UI: a room select in the header (filled from the rooms list, hidden when the module is off) replaces editing the URL; ?room=<id> is read at start and kept in sync with replaceState, so a phone can bookmark a room.
 - Server: readBody decodes with a fatal UTF-8 TextDecoder and answers 400 'body is not valid UTF-8 JSON' for invalid bytes, instead of storing U+FFFD from a non-UTF-8 shell.
 - Worker setup: token and check share one token-path resolver (config worker.token_file, env, default); a malformed config is an error, a missing one is fine.
+- Gate: every push runs the full gate, module-only pushes included. A module push that ran only its own suites left main red on two trunk suites (a module reaching into another module by path, and the MCP tool list). A module that can work without another one lists it in optionalDependsOn and never requires it by path.
 - Chat UI: ?room= is dropped only when a successful rooms list lacks it; a 401 or network failure keeps it.
 - Cross-cutting decisions (more than one module) live one per file in docs/decisions/: voice-ownership.md, speaker-names.md. Rule: docs/module-contract.md.
