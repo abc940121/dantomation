@@ -563,28 +563,47 @@ async function pageTests() {
       }
     }
   }
-  // the picture: chosen in the dialog, sent as base64 JSON (no raw upload), checked in the page first
-  check('new-role dialog has a picture input that accepts only png, jpeg, webp', html.includes('id="role-avatar" type="file" accept="image/png,image/jpeg,image/webp"'));
-  check('role.avatar texts exist in both languages', ['role.avatar', 'role.avatar.hint', 'role.err.avatar'].every(k => I.t('en', k) && I.t('zh-TW', k) && I.t('en', k) !== I.t('zh-TW', k)));
-  const PNGB = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from('tiny')]);
-  for (const lang of ['en', 'zh-TW']) {
-    let sent = null;
-    const r = await run(lang, (u, o) => (u.startsWith('/m/roles/roles') ? (sent = JSON.parse(o.body), json(201, { id: 'r-11111111', name: 'Editor' })) : u.startsWith('/api/bots') ? json(200, bots) : u.startsWith('/api/events') ? new Response('', { status: 200 }) : json(200, [])));
+  // the picture: chosen in the dialog, shrunk in the page, sent as base64 JSON (no raw upload)
+  check('new-role dialog has a picture input that takes any image (the page shrinks it)', html.includes('id="role-avatar" type="file" accept="image/*"'));
+  check('role.avatar texts exist in both languages; the hint says any photo is resized, the error says it cannot be read', ['role.avatar', 'role.avatar.hint', 'role.err.avatar'].every(k => I.t('en', k) && I.t('zh-TW', k) && I.t('en', k) !== I.t('zh-TW', k)) && I.t('en', 'role.avatar.hint') === 'Any photo; it is resized automatically.' && I.t('zh-TW', 'role.avatar.hint') === '任何照片都可以，會自動縮小。' && I.t('en', 'role.err.avatar') === 'This picture cannot be read. Try a PNG, JPEG or WebP.' && I.t('zh-TW', 'role.err.avatar') === '這張圖片讀不出來，請換一張 PNG、JPEG 或 WebP。');
+  // a fake browser: createImageBitmap + a canvas whose encoded size depends on the quality
+  const fakeBrowser = (r, { w = 4000, h = 3000, sizeOf, webp = true, unreadable = false }) => {
+    const rec = { draws: [], enc: [], cv: null, bytes: Buffer.from('shrunk-bytes') };
+    r.ctx.createImageBitmap = async (f, o) => { rec.opts = o; if (unreadable) throw new Error('cannot decode'); return { width: w, height: h, close() { rec.closed = true; } }; };
+    r.ctx.document.createElement = () => { const cv = { width: 0, height: 0, getContext: () => ({ drawImage: (...a) => rec.draws.push(a) }), toBlob(cb, type, q) { rec.enc.push([type, q]); const t = type === 'image/webp' && !webp ? 'image/png' : type; cb({ type: t, size: sizeOf(t, q), arrayBuffer: async () => rec.bytes.buffer.slice(rec.bytes.byteOffset, rec.bytes.byteOffset + rec.bytes.length) }); } }; rec.cv = cv; return cv; };
+    return rec;
+  };
+  const pick = async (lang, file, browser, submit = true) => {
+    const out = { sent: null };
+    const r = await run(lang, (u, o) => (u.startsWith('/m/roles/roles') ? (out.sent = JSON.parse(o.body), json(201, { id: 'r-11111111', name: 'Editor' })) : u.startsWith('/api/bots') ? json(200, bots) : u.startsWith('/api/events') ? new Response('', { status: 200 }) : json(200, [])));
+    out.r = r; out.rec = fakeBrowser(r, browser);
     r.get('new-role').handlers.click();
     r.get('role-name').value = 'Editor'; r.get('role-job').value = 'Checks drafts';
-    r.get('role-avatar').files = [{ type: 'image/png', size: PNGB.length, arrayBuffer: async () => PNGB.buffer.slice(PNGB.byteOffset, PNGB.byteOffset + PNGB.length) }];
+    r.get('role-avatar').files = [file];
     await r.get('role-avatar').handlers.change(); await r.settle();
-    await r.get('role-form').handlers.submit({ preventDefault() {} }); await r.settle();
-    check(lang + ' picture: the POST carries it as {avatar: {data: base64}} and the dialog closes', !!sent && sent.name === 'Editor' && sent.avatar && sent.avatar.data === PNGB.toString('base64') && r.get('role-dlg').hidden === true, JSON.stringify(sent));
-    // wrong type / too big: refused in the page with the translated text, nothing sent
-    for (const f of [{ type: 'image/gif', size: 100 }, { type: 'image/png', size: 180001 }]) {
-      const r2 = await run(lang, (u, o) => (u.startsWith('/api/bots') ? json(200, bots) : u.startsWith('/api/events') ? new Response('', { status: 200 }) : json(200, [])));
-      r2.get('new-role').handlers.click();
-      r2.get('role-avatar').files = [{ ...f, arrayBuffer: async () => new ArrayBuffer(4) }];
-      await r2.get('role-avatar').handlers.change(); await r2.settle();
-      check(lang + ' picture ' + f.type + ' ' + f.size + ': refused with the translated text, nothing sent', r2.get('role-err').textContent === I.t(lang, 'role.err.avatar') && r2.get('role-err').hidden === false && !r2.calls.some(c => c === '/m/roles/roles POST'));
-    }
+    if (submit) { await r.get('role-form').handlers.submit({ preventDefault() {} }); await r.settle(); }
+    return out;
+  };
+  const BIG = { type: 'image/jpeg', size: 6000000, arrayBuffer: async () => { throw new Error('the original file must not be read'); } };
+  const AVMAX = 180000;
+  for (const lang of ['en', 'zh-TW']) {
+    const ok = await pick(lang, BIG, { sizeOf: (t, q) => Math.round(400000 * q * q) }); // q .9 -> 324000, .8 -> 256000, .7 -> 196000, .6 -> 144000
+    const tries = ok.rec.enc.map(e => e[0] + '@' + e[1]).join();
+    check(lang + ' picture: a 6 MB photo is accepted, decoded with imageOrientation from-image, cropped to a centred 512 px square', !!ok.sent && !!ok.sent.avatar && ok.rec.opts && ok.rec.opts.imageOrientation === 'from-image' && ok.rec.cv.width === 512 && ok.rec.cv.height === 512 && JSON.stringify(ok.rec.draws[0].slice(1)) === JSON.stringify([500, 0, 3000, 3000, 0, 0, 512, 512]), JSON.stringify(ok.rec.draws));
+    check(lang + ' picture: it tries WebP and lowers the quality step by step until the blob is under AV_MAX (stops at the first fit)', tries === 'image/webp@0.9,image/webp@0.8,image/webp@0.7,image/webp@0.6', tries);
+    check(lang + ' picture: the POST carries the SHRUNK bytes as {avatar:{data}} (not the original), and the dialog closes', !!ok.sent && !!ok.sent.avatar && ok.sent.avatar.data === ok.rec.bytes.toString('base64') && ok.r.get('role-dlg').hidden === true);
+    const tiny = await pick(lang, { type: 'image/png', size: 100, arrayBuffer: async () => new ArrayBuffer(4) }, { sizeOf: () => AVMAX + 1 }, false);
+    check(lang + ' picture: the size check is on the shrunk blob: a 100-byte original whose every encoding is over AV_MAX is refused, nothing sent', tiny.r.get('role-err').textContent === I.t(lang, 'role.err.avatar') && tiny.r.get('role-err').hidden === false && tiny.sent === null && tiny.rec.enc.length >= 7);
+    const edge = await pick(lang, { type: 'image/png', size: 100, arrayBuffer: async () => new ArrayBuffer(4) }, { sizeOf: () => AVMAX });
+    check(lang + ' picture: a result of exactly AV_MAX is accepted', !!edge.sent && !!edge.sent.avatar);
+    const jp = await pick(lang, BIG, { webp: false, sizeOf: (t, q) => (t === 'image/jpeg' ? Math.round(300000 * q) : 999999) });
+    check(lang + ' picture: with no WebP encoder it falls back to JPEG', !!jp.sent && !!jp.sent.avatar && jp.rec.enc.some(e => e[0] === 'image/jpeg') && jp.rec.enc[0][0] === 'image/webp', JSON.stringify(jp.rec.enc));
+    const bad = await pick(lang, { type: 'image/heic', size: 3000000, arrayBuffer: async () => new ArrayBuffer(4) }, { unreadable: true, sizeOf: () => 1 }, false);
+    check(lang + ' picture: a file the browser cannot read gets the translated "cannot be read" line, nothing sent', bad.r.get('role-err').textContent === I.t(lang, 'role.err.avatar') && bad.sent === null);
+    const sm = await pick(lang, BIG, { w: 200, h: 300, sizeOf: () => 1000 });
+    check(lang + ' picture: a small picture is not enlarged (square of its short side)', sm.rec.cv.width === 200 && sm.rec.cv.height === 200 && JSON.stringify(sm.rec.draws[0].slice(1)) === JSON.stringify([0, 50, 200, 200, 0, 0, 200, 200]), JSON.stringify(sm.rec.draws));
   }
+  check('picture: the page never compares the original file size to AV_MAX', !/f\.size\s*>\s*AV_MAX/.test(fs.readFileSync(path.join(UI, 'app.js'), 'utf8')));
   check('new-role: empty name or job is refused in the page without a request', await (async () => {
     const r = await run('en', u => (u.startsWith('/api/bots') ? json(200, bots) : u.startsWith('/api/events') ? new Response('', { status: 200 }) : json(200, [])));
     r.get('new-role').handlers.click();

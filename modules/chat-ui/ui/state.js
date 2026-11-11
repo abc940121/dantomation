@@ -199,5 +199,28 @@
   // A typed or pasted value is a pairing code when it is six digits or starts with pc_.
   const looksLikeCode = v => /^\d{3}\s?-?\s?\d{3}$/.test(String(v).trim()) || /^pc_[\w-]{10,80}$/.test(String(v).trim());
 
-  return { firstOpen, botConvIds, mainBotId, pairFromHash, handoffFromHash, looksLikeCode, create, reduce, applyBots, mainBotId, applyTasks, applyCards, thread, pendingCards, pendingFor, unverifiedTotal, canUndo, remainingSec, fmtCountdown, chatBody, createSSEParser, tokenFromHash };
+  // Shrink a picked picture in the page before upload: decode (EXIF orientation applied), centre-crop to a square (the role avatar is
+  // shown as a square/round picture, object-fit: cover), at most `side` px, WebP (JPEG when the browser cannot encode WebP), quality
+  // lowered step by step until the ENCODED blob is at most maxBytes. Returns the blob, or null when the file cannot be read or nothing fits.
+  // env = { createImageBitmap(file, opts), makeCanvas(w, h) } so the size logic runs outside a browser too.
+  async function shrinkImage(file, env, maxBytes, side) {
+    let bmp;
+    try { bmp = await env.createImageBitmap(file, { imageOrientation: 'from-image' }); } catch (e) { return null; }
+    if (!bmp || !(bmp.width > 0) || !(bmp.height > 0)) return null;
+    const sq = Math.min(bmp.width, bmp.height), out = Math.max(1, Math.min(side || 512, sq));
+    let cv;
+    try { cv = env.makeCanvas(out, out); cv.getContext('2d').drawImage(bmp, (bmp.width - sq) / 2, (bmp.height - sq) / 2, sq, sq, 0, 0, out, out); } catch (e) { return null; }
+    if (typeof bmp.close === 'function') { try { bmp.close(); } catch (e) { /* ignore */ } }
+    const enc = (type, q) => new Promise(res => { try { cv.toBlob(b => res(b || null), type, q); } catch (e) { res(null); } });
+    let type = 'image/webp';
+    const first = await enc(type, 0.9);
+    if (!first || first.type !== 'image/webp') type = 'image/jpeg'; // no WebP encoder: the browser answers with PNG or nothing
+    for (const q of [0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3]) {
+      const b = type === 'image/webp' && q === 0.9 ? first : await enc(type, q);
+      if (b && b.type === type && b.size > 0 && b.size <= maxBytes) return b;
+    }
+    return null;
+  }
+
+  return { shrinkImage, firstOpen, botConvIds, mainBotId, pairFromHash, handoffFromHash, looksLikeCode, create, reduce, applyBots, mainBotId, applyTasks, applyCards, thread, pendingCards, pendingFor, unverifiedTotal, canUndo, remainingSec, fmtCountdown, chatBody, createSSEParser, tokenFromHash };
 });

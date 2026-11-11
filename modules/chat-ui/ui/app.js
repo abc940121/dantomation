@@ -774,8 +774,12 @@
     rol.avatar = null; roleErr('');
     const f = $('role-avatar').files && $('role-avatar').files[0];
     if (!f) return;
-    if (!['image/png', 'image/jpeg', 'image/webp'].includes(f.type) || f.size > AV_MAX) { $('role-avatar').value = ''; return roleErr(tr('role.err.avatar')); }
-    try { rol.avatar = b64(await f.arrayBuffer()); } catch { $('role-avatar').value = ''; roleErr(tr('role.err.avatar')); }
+    // Any picture, any size: shrink it here, then check the size of the SHRUNK blob (never the original file) against AV_MAX.
+    try {
+      const blob = await D.shrinkImage(f, { createImageBitmap: (x, o) => createImageBitmap(x, o), makeCanvas: (w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; } }, AV_MAX, 512);
+      if (!blob) throw new Error('unreadable');
+      rol.avatar = b64(await blob.arrayBuffer());
+    } catch { $('role-avatar').value = ''; roleErr(tr('role.err.avatar')); }
   }
   function roleErr(msg) { const e = $('role-err'); e.textContent = msg || ''; e.hidden = !msg; }
   function openRoleDlg() { $('role-name').value = ''; $('role-job').value = ''; $('role-avatar').value = ''; rol.avatar = null; roleErr(''); $('role-dlg').hidden = false; $('role-name').focus(); }

@@ -104,8 +104,8 @@
       <label for="role-job" data-i18n="role.job">What it does (one line)</label>
       <input id="role-job" type="text" maxlength="200" autocomplete="off" data-i18n-placeholder="role.job.ph" placeholder="e.g. Checks my drafts for typos">
       <label for="role-avatar" data-i18n="role.avatar">Picture (optional)</label>
-      <input id="role-avatar" type="file" accept="image/png,image/jpeg,image/webp">
-      <p class="hint" data-i18n="role.avatar.hint">PNG, JPEG or WebP, up to 180 KB.</p>
+      <input id="role-avatar" type="file" accept="image/*">
+      <p class="hint" data-i18n="role.avatar.hint">Any photo; it is resized automatically.</p>
       <p id="role-err" class="hint" role="alert" hidden></p>
       <div class="btns"><button id="role-cancel" type="button" data-i18n="group.cancel">Cancel</button><button id="role-create" type="submit" data-i18n="group.create">Create</button></div>
     </form>
