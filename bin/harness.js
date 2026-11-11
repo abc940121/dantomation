@@ -60,7 +60,7 @@ function approveMcpFile(task) {
   const env = { HARNESS_STATE_DIR: J.STATE, HARNESS_CONFIG: C.file(), HARNESS_PROMPT_TOOL: '1', ...(task ? { HARNESS_TASK_ID: task.task_id, HARNESS_TASK_DIR: task.workdir } : {}) };
   // taskmote-tools: the feature tools (bin/taskmote-mcp.js, and tools that modules add), so a task session can call them.
   const tools = path.join(J.ROOT, 'bin', 'taskmote-mcp.js').replace(/\\/g, '/');
-  const toolsEnv = { HARNESS_STATE_DIR: J.STATE, HARNESS_CONFIG: C.file(), ...(task ? { HARNESS_TASK_ID: task.task_id } : {}) }; // the task id lets queue_task / undo_task cap a task's own family
+  const toolsEnv = { HARNESS_STATE_DIR: J.STATE, HARNESS_CONFIG: C.file(), ...(task ? { HARNESS_TASK_ID: task.task_id } : {}), ...(task && task.bot ? { HARNESS_BOT: task.bot } : {}) }; // the task id lets queue_task / undo_task cap a task's own family
   const s = { mcpServers: { taskmote: { type: 'stdio', command: node, args: [server], env }, 'taskmote-tools': { type: 'stdio', command: node, args: [tools], env: toolsEnv } } };
   const f = path.join(J.STATE, task ? `mcp-approve-${String(task.task_id).replace(/[^\w-]/g, '_')}.json` : 'mcp-approve.json');
   fs.mkdirSync(J.STATE, { recursive: true });
@@ -397,4 +397,4 @@ async function main() {
 }
 
 if (require.main === module) main().catch(e => { console.error(`harness: ${e && e.stack || e}`); process.exit(1); });
-module.exports = { EXEC_LOCK, cleanEnv, settingsFile, protocolFile, resolveClaude, engineSpec, CONFIG };
+module.exports = { approveMcpFile, EXEC_LOCK, cleanEnv, settingsFile, protocolFile, resolveClaude, engineSpec, CONFIG };

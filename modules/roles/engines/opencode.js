@@ -88,6 +88,7 @@ function configFor(env, wd, node, allowBash, allowWeb) {
   const e = { HARNESS_STATE_DIR: fwd(env.HARNESS_STATE_DIR || path.join(ROOT, 'state')) };
   if (env.HARNESS_CONFIG) e.HARNESS_CONFIG = fwd(env.HARNESS_CONFIG);
   if (env.HARNESS_TASK_ID) e.HARNESS_TASK_ID = env.HARNESS_TASK_ID;
+  if (env.HARNESS_BOT) e.HARNESS_BOT = env.HARNESS_BOT; // the tools process learns its role from the env
   return {
     mcp: { 'taskmote-tools': { type: 'local', command: [fwd(node), fwd(path.join(ROOT, 'bin', 'taskmote-mcp.js'))], environment: e } },
     permission: {

@@ -51,6 +51,7 @@ function mcpOverrides(env, node) {
   const e = { HARNESS_STATE_DIR: env.HARNESS_STATE_DIR || path.join(ROOT, 'state') };
   if (env.HARNESS_CONFIG) e.HARNESS_CONFIG = env.HARNESS_CONFIG;
   if (env.HARNESS_TASK_ID) e.HARNESS_TASK_ID = env.HARNESS_TASK_ID;
+  if (env.HARNESS_BOT) e.HARNESS_BOT = env.HARNESS_BOT; // the tools process learns its role from the env
   const tbl = '{' + Object.entries(e).map(([k, v]) => `${k}=${toml(fwd(v))}`).join(',') + '}';
   const p = 'mcp_servers.taskmote-tools';
   return ['-c', `${p}.command=${toml(fwd(node))}`, '-c', `${p}.args=[${toml(fwd(path.join(ROOT, 'bin', 'taskmote-mcp.js')))}]`, '-c', `${p}.env=${tbl}`,

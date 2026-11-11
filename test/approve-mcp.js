@@ -365,6 +365,13 @@ async function main() {
     check('card cap: prompt tool, a wide-character input over 256 KB in UTF-8 bytes is denied', w2.behavior === 'deny' && !cardOf('tc6'), w2);
   }
 
+  { // the tools process learns its role from HARNESS_BOT in its env (never a tool argument), only when the task has a bot
+    const H = require(path.join(ROOT, 'bin', 'harness'));
+    const envOf = t => JSON.parse(fs.readFileSync(H.approveMcpFile(t), 'utf8')).mcpServers['taskmote-tools'].env;
+    const eb = envOf({ task_id: 'tb1', workdir: tmp, bot: 'r-test01' }), en = envOf({ task_id: 'tb2', workdir: tmp });
+    check('tools env: a task with a bot gets HARNESS_BOT, a task without gets no such key', eb.HARNESS_BOT === 'r-test01' && eb.HARNESS_TASK_ID === 'tb1' && !('HARNESS_BOT' in en), JSON.stringify([eb, en]));
+  }
+
   fs.rmSync(tmp, { recursive: true, force: true });
   const pass = results.filter(Boolean).length;
   console.log(`result: ${pass}/${results.length}`);
