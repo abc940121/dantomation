@@ -21,22 +21,29 @@ const roleOfParam = ctx => { const id = String(ctx.params && ctx.params.id || ''
 // Known fields first (from the registry), then any other field the card holds; the UI draws what this lists.
 const cardView = r => {
   const c = card.view(r.card) || {};
-  const fields = Object.entries(card.FIELDS).map(([key, f]) => ({ key, type: f.type, ...(f.max ? { max: f.max } : {}), ...(f.label ? { label: f.label } : {}), description: f.description, known: true }));
+  const fields = Object.entries(card.FIELDS).map(([key, f]) => ({ key, type: f.type, ...(f.max ? { max: f.max } : {}), ...(f.label ? { label: f.label } : {}), label_zh: f.label_zh || key, label_en: f.label_en || key, description: f.description, known: true }));
   for (const key of Object.keys(c)) if (!card.FIELDS[key]) fields.push({ key, type: 'json', known: false });
   return { id: r.id, name: r.name, fields, card: c, ...(card.avatarUrl(r) ? { avatar: card.avatarUrl(r) } : {}) };
 };
+// The card's field names as words, from the registry ("voice, way of talking, way of working and chat avatar"): the one place the descriptions get them.
+const cardWords = () => { const w = Object.keys(card.FIELDS).map(k => String(card.FIELDS[k].label_en || k).toLowerCase()); return w.length > 1 ? w.slice(0, -1).join(', ') + ' and ' + w[w.length - 1] : w.join(''); };
 const groupsOfCtx = ctx => createGroups(() => ctx.state.dir, storeOfCtx(ctx));
 const needRooms = ctx => { if (!roomsOn(ctx)) throw new Error(bi('群組聊天需要先開啟 rooms 模組（在設定裡把 modules.rooms 設為 true，並重新啟動一次）。', 'Group chats need the rooms module to be on (set modules.rooms to true in the config and restart once).')); };
 const showv = v => (typeof v === 'string' ? v : typeof v === 'number' || typeof v === 'boolean' ? String(v) : v === null || v === undefined ? '' : typeof v).slice(0, 60); // a request value in an error, never through its own toString
 const MAX_GROUP_MEMBERS = 16; // the most role members a group made through the route may have
 const groupNote = (ctx, type, g, more) => { try { ctx.state.append({ type, id: g.id, name: g.name, ...more }); } catch { /* best effort */ } };
+// What the tools process CLAIMS to be: HARNESS_BOT when it is set, else 'tool'. Written as by_claimed, an audit label only: no code branches on it. Never taken from an argument.
+const toolBy = () => process.env.HARNESS_BOT || 'tool';
+// Journal first, as the routes do: when the line cannot be written, the tool fails and nothing is changed.
+const startLine = (ctx, type, more) => { try { ctx.state.append({ type, ...more, by_claimed: toolBy(), via: 'tool' }); } catch { throw new Error(bi('無法寫入稽核紀錄，沒有做任何更改', 'could not write the audit line, nothing was changed')); } };
+const groupKey = a => { if (typeof a.group !== 'string' || !a.group.trim()) throw new Error('group is required (a group id or name)'); return a.group; };
 const GROUP_KEY = { type: 'string', description: 'Group id (g-...) or its current name.' };
 const ROLE_LIST = d => ({ type: 'array', items: { type: 'string' }, description: d });
 
 const pub = r => ({ id: r.id, name: r.name, persona: r.persona, engine: r.engine || 'claude', ...(r.model ? { model: r.model } : {}), ...(r.main === true ? { main: true } : {}), ...(card.view(r.card) ? { card: card.view(r.card) } : {}) });
 // A list row stays short: the card is only named by its field names; role_list {id} gives the whole card.
 const row = r => { const { card: c, ...rest } = pub(r); return { ...rest, ...(c ? { card_fields: card.keys(r.card) } : {}) }; };
-const CARD_PROP = { type: 'object', description: 'The character card of the role: its own voice, way of talking, way of working and chat avatar. Only the fields you give are changed; a field set to null or "" is cleared; other fields are kept. Known fields: ' + Object.entries(card.FIELDS).map(([k, f]) => `${k} (${f.description})`).join('; ') + '. Any other lowercase field name is kept as it is. It shapes manner only and never overrides guard, red lines or the owner rules. Optional.', additionalProperties: true };
+const CARD_PROP = { type: 'object', description: 'The character card of the role: its own ' + cardWords() + '. Only the fields you give are changed; a field set to null or "" is cleared; other fields are kept. Known fields: ' + Object.entries(card.FIELDS).map(([k, f]) => `${k} (${f.description})`).join('; ') + '. Any other lowercase field name is kept as it is. It shapes manner only and never overrides guard, red lines or the owner rules. Optional.', additionalProperties: true };
 const ENGINE_PROP = { type: 'string', enum: ENGINES, description: 'Which agent runs this role: "claude" (default) "codex" (OpenAI Codex, "GPT") or "opencode" (OpenCode). Use "codex" when the owner asks for GPT / Codex / OpenAI, "opencode" when the owner asks for OpenCode. Optional.' };
 const MODEL_PROP = { type: 'string', description: 'Only for engine "opencode": the provider/model id passed to OpenCode, e.g. "opencode/big-pickle". Only opencode/deepseek-v4.1-flash-free and opencode-go/deepseek-v4.1-flash work by default; any other model is refused unless the owner lists it in the roles config (opencode_extra_paid_models). Without a model the free one is used first, then the Go plan one. Empty string clears it. Optional.' };
 // Per-device daily count of role creations, kept in this module's own state (device-creates.json: {day, counts:{'device:<id>': n}}).
@@ -72,7 +79,7 @@ const mcpTools = [
     inputSchema: { type: 'object', properties: { name: { type: 'string', description: 'Short name, 1-40 characters, any language. Must be unique among roles.' }, persona: { type: 'string', description: 'The persona text: who the role is and how it speaks and behaves (max 4000 characters).' }, engine: ENGINE_PROP, model: MODEL_PROP, card: CARD_PROP }, required: ['name', 'persona'] },
     run: guard((a, ctx) => { const r = storeOfCtx(ctx).create({ name: a.name, persona: a.persona, engine: a.engine, model: a.model, card: a.card }); note(ctx, 'role_created', r); return pub(r); }) },
   { name: 'role_update', when: 'Owner wants to change an existing role',
-    description: 'Change the name, persona, engine, model and/or character card (voice, way of talking, way of working, avatar) of an existing role. Use when the owner asks to rename a role, to change its personality, voice or instructions, or to move it to GPT / Codex / OpenAI (engine "codex"), to OpenCode (engine "opencode", optional model) or back to Claude (engine "claude"). The role is an id (from role_list) or its current name. Main makes it the main role. Its conversation history is kept.',
+    description: 'Change the name, persona, engine, model and/or character card (' + cardWords() + ') of an existing role. Use when the owner asks to rename a role, to change its personality, voice or instructions, or to move it to GPT / Codex / OpenAI (engine "codex"), to OpenCode (engine "opencode", optional model) or back to Claude (engine "claude"). The role is an id (from role_list) or its current name. Main makes it the main role. Its conversation history is kept.',
     inputSchema: { type: 'object', properties: { role: { type: 'string', description: 'Role id or current name.' }, name: { type: 'string', description: 'New name (optional).' }, persona: { type: 'string', description: 'New persona text, replacing the old one (optional).' }, engine: ENGINE_PROP, model: MODEL_PROP, card: CARD_PROP, main: { type: 'boolean', description: 'true makes this role the main role (the chief of staff the owner talks to first); the old main role is unmarked. Exactly one role is main, so false is refused. Optional.' } }, required: ['role'] },
     run: guard((a, ctx) => { const r = storeOfCtx(ctx).update(roleKey(a), { name: a.name, persona: a.persona, engine: a.engine, model: a.model, card: a.card, main: a.main }); note(ctx, 'role_updated', r); return pub(r); }) },
   { name: 'role_remove', when: 'Owner wants a role deleted',
@@ -93,15 +100,37 @@ const mcpTools = [
   { name: 'group_create', when: 'Owner wants several roles to talk together',
     description: 'Create a group chat (a room) the owner can pick in the chat page, like making a group in a messaging app. Use when the owner asks to make or start a group chat with some roles, in any language. members are role names or ids (from role_list; create the roles first if they do not exist). The main bot is always in the group and is its lead: a message with no @mention goes to it, "@everyone" wakes all, "@<role id>" wakes one role. Each role answers with its own persona, engine and conversation. The group appears in the chat page within seconds. Needs the rooms module to be on.',
     inputSchema: { type: 'object', properties: { name: { type: 'string', description: 'The group name the owner chose, 1-40 characters, any language. Must be unique among groups.' }, members: ROLE_LIST('Role names or ids to put in the group (at least one).') }, required: ['name', 'members'] },
-    run: guard((a, ctx) => { needRooms(ctx); const g = groupsOfCtx(ctx).create({ name: a.name, members: a.members }, ctx); groupNote(ctx, 'group_created', g); return g; }) },
+    run: guard((a, ctx) => {
+      needRooms(ctx);
+      const groups = groupsOfCtx(ctx), req = { name: a.name, members: a.members };
+      groups.check(req);
+      const id = groups.newId();
+      startLine(ctx, 'group_create_started', { id, name: typeof a.name === 'string' ? a.name.trim().slice(0, 80) : '' });
+      try { const g = groups.create({ ...req, id }, ctx); groupNote(ctx, 'group_created', g, { by_claimed: toolBy(), via: 'tool' }); return g; }
+      catch (e) { groupNote(ctx, 'group_create_failed', { id, name: req.name }, { by_claimed: toolBy(), via: 'tool' }); throw e; }
+    }) },
   { name: 'group_update', when: 'Owner wants to change a group of roles',
     description: 'Rename a group chat and/or add roles to it and/or remove roles from it. Use when the owner asks to rename a group, to add someone to it or to take someone out. The group is an id (from group_list) or its current name. The main bot cannot be removed. The conversation history is kept. Needs the rooms module to be on.',
     inputSchema: { type: 'object', properties: { group: GROUP_KEY, name: { type: 'string', description: 'New name (optional).' }, add: ROLE_LIST('Role names or ids to add (optional).'), remove: ROLE_LIST('Role names or ids to take out (optional).') }, required: ['group'] },
-    run: guard((a, ctx) => { needRooms(ctx); if (typeof a.group !== 'string' || !a.group.trim()) throw new Error('group is required (a group id or name)'); const g = groupsOfCtx(ctx).update(a.group, { name: a.name, add: a.add, remove: a.remove }, ctx); groupNote(ctx, 'group_updated', g); return g; }) },
+    run: guard((a, ctx) => {
+      needRooms(ctx);
+      const groups = groupsOfCtx(ctx), key = groupKey(a), fields = { name: a.name, add: a.add, remove: a.remove };
+      const g0 = groups.get(key, ctx);
+      if (!g0 || g0.archived_at) throw new Error(bi(`找不到群組「${showv(key)}」`, `No group "${showv(key)}"`));
+      groups.checkUpdate(g0.id, fields);
+      startLine(ctx, 'group_update_started', { group: g0.id });
+      const g = groups.update(g0.id, fields, ctx); groupNote(ctx, 'group_updated', g, { by_claimed: toolBy(), via: 'tool' }); return g;
+    }) },
   { name: 'group_remove', when: 'Owner wants a group deleted',
     description: 'Remove a group chat from the chat page. Use when the owner asks to delete or close a group. Nothing is deleted: the group is only hidden (archived) and its transcript is kept. The group is an id or its name.',
     inputSchema: { type: 'object', properties: { group: GROUP_KEY }, required: ['group'] },
-    run: guard((a, ctx) => { needRooms(ctx); if (typeof a.group !== 'string' || !a.group.trim()) throw new Error('group is required (a group id or name)'); const g = groupsOfCtx(ctx).archive(a.group, ctx); groupNote(ctx, 'group_archived', g); return { id: g.id, name: g.name, archived: true }; }) },
+    run: guard((a, ctx) => {
+      needRooms(ctx);
+      const groups = groupsOfCtx(ctx), key = groupKey(a), g0 = groups.get(key, ctx);
+      if (!g0 || g0.archived_at) throw new Error(bi(`找不到群組「${showv(key)}」`, `No group "${showv(key)}"`));
+      startLine(ctx, 'group_remove_started', { group: g0.id });
+      const g = groups.archive(g0.id, ctx); groupNote(ctx, 'group_archived', g, { by_claimed: toolBy(), via: 'tool' }); return { id: g.id, name: g.name, archived: true };
+    }) },
   { name: 'group_list', when: 'See which groups exist, or find one by name',
     description: 'List the group chats (newest first) with id, name, lead and members (id and name): total, the newest 10, and more:true when there are others (use query, limit, offset). Use before changing or removing a group, or when the owner asks which groups exist. Needs the rooms module to be on.',
     inputSchema: { type: 'object', properties: PAGE_PROPS },

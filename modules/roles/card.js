@@ -10,12 +10,13 @@ const crypto = require('crypto');
 
 class CardError extends Error {}
 
-// name -> { description: one line, type: text|image, max: characters, label: how it enters the persona prompt (null = not in the prompt) }
+// name -> { description: one line, type: text|image, max: characters, label: how it enters the persona prompt (null = not in the prompt),
+//   label_zh / label_en: the field's name for a person, in each language (the card route returns both) }
 const FIELDS = {
-  voice: { description: 'what the role sounds like (tone, pace, accent)', type: 'text', max: 600, label: 'Voice' },
-  talking: { description: 'way of talking with people (style, length, formality)', type: 'text', max: 600, label: 'Way of talking' },
-  working: { description: 'way of working (habits, order of steps, what it checks)', type: 'text', max: 600, label: 'Way of working' },
-  avatar: { description: 'chat avatar: path to a png, jpeg or webp image file inside the task folder (empty clears it)', type: 'image', label: null },
+  voice: { description: 'what the role sounds like (tone, pace, accent)', type: 'text', max: 600, label: 'Voice', label_zh: '聲音', label_en: 'Voice' },
+  talking: { description: 'way of talking with people (style, length, formality)', type: 'text', max: 600, label: 'Way of talking', label_zh: '說話方式', label_en: 'Way of talking' },
+  working: { description: 'way of working (habits, order of steps, what it checks)', type: 'text', max: 600, label: 'Way of working', label_zh: '工作方式', label_en: 'Way of working' },
+  avatar: { description: 'chat avatar: path to a png, jpeg or webp image file inside the task folder (empty clears it)', type: 'image', label: null, label_zh: '頭像', label_en: 'Chat avatar' },
 };
 
 const KEY_RE = /^[a-z][a-z0-9_]{0,31}$/;

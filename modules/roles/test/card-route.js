@@ -83,6 +83,7 @@ const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a
     const c = (await call('GET', `/m/roles/cards/${withImg.id}`)).json;
     const keys = (c.fields || []).map(f => f.key);
     check('card: the field list comes from the registry', ['voice', 'talking', 'working', 'avatar'].every(k => keys.includes(k)) && c.name === 'Ann', JSON.stringify(c));
+    check('card: every known field carries label_zh and label_en from the registry; an unknown field has none', c.fields.filter(x => x.known).every(x => /[\u4e00-\u9fff]/.test(x.label_zh) && /^[A-Za-z ]+$/.test(x.label_en)) && c.fields.find(x => x.key === 'voice').label_zh === '聲音' && c.fields.find(x => x.key === 'voice').label_en === 'Voice' && c.fields.filter(x => !x.known).every(x => x.label_zh === undefined), JSON.stringify(c.fields).slice(0, 300));
     check('card: values shown, avatar reduced to facts', c.card.voice === 'soft' && c.card.avatar && !('file' in c.card.avatar) && /\/m\/roles\/avatar\//.test(c.avatar || ''), JSON.stringify(c));
     check('card: unknown role -> 404', (await call('GET', '/m/roles/cards/r-00000000')).status === 404 && (await call('GET', `/m/roles/cards/${gone.id}`)).status === 404);
 
