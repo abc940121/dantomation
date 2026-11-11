@@ -23,6 +23,7 @@
     <button id="new-role" class="badge" type="button" data-i18n="role.new">New role</button>
     <button id="new-group" class="badge" type="button" data-i18n="group.new">New group</button>
     <button id="edit-group" class="badge" type="button" data-i18n="group.edit" hidden>Edit group</button>
+    <button id="arch-btn" class="badge" type="button" hidden></button>
     <button id="card-btn" class="badge" type="button" data-i18n="card.open" hidden>Role card</button>
     <button id="lang-btn" class="badge" type="button" aria-label="Change language" data-i18n="lang.change" data-i18n-aria-label="lang.change.aria">Language</button>
   </header>
@@ -74,6 +75,15 @@
       <p id="edit-err" class="hint" role="alert" hidden></p>
       <div class="btns"><button id="edit-archive" type="button" data-i18n="group.archive">Archive group</button><button id="edit-cancel" type="button" data-i18n="group.cancel">Cancel</button><button id="edit-save" type="submit" data-i18n="group.save">Save</button></div>
     </form>
+  </div>
+  <div id="arch-dlg" class="overlay" hidden>
+    <div id="arch-box" class="dlg" role="dialog" aria-modal="true" aria-labelledby="arch-title">
+      <h2 id="arch-title" data-i18n="arch.title">Archived groups</h2>
+      <p id="arch-empty" class="hint" hidden data-i18n="arch.empty">No archived groups.</p>
+      <ul id="arch-list" class="arch-list"></ul>
+      <p id="arch-err" class="hint" role="alert" hidden></p>
+      <div class="btns"><button id="arch-close" type="button" data-i18n="arch.close">Close</button></div>
+    </div>
   </div>
   <div id="role-dlg" class="overlay" hidden>
     <form id="role-form" class="dlg" role="dialog" aria-modal="true" aria-labelledby="role-title" novalidate>

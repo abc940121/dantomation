@@ -191,16 +191,33 @@ module.exports = {
         catch { groupNote(ctx, 'group_create_failed', { id, name }, { members: ids, by }); return { status: 500, json: { error: 'could not create the group' } }; }
       } },
     // Edit or archive a group from the chat page {name?, add?:[role id], remove?:[role id]} or {archived:true}. The audit line is written first and must land.
-    { method: 'PATCH', path: '/groups/:id', access: 'owner', description: 'rename a group, add or remove members ({name?, add?, remove?}: role ids) or archive it ({archived: true}); answers 200 with the group; 404 for an unknown or archived id; a group never ends with no member',
+    { method: 'PATCH', path: '/groups/:id', access: 'owner', description: 'rename a group, add or remove members ({name?, add?, remove?}: role ids) archive it ({archived: true}) or bring an archived one back ({archived: false}); answers 200 with the group; 404 for an unknown or archived id; a group never ends with no member',
       handler(ctx) {
         const bad = error => ({ status: 400, json: { error } });
         const id = String((ctx.params && ctx.params.id) || '');
         const b = ctx.body && typeof ctx.body === 'object' && !Array.isArray(ctx.body) ? ctx.body : {};
         const groups = groupsOfCtx(ctx), g = /^g-[0-9a-f]{8}$/.test(id) ? groups.get(id, ctx) : null;
-        if (!g || g.archived_at) return { status: 404, json: { error: bi('找不到這個群組', 'no such group') } };
+        const restore = b.archived === false;
+        if (!g || (g.archived_at && !restore)) return { status: 404, json: { error: bi('找不到這個群組', 'no such group') } };
         const by = (ctx.actor && ctx.actor.id) || 'owner';
+        if (Object.keys(b).some(k => !['name', 'add', 'remove', 'archived'].includes(k))) return bad(bi('只能改 name、add、remove 或 archived', 'only name, add, remove or archived can be changed'));
         const archive = b.archived === true;
-        if (b.archived !== undefined && !archive) return bad(bi('archived 只能是 true', 'archived can only be true'));
+        if (b.archived !== undefined && !archive && !restore) return bad(bi('archived 只能是 true（封存）或 false（還原）', 'archived can only be true (archive) or false (restore)'));
+        if (restore) {
+          if (Object.keys(b).length > 1) return bad(bi('還原群組時不能同時改其他欄位', 'restore cannot be combined with other changes'));
+          if (!g.archived_at) return { status: 200, json: g };   // already live: nothing to do, nothing journaled
+          try { needRooms(ctx); groups.checkRestore(id); }
+          catch (e) { return { status: 409, json: { error: String(e && e.message || 'could not restore the group').slice(0, 300) } }; }
+          try { ctx.state.append({ type: 'group_restore_started', group: id, by, via: 'route' }); }
+          catch { return { status: 500, json: { error: 'could not write the audit line, nothing was changed' } }; }
+          let r;
+          try { r = groups.restore(id, ctx); }
+          catch (e) {   // a restore that broke after the started line must not look like one still in flight
+            try { ctx.state.append({ type: 'group_restore_failed', group: id, by, via: 'route', kind: String(e && (e.code || e.name) || 'error').slice(0, 40) }); } catch { /* best effort */ }
+            return { status: 500, json: { error: bi('還原群組失敗', 'could not restore the group') } };
+          }
+          groupNote(ctx, 'group_restored', r, { by }); return { status: 200, json: r };
+        }
         const store = storeOfCtx(ctx), ids = {};
         if (archive && (b.name !== undefined || b.add !== undefined || b.remove !== undefined)) return bad(bi('封存群組時不能同時改其他欄位', 'archive cannot be combined with other changes'));
         for (const k of ['add', 'remove']) {
@@ -222,6 +239,9 @@ module.exports = {
         try { const r = archive ? groups.archive(id, ctx) : groups.update(id, fields, ctx); groupNote(ctx, archive ? 'group_archived' : 'group_updated', r, { by }); return { status: 200, json: r }; }
         catch (e) { return bad(String(e && e.message || 'could not change the group').slice(0, 300)); }
       } },
+    // Archived groups, for a Restore list: {groups:[{id, name, archived_at, members:[role id]}]}, newest archived first. Read-only; no persona, no turns.
+    { method: 'GET', path: '/groups/archived', access: 'owner', description: 'the archived groups, newest archived first: {groups:[{id, name, archived_at, members:[role id]}]}; read-only; restore one with PATCH /groups/:id {archived: false}',
+      handler(ctx) { try { needRooms(ctx); } catch (e) { return { status: 409, json: { error: String(e && e.message).slice(0, 300) } }; } return { status: 200, json: { groups: groupsOfCtx(ctx).archivedList() } }; } },
     // The chat page asks which role is the main one. The owner token and a paired device make the default main role on first use (the same fixed content, once); any other caller only reads it (200 {id:null} until it exists, so the page's polling is not a 404).
     { method: 'GET', path: '/main', description: 'the main role {id, name}; for the owner and for a paired device it creates the default chief-of-staff role when none is marked main (fixed content, once); any other caller is read-only ({id:null} with status 200 until then)',
       handler: ctx => { try { const a = ctx.actor, owner = !!a && a.kind === 'owner' && (a.id === undefined || a.id === '' || (typeof a.id === 'string' && a.id.startsWith('device:'))); const r = owner ? storeOfCtx(ctx).ensureMain(chief.DEFAULT, c => ctx.state.append({ type: 'role_created', id: c.id, name: c.name, by: a.id || 'owner', main: true })) : storeOfCtx(ctx).getMain(); if (!r) return { status: 200, json: { id: null } }; return { status: 200, json: { id: r.id, name: r.name } }; } catch { return { status: 500, json: { error: 'internal error' } }; } } },

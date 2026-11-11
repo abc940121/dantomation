@@ -90,6 +90,16 @@ function createGroups(dirOf, rolesStore) {
     return { gs, g, n, members };
   };
 
+  const restorePlan = key => {
+    const gs = read(), g = find(gs, key);
+    if (!g) throw new RoleError(bi(`找不到群組「${String(key).slice(0, 60)}」`, `No group "${String(key).slice(0, 60)}"`));
+    if (g.archived_at) {
+      if (taken(gs, g.name, g.id)) throw new RoleError(bi(`已經有名為「${g.name}」的群組，請先改名或封存它再還原`, `a group named "${g.name}" already exists; rename or archive it before restoring this one`));
+      if (!seen(g.members)) throw new RoleError(bi('這個群組已沒有可用的角色成員（都已封存），無法還原', 'this group has no usable role member left (all archived), it cannot be restored'));
+    }
+    return { gs, g };
+  };
+
   return {
     list: ctx => live(read()).map(g => view(g, ctx)),
     get: (key, ctx) => { const g = find(read(), key); return g ? view(g, ctx) : null; },
@@ -129,6 +139,18 @@ function createGroups(dirOf, rolesStore) {
       g.archived_at = new Date().toISOString();
       write(gs);
       stopTurns(ctx, g.id, null);
+      return view(g, ctx);
+    },
+    // Bring an archived group back (the same record: id, members, created_at stay; archived_at goes, updated_at is set). The turns
+    // archive cancelled are not requeued. A live group is returned as it is. Refused when a live group has the name by now, or
+    // when no role member is left (all archived since).
+    // The archived groups, newest archived first, as {id, name, archived_at, members:[role id]} and nothing else (for a restore list).
+    archivedList: () => read().filter(g => g.archived_at).sort((a, b) => (Date.parse(b.archived_at) || 0) - (Date.parse(a.archived_at) || 0))
+      .map(g => ({ id: g.id, name: g.name, archived_at: g.archived_at, members: g.members.slice() })),
+    checkRestore(key) { restorePlan(key); },
+    restore(key, ctx) {
+      const { gs, g } = restorePlan(key);
+      if (g.archived_at) { delete g.archived_at; g.updated_at = new Date().toISOString(); write(gs); }
       return view(g, ctx);
     },
     // A map shaped like settings.rooms, for the rooms module. Never throws: a damaged file adds no rooms.

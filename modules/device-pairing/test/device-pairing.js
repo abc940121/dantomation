@@ -211,6 +211,24 @@ const req = (port, method, p, body, token, extra) => new Promise((res, rej) => {
     const gDen = [];
     for (const [m, p, b] of [['POST', gUrl + '/' + g1.json.id, { name: 'x' }], ['POST', gUrl + '/' + g1.json.id + '/update', { name: 'x' }], ['POST', gUrl + '/' + g1.json.id + '/remove', {}], ['PATCH', gUrl, { name: 'x' }], ['DELETE', gUrl, undefined], ['GET', gUrl, undefined]]) gDen.push((await req(port, m, p, b, dev)).status);
     check('device group: update, remove and archive style routes -> 403', gDen.every(s => s === 403), gDen.join());
+    // a device may edit a group with PATCH /m/roles/groups/:id (name, add, remove, archived) and nothing else
+    const gEdit = gUrl + '/' + g1.json.id;
+    const gp = await req(port, 'PATCH', gEdit, { name: 'Weekend Trip' }, dev);
+    check('device group: PATCH renames the group (200)', gp.status === 200 && gp.json.name === 'Weekend Trip', gp.raw.slice(0, 200));
+    check('device group: the PATCH is journaled with the device as the actor and a device_action line', journal2().some(r => r.type === 'group_updated' && r.id === g1.json.id && r.by === 'device:' + redeem.json.id) && journal2().some(r => r.type === 'device_action' && r.method === 'PATCH' && r.path === gEdit && r.device_id === redeem.json.id));
+    const gArch = await req(port, 'PATCH', gEdit, { archived: true }, dev);
+    const gBack = await req(port, 'PATCH', gEdit, { archived: false }, dev);
+    check('device group: archive is reversible, a paired device token restores it (journal has by device:<id>)', gArch.status === 200 && !!gArch.json.archived_at && gBack.status === 200 && !gBack.json.archived_at && journal2().some(r => r.type === 'group_restored' && r.id === g1.json.id && r.by === 'device:' + redeem.json.id), JSON.stringify([gArch.status, gBack.status]));
+    await req(port, 'PATCH', gEdit, { archived: true }, dev);
+    const gList = await req(port, 'GET', gUrl + '/archived', undefined, dev), gListX = await req(port, 'GET', gUrl + '/archived/x', undefined, dev), gListP = await req(port, 'POST', gUrl + '/archived', {}, dev);
+    check('device group: a device token reads the archived list (200, the group in it); a nearby path or method is refused (403)', gList.status === 200 && gList.json.groups.some(x => x.id === g1.json.id && Object.keys(x).sort().join() === 'archived_at,id,members,name') && gListX.status === 403 && gListP.status === 403, [gList.status, gListX.status, gListP.status].join());
+    await req(port, 'PATCH', gEdit, { archived: false }, dev);
+    const gx = [];
+    for (const b of [{ name: 'Sneaky', persona: 'x' }, { name: 'Sneaky', tier: 'all' }, { main: true }, { owner: 'device' }, { name: 'Sneaky', members: [roleA.id] }]) gx.push((await req(port, 'PATCH', gEdit, b, dev)).status);
+    check('device group: a body with any extra field is refused (400) and nothing is written', gx.every(s => s === 400) && JSON.parse(fs.readFileSync(path.join(state2, 'm', 'roles', 'groups.json'), 'utf8')).groups.find(x => x.id === g1.json.id).name === 'Weekend Trip', gx.join());
+    const gPathNo = [];
+    for (const [m, p] of [['PATCH', gUrl], ['PATCH', gEdit + '/x'], ['PATCH', gUrl + '/g-1234567'], ['PATCH', '/m/roles/roles' + '/' + roleA.id], ['PATCH', '/m/roles/cards/' + roleA.id], ['POST', gEdit]]) gPathNo.push((await req(port, m, p, { name: 'x' }, dev).catch(e => ({ status: String(e.code) + ' ' + m + ' ' + p }))).status);
+    check('device group: the PATCH pattern matches no other path or method (403)', gPathNo.every(s => s === 403), gPathNo.join());
     // a device may create a role (and only create): the route reads name, job and a picture, caps the total, journals the device
     const rUrl = '/m/roles/roles', rDir = path.join(state2, 'm', 'roles'), rCount = () => roleStore.all().length;
     const avFiles = () => { try { return fs.readdirSync(path.join(rDir, 'avatars')).sort().join(); } catch { return ''; } };

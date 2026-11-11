@@ -150,6 +150,27 @@ async function mockTests() {
       await new Promise(rs => m3.server.listen(0, '127.0.0.1', rs));
       try { const q = await call(m3.server.address().port, 'GET', '/m/roles/main'); check('mock with a main role answers {id, name} on /m/roles/main', q.status === 200 && q.body.id === 'alpha' && q.body.name === 'Alpha', JSON.stringify(q)); } finally { m3.server.close(); }
     }
+    { // archived groups: list route (newest first) and the restore PATCH, as the real routes answer
+      const ma = createMock({ delayMs: 1, archived: [{ id: 'g-00000aaa', name: 'Old', archived_at: '2026-01-01T00:00:00.000Z' }, { id: 'g-00000bbb', name: 'Newer', archived_at: '2026-03-01T00:00:00.000Z' }, { id: 'g-00000ccc', name: 'Team', archived_at: '2026-02-01T00:00:00.000Z' }] });
+      await new Promise(rs => ma.server.listen(0, '127.0.0.1', rs));
+      const pa = ma.server.address().port;
+      try {
+        let q = await call(pa, 'GET', '/m/roles/groups/archived');
+        check('mock archived list: {groups:[{id,name,archived_at,members}]}, newest first', q.status === 200 && q.body.groups.map(g => g.id).join() === 'g-00000bbb,g-00000ccc,g-00000aaa' && q.body.groups.every(g => g.name && g.archived_at && Array.isArray(g.members)));
+        q = await call(pa, 'PATCH', '/m/roles/groups/g-00000ccc', { archived: false });
+        check('mock restore: a name clash with a live group is 400 with the two-language text, and the group stays archived', q.status === 400 && /同名/.test(q.body.error) && /already has/.test(q.body.error) && (await call(pa, 'GET', '/m/roles/groups/archived')).body.groups.length === 3);
+        q = await call(pa, 'PATCH', '/m/roles/groups/g-00000aaa', { archived: false });
+        const live = await call(pa, 'GET', '/m/rooms/rooms');
+        check('mock restore: 200 with the group view, the group is live again and leaves the archived list', q.status === 200 && q.body.id === 'g-00000aaa' && live.body.rooms.some(x => x.id === 'g-00000aaa') && (await call(pa, 'GET', '/m/roles/groups/archived')).body.groups.length === 2);
+        q = await call(pa, 'PATCH', '/m/roles/groups/g-00000fff', { archived: false });
+        check('mock restore: an unknown group is 404', q.status === 404);
+      } finally { await new Promise(rs => ma.server.close(rs)); }
+      for (const st of [404, 403]) {
+        const mb = createMock({ delayMs: 1, archivedStatus: st });
+        await new Promise(rs => mb.server.listen(0, '127.0.0.1', rs));
+        try { const q = await call(mb.server.address().port, 'GET', '/m/roles/groups/archived'); check('mock archived list can answer ' + st + ' (the entry must then stay hidden)', q.status === st); } finally { await new Promise(rs => mb.server.close(rs)); }
+      }
+    }
     r = await call(port, 'POST', '/api/chat', { bots: [], text: 'x' });
     check('mock chat rejects empty targets', r.status === 400);
     r = await call(port, 'POST', '/api/chat', { bots: ['nobody'], text: 'x' });
@@ -258,6 +279,13 @@ function assetTests() {
     const gk = Object.keys(I0.TABLE.en).filter(k => k.indexOf('group.') === 0);
     check('new-group: every group.* string exists in en and zh-TW, translated', gk.length >= 12 && gk.every(k => I0.TABLE['zh-TW'][k] && I0.TABLE['zh-TW'][k] !== I0.TABLE.en[k]));
     check('new-group: dialog fits a 390px screen (max-width, scroll, 44px targets)', css0.includes('max-width: 420px') && css0.includes('overflow-y: auto') && css0.includes('.dlg .pick { display: flex; align-items: center; gap: 10px; min-height: 44px'));
+    check('archived groups: entry button (hidden) and dialog exist with list, empty line, error line and close', ['arch-btn', 'arch-dlg', 'arch-list', 'arch-empty', 'arch-err', 'arch-close'].every(i => html0.includes('id="' + i + '"')) && /id="arch-btn"[^>]*hidden/.test(html0));
+    check('archived groups: list is read from GET /m/roles/groups/archived only at load (probe) and when the entry is opened', app0.includes("ARCH = '/m/roles/groups/archived'") && app0.split('fetchArchived()').length === 4 && app0.includes('async function archProbe()') && app0.includes('archProbe(); });'));
+    check('archived groups: the entry shows only when the probe found a group; a failed list (404/403/other) hides it silently', app0.includes('arch.shown = !!(g && g.length)') && app0.includes('r.ok && r.body && Array.isArray(r.body.groups) ? ') && app0.includes('catch { return null; }') && /async function archProbe\(\)[^}]*drawArchBtn\(\)/.test(app0) && !/async function archProbe\(\)[^}]*archErr/.test(app0));
+    check('archived groups: Restore sends PATCH {archived:false}, shows the server error text on refusal, and on success opens the group', app0.includes("patch('/m/roles/groups/' + encodeURIComponent(id), { archived: false })") && app0.includes("(r.body && typeof r.body.error === 'string' && r.body.error) || tr('arch.err.fail')") && app0.includes("ui.cur = 'room:' + id; selectRoom(id);") && app0.includes("r.status === 403) msg = tr('arch.err.forbidden')"));
+    const ak = Object.keys(I0.TABLE.en).filter(k => k.indexOf('arch.') === 0);
+    check('archived groups: every arch.* string exists in en and zh-TW, translated, the count keeps {n}', ak.length >= 9 && ak.every(k => I0.TABLE['zh-TW'][k] && I0.TABLE['zh-TW'][k] !== I0.TABLE.en[k]) && I0.t('en', 'arch.entry', { n: 3 }) === 'Archived groups (3)' && I0.t('zh-TW', 'arch.entry', { n: 3 }).includes('3'));
+    check('archived groups: list rows have 44px targets', css0.includes('.arch-list button { min-height: 44px; }'));
     check('new-role button and dialog exist: name, job, error line, cancel and create', ['new-role', 'role-dlg', 'role-form', 'role-name', 'role-job', 'role-err', 'role-cancel', 'role-create'].every(id => html0.includes('id="' + id + '"')) && /id="role-err"[^>]*role="alert"/.test(html0));
     check('new-role: posts {name, job} to /m/roles/roles and reloads the roster, no model call', app0.includes("post('/m/roles/roles', rol.avatar ? { name, job, avatar: { data: rol.avatar } } : { name, job })") && app0.includes('await loadBots();'));
     const rk = Object.keys(I0.TABLE.en).filter(k => k.indexOf('role.') === 0);

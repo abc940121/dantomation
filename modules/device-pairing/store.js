@@ -250,6 +250,10 @@ const ALLOW = [
   // roles: make a group chat from the chat page (create only; the route validates and journals who made it)
   ['POST', /^\/m\/roles\/groups$/],
   ['GET', /^\/m\/roles\/main$/],
+  // roles: edit a group from the chat page (rename, add or remove members, archive); the route takes only those fields, refuses any other, journals first and deletes nothing
+  ['PATCH', /^\/m\/roles\/groups\/g-[0-9a-f]{8}$/],
+  // roles: list the archived groups (read-only; names and member ids) so the chat page can offer Restore
+  ['GET', /^\/m\/roles\/groups\/archived$/],
   // roles: make a role from the chat page (create only; the route validates, takes only name, job and an optional picture, and caps the total)
   ['POST', /^\/m\/roles\/roles$/],
   // roles: read a role's card and avatar (read-only; editing a card is done from the computer)

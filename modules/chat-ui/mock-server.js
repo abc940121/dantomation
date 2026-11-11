@@ -34,6 +34,8 @@ function createMock(opts = {}) {
     { id: 'team-b', name: '測試組', members: ['alpha', 'test-a', 'main'], messages: [] },
   ];
   let nRoomMsg = 0, nGroup = 0;
+  // Archived groups: opts.archived seeds them; opts.archivedStatus (404/403) makes the list route fail; a name that clashes with a live room refuses the restore (400, two languages).
+  const archived = (opts.archived || []).map(g => ({ id: g.id, name: g.name, archived_at: g.archived_at || '2026-01-01T00:00:00.000Z', members: g.members || ['alpha'], messages: [] }));
   const roomLine = (r, kind, label, text) => { const m = { id: 'm' + String(++nRoomMsg).padStart(5, '0'), kind, label, text }; r.messages.push(m); return m; };
   if (opts.seed) {
     const r = rooms[0];
@@ -160,6 +162,20 @@ function createMock(opts = {}) {
         setTimeout(() => roomLine(r, 'agent', who ? who.name : r.members[0], 'Noted: ' + b.text.trim()), delay);
         return send(res, 200, { id: h.id });
       }
+    }
+    if (req.method === 'GET' && p === '/m/roles/groups/archived') {
+      if (opts.archivedStatus) return send(res, opts.archivedStatus, { error: 'no' });
+      return send(res, 200, { groups: archived.slice().sort((a, b) => (a.archived_at < b.archived_at ? 1 : -1)).map(g => ({ id: g.id, name: g.name, archived_at: g.archived_at, members: g.members })) });
+    }
+    if (req.method === 'PATCH' && (rm = /^\/m\/roles\/groups\/(g-[0-9a-f]{8})$/.exec(p))) {
+      const b = await readBody(req).catch(() => ({}));
+      const i = archived.findIndex(g => g.id === rm[1]);
+      if (b.archived !== false) return send(res, 400, { error: 'unsupported change' });
+      if (opts.restoreStatus) return send(res, opts.restoreStatus, { error: 'no' });
+      if (i < 0) return send(res, 404, { error: 'no such group' });
+      if (rooms.some(r => r.name === archived[i].name)) return send(res, 400, { error: 'a live group already has this name / 已有同名的群組' });
+      const g = archived.splice(i, 1)[0]; rooms.push(g);
+      return send(res, 200, { id: g.id, name: g.name, lead: g.members[0], members: g.members.map(m => ({ id: m, name: (bots.find(x => x.id === m) || {}).name || m })) });
     }
     if (req.method === 'POST' && p === '/m/roles/groups') { // same rules as the real route
       const b = await readBody(req).catch(() => ({}));

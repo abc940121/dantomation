@@ -404,7 +404,7 @@
   let queued = false;
   function render() { if (!queued) { queued = true; requestAnimationFrame(() => { queued = false; draw(); }); } }
   function draw() {
-    drawTop(); drawQuestions(); drawCards(); drawUndo(); drawCardBtn(); drawEditBtn();
+    drawTop(); drawQuestions(); drawCards(); drawUndo(); drawCardBtn(); drawEditBtn(); drawArchBtn();
     $('strip').hidden = !($('questions').childNodes.length || $('cards').childNodes.length || $('undo').childNodes.length);
     $('send-msg').hidden = !$('send-msg').textContent;
     drawChat();
@@ -645,6 +645,58 @@
   const edt = { busy: false, id: '', orig: [], armed: false };
   const curGroup = () => (ui.room && /^g-[0-9a-f]{8}$/.test(ui.room) && rooms.list.find(r => r.id === ui.room)) || null;
   function drawEditBtn() { $('edit-group').hidden = !curGroup(); }
+  // ---- "Archived groups": a count entry (only when the first fetch after load found some) and a list fetched when it is opened; Restore = PATCH {archived:false}.
+  const arch = { shown: false, n: 0, list: [], busy: false };
+  const ARCH = '/m/roles/groups/archived';
+  function drawArchBtn() { const b = $('arch-btn'); b.hidden = !arch.shown; b.textContent = tr('arch.entry', { n: arch.n }); }
+  function archErr(msg) { const p = $('arch-err'); p.textContent = msg || ''; p.hidden = !msg; }
+  // The list as an array, or null when the route is missing, forbidden, or failing.
+  async function fetchArchived() {
+    try { const r = await api(ARCH); return r.ok && r.body && Array.isArray(r.body.groups) ? r.body.groups.filter(g => g && typeof g.id === 'string') : null; } catch { return null; }
+  }
+  async function archProbe() { // one light GET at load; a 404/403/failure hides the entry silently
+    const g = await fetchArchived();
+    arch.shown = !!(g && g.length); arch.n = g ? g.length : 0; drawArchBtn();
+  }
+  function drawArchList() {
+    const ul = $('arch-list'); ul.textContent = '';
+    $('arch-empty').hidden = arch.list.length > 0;
+    for (const g of arch.list) {
+      const li = document.createElement('li'), nm = document.createElement('span'), b = document.createElement('button');
+      nm.className = 'arch-name'; nm.textContent = typeof g.name === 'string' ? g.name : g.id;
+      b.type = 'button'; b.textContent = tr('arch.restore'); b.dataset.id = g.id;
+      b.addEventListener('click', () => restoreGroup(g.id, b));
+      li.append(nm, b); ul.append(li);
+    }
+  }
+  async function openArch() {
+    $('arch-dlg').hidden = false; archErr(''); arch.list = []; drawArchList(); $('arch-empty').hidden = true;
+    const g = await fetchArchived();
+    if (g === null) { archErr(tr('arch.err.load')); return; }
+    arch.list = g; arch.n = g.length; arch.shown = g.length > 0; drawArchList(); drawArchBtn();
+    const first = $('arch-list').querySelector('button'); (first || $('arch-close')).focus();
+  }
+  function closeArch() { if (arch.busy) return; $('arch-dlg').hidden = true; ($('arch-btn').hidden ? $('new-group') : $('arch-btn')).focus(); }
+  async function restoreGroup(id, btn) {
+    if (arch.busy) return;
+    arch.busy = true; archErr(''); btn.disabled = true; btn.textContent = tr('arch.restoring');
+    let msg = '', ok = false;
+    try {
+      const r = await patch('/m/roles/groups/' + encodeURIComponent(id), { archived: false });
+      if (r.ok) ok = true;
+      else if (r.status === 403) msg = tr('arch.err.forbidden');
+      else msg = (r.body && typeof r.body.error === 'string' && r.body.error) || tr('arch.err.fail');
+    } catch (err) { msg = isAuth(err) ? '' : tr('arch.err.fail'); }
+    arch.busy = false;
+    if (!ok) { btn.disabled = false; btn.textContent = tr('arch.restore'); archErr(msg); return; } // the server's own text, both languages
+    arch.list = arch.list.filter(g => g.id !== id); arch.n = arch.list.length; arch.shown = arch.n > 0; drawArchBtn();
+    $('arch-dlg').hidden = true;
+    await loadRooms(true);
+    ui.cur = 'room:' + id; selectRoom(id);
+  }
+  $('arch-btn').addEventListener('click', openArch);
+  $('arch-close').addEventListener('click', closeArch);
+  $('arch-dlg').addEventListener('keydown', e => { if (e.key === 'Escape') closeArch(); });
   function editErr(msg) { const e = $('edit-err'); e.textContent = msg || ''; e.hidden = !msg; }
   function disarm() { edt.armed = false; $('edit-archive').classList.remove('armed'); $('edit-archive').textContent = tr('group.archive'); }
   function openEditDlg() {
@@ -830,7 +882,7 @@
     : Promise.resolve(null);
   pairCode = null; handoff = null;
   function start() {
-    paired.then(err => { if (err) { showAuth(); $('pair-msg').textContent = err; if (handoffFailed) $('hs-expired').hidden = false; } boot(); });
+    paired.then(err => { if (err) { showAuth(); $('pair-msg').textContent = err; if (handoffFailed) $('hs-expired').hidden = false; } boot(); if (!err) archProbe(); });
   }
   if (lang) start(); else { afterLang = start; showLangGate(); }
 })();

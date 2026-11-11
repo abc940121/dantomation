@@ -63,7 +63,9 @@ const device = { kind: 'owner', id: 'device:d1' };
     await bad('add with an archived role', g.id, { add: [old.id] }, 400, /role|角色/);
     await bad('remove with an unknown role id', g.id, { remove: ['r-nope'] }, 400, /role|角色/);
     await bad('add that is not a list', g.id, { add: ann.id }, 400, /add/);
-    await bad('archived must be true', g.id, { archived: false }, 400, /archived/);
+    await bad('archived must be a boolean', g.id, { archived: 'yes' }, 400, /archived/);
+    const noop = await patch(g.id, { archived: false });
+    check('archived:false on a live group is a no-op 200, nothing journaled', noop.status === 200 && !noop.json.archived_at && !lines('group_restore_started').length, JSON.stringify(noop));
     await bad('archive plus other fields', g.id, { archived: true, name: 'Z' }, 400, /archive|封存/);
     await bad('removing every member (group would have none)', g.id, { remove: [ann.id, bob.id] }, 400, /member|成員/);
     const solo = (await post({ name: 'Solo', members: [ann.id] })).json;
@@ -81,12 +83,48 @@ const device = { kind: 'owner', id: 'device:d1' };
     check('the owner: audit line carries by owner', own.status === 200 && lines('group_update_started').some(r => r.by === 'owner'));
 
     // archive: 200, the group is archived, stays readable, can no longer be edited
+    const none = await call('GET', '/m/roles/groups/archived', undefined, device);
+    check('archived list: empty when nothing is archived', none.status === 200 && JSON.stringify(none.json) === '{"groups":[]}', JSON.stringify(none));
     const doomed = (await post({ name: 'Doomed', members: [bob.id] })).json;
     const ar = await patch(doomed.id, { archived: true }, device);
     check('archive: 200 with archived_at, audited first', ar.status === 200 && !!ar.json.archived_at && lines('group_remove_started').some(r => r.group === doomed.id && r.by === 'device:d1'), JSON.stringify(ar));
     check('archived group stays in the file', gfile().includes(doomed.id) && gfile().includes('archived_at'));
     const again = await patch(doomed.id, { name: 'Back' });
     check('an archived group is 404 for edits and archive', again.status === 404 && (await patch(doomed.id, { archived: true })).status === 404);
+    const roomIds = async () => ((await call('GET', '/m/rooms/rooms', undefined)).json.rooms || []).map(r => r.id);
+    check('archived group is not a room', !(await roomIds()).includes(doomed.id));
+    // restore: the same route with {archived:false}
+    const mixed = await patch(doomed.id, { archived: false, name: 'Z' });
+    check('restore plus other fields is 400', mixed.status === 400 && /restore|還原/.test(mixed.json.error), JSON.stringify(mixed));
+    const clash = (await post({ name: 'Doomed', members: [cy.id] })).json;
+    const refused = await patch(doomed.id, { archived: false });
+    check('restore refused (409, two languages) while a live group has the name; nothing journaled or changed', refused.status === 409 && /Doomed/.test(refused.json.error) && /[\u4e00-\u9fff]/.test(refused.json.error) && !lines('group_restore_started').length && gfile().includes('archived_at'), JSON.stringify(refused));
+    await patch(clash.id, { archived: true });
+    const back = await patch(doomed.id, { archived: false }, device);
+    check('restore: 200, archived_at gone, same id and members', back.status === 200 && !back.json.archived_at && back.json.id === doomed.id && ids(back.json) === bob.id, JSON.stringify(back));
+    check('restore: audited first with the caller, then the result', lines('group_restore_started').some(r => r.group === doomed.id && r.by === 'device:d1') && lines('group_restored').some(r => r.by === 'device:d1' && r.id === doomed.id), JSON.stringify(lines('group_restored')).slice(0, 200));
+    check('restored group is a room again (receives turns) and can be edited', (await roomIds()).includes(doomed.id) && (await patch(doomed.id, { name: 'Doomed2' })).status === 200);
+    const again2 = await patch(doomed.id, { archived: false }); const restoreLines = lines('group_restore_started').length;
+    const lst = async () => (await call('GET', '/m/roles/groups/archived', undefined, device));
+    check('archived list: shape {groups:[...]} and no archived group listed after the restore', (await lst()).status === 200 && Array.isArray((await lst()).json.groups) && !(await lst()).json.groups.some(x => x.id === doomed.id));
+    await patch(doomed.id, { archived: true });
+    await patch(solo.id, { archived: true });
+    const al = (await lst()).json;
+    const ad = al.groups.find(x => x.id === doomed.id);
+    check('archived list: both groups, newest archived first, exactly {id, name, archived_at, members:[role id]}', al.groups.length >= 2 && al.groups[0].id === solo.id && al.groups[1].id === doomed.id && Object.keys(ad).sort().join() === 'archived_at,id,members,name' && ad.name === 'Doomed2' && ad.members.join() === bob.id && /^\d{4}-/.test(ad.archived_at), JSON.stringify(al).slice(0, 300));
+    await patch(solo.id, { archived: false }); await patch(doomed.id, { archived: false });
+    {
+      await patch(doomed.id, { archived: true });
+      const okLines = lines('group_restored').length, realRename = fs.renameSync;
+      let failed;
+      fs.renameSync = () => { throw Object.assign(new Error('disk says no'), { code: 'EIO' }); };
+      try { failed = await patch(doomed.id, { archived: false }, device); } finally { fs.renameSync = realRename; }
+      const fl = lines('group_restore_failed');
+      check('restore that breaks after the started line: 500, one group_restore_failed line (id, caller, error kind only), no group_restored, still archived', failed.status === 500 && fl.length === 1 && fl[0].group === doomed.id && fl[0].by === 'device:d1' && fl[0].kind === 'EIO' && !JSON.stringify(fl[0]).includes('disk says no') && lines('group_restored').length === okLines && (await lst()).json.groups.some(x => x.id === doomed.id), JSON.stringify([failed, fl]).slice(0, 300));
+      check('the failed restore can be retried', (await patch(doomed.id, { archived: false }, device)).status === 200);
+    }
+    check('archived list: a restore removes the group from it', !(await lst()).json.groups.some(x => x.id === doomed.id || x.id === solo.id) && Object.keys((await lst()).json).join() === 'groups');
+    check('restoring a live group again is a no-op 200, not journaled twice', again2.status === 200 && restoreLines === 1);
     const rl = (await call('GET', '/m/rooms/rooms', undefined)).json;
     check('live groups are listed as rooms', rl && Array.isArray(rl.rooms) && rl.rooms.some(r => r.id === g.id), JSON.stringify(rl).slice(0, 200));
     // ---- review findings (merged head): final member count, hidden main id, odd values, audit order, fail-closed
