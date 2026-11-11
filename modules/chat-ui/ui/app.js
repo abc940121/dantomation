@@ -356,7 +356,7 @@
     $('card-save').hidden = device;
     if (device) box.appendChild(h('p', { class: 'hint' }, tr('card.device.readonly')));
     for (const f of cardState.rows) {
-      if (f.type === 'image') { const n = h('p', { class: 'hint' }, fieldLabel(f) + ': ' + tr('card.avatar.note')); box.appendChild(n); continue; }
+      if (f.type === 'image') continue; // the picture has its own controls above (Change picture / Remove picture)
       const ta = h('textarea', { id: 'cf-' + f.key, 'data-key': f.key, rows: f.type === 'json' ? 3 : 4, maxlength: f.max || false, autocomplete: 'off' });
       ta.value = f.value; if (device) ta.readOnly = true;
       box.appendChild(h('label', { for: 'cf-' + f.key }, fieldLabel(f), h('span', { class: 'hint' }, f.type === 'json' ? tr('card.json.hint') : (f.description || '')), ta));
@@ -380,6 +380,37 @@
       const first = $('card-fields').querySelector('textarea'); if (first) first.focus();
     } catch (e) { cardMsg(tr('card.load.fail')); }
   }
+  // Change or remove the role picture (the owner, and a paired phone). POST /m/roles/avatar/<id>; the preview uses the shrunk blob we just sent.
+  async function setPicture(blob) {
+    if (!cardState.id || cardState.busy) return;
+    const id = cardState.id;
+    cardState.busy = true; cardMsg(tr('card.pic.busy'));
+    try {
+      const body = blob ? { avatar: { data: b64(await blob.arrayBuffer()) } } : { avatar: null };
+      const r = await api('/m/roles/avatar/' + encodeURIComponent(id), { method: 'POST', body: JSON.stringify(body) });
+      if (r.ok) {
+        if (cardState.id === id) { const img = $('card-img'); if (blob) { try { img.src = URL.createObjectURL(blob); } catch (e) { /* preview only */ } img.hidden = false; } else img.hidden = true; }
+        cardMsg(tr(blob ? 'card.pic.saved' : 'card.pic.removed')); refreshBots();
+      } else if (r.status === 403) cardMsg(tr('card.save.forbidden'));
+      else if (r.status === 429) cardMsg(tr('card.pic.limit'));
+      else cardMsg(tr('card.pic.fail'));
+    } catch (err) {
+      if (!isAuth(err)) cardMsg(tr('card.pic.fail'));
+      else if (!token) { $('auth').hidden = true; ui.needAuth = false; cardMsg(tr('card.pic.anon')); } // an unconnected computer page: say so, keep the page usable
+    }
+    cardState.busy = false;
+  }
+  $('card-pic-btn').addEventListener('click', () => $('card-pic-file').click());
+  $('card-pic-rm').addEventListener('click', () => setPicture(null));
+  $('card-pic-file').addEventListener('change', async () => {
+    const f = $('card-pic-file').files && $('card-pic-file').files[0];
+    $('card-pic-file').value = '';
+    if (!f || cardState.busy) return;
+    cardMsg(tr('card.pic.busy'));
+    let blob = null; try { blob = await shrinkPicked(f); } catch (e) { blob = null; }
+    if (!blob) { cardMsg(tr('role.err.avatar')); return; }
+    await setPicture(blob);
+  });
   function closeCard() { $('card-dlg').hidden = true; cardState.id = null; }
   $('card-btn').addEventListener('click', openCard);
   $('card-close').addEventListener('click', closeCard);
@@ -770,13 +801,15 @@
   const rol = { busy: false, avatar: null };
   const AV_MAX = 180000; // the request body cap is 256 KB; base64 adds a third
   function b64(buf) { const u = new Uint8Array(buf); let s = ''; for (let i = 0; i < u.length; i += 8192) s += String.fromCharCode.apply(null, u.subarray(i, i + 8192)); return btoa(s); }
+  // The one in-browser resize, for New role and for "Change picture" on the card: a Blob under AV_MAX, or null when it cannot be read.
+  const shrinkPicked = f => D.shrinkImage(f, { createImageBitmap: (x, o) => createImageBitmap(x, o), makeCanvas: (w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; } }, AV_MAX, 512);
   async function pickAvatar() {
     rol.avatar = null; roleErr('');
     const f = $('role-avatar').files && $('role-avatar').files[0];
     if (!f) return;
     // Any picture, any size: shrink it here, then check the size of the SHRUNK blob (never the original file) against AV_MAX.
     try {
-      const blob = await D.shrinkImage(f, { createImageBitmap: (x, o) => createImageBitmap(x, o), makeCanvas: (w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; } }, AV_MAX, 512);
+      const blob = await shrinkPicked(f);
       if (!blob) throw new Error('unreadable');
       rol.avatar = b64(await blob.arrayBuffer());
     } catch { $('role-avatar').value = ''; roleErr(tr('role.err.avatar')); }

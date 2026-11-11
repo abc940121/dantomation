@@ -108,5 +108,7 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: .9em; }
 #card-fields .hint { font-weight: 400; margin: 0; }
 #card-fields textarea { min-height: 88px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); resize: vertical; width: 100%; box-sizing: border-box; }
 .card-btns { display: flex; gap: 10px; }
+.card-pic { display: flex; gap: 10px; flex-wrap: wrap; }
+.card-pic button { min-height: 44px; }
 .card-btns button { flex: 1; }
 #card-save { background: var(--accent); color: var(--accent-text); border: 0; font-weight: 700; }

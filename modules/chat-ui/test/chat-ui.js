@@ -360,7 +360,7 @@ function cardTests(html, I) {
   check('card: json edits are parsed, bad json reports the field', CF.patch(rows, { mood: '{"b":2}' }).patch.mood.b === 2 && CF.patch(rows, { mood: '{bad' }).error === 'mood');
   const ids = ['card-dlg', 'card-form', 'card-fields', 'card-save', 'card-close', 'card-btn', 'card-msg'];
   check('card: dialog and header button are in index.html, cardform.js loads before app.js', ids.every(i => html.includes('id="' + i + '"')) && html.indexOf('cardform.js') > 0 && html.indexOf('cardform.js') < html.indexOf('app.js') && /room-info-enabled="true"/.test(html));
-  const keys = ['card.open', 'card.title', 'card.save', 'card.close', 'card.saved', 'card.nochange', 'card.loading', 'card.load.fail', 'card.save.fail', 'card.device.readonly', 'card.forbidden', 'card.save.forbidden', 'card.json.bad', 'card.avatar.note', 'card.json.hint', 'card.f.voice', 'card.f.talking', 'card.f.working', 'card.f.avatar'];
+  const keys = ['card.open', 'card.title', 'card.save', 'card.close', 'card.saved', 'card.nochange', 'card.loading', 'card.load.fail', 'card.save.fail', 'card.device.readonly', 'card.forbidden', 'card.save.forbidden', 'card.json.bad', 'card.pic.change', 'card.pic.remove', 'card.pic.busy', 'card.pic.saved', 'card.pic.removed', 'card.pic.fail', 'card.pic.limit', 'card.pic.anon', 'card.json.hint', 'card.f.voice', 'card.f.talking', 'card.f.working', 'card.f.avatar'];
   check('card: texts exist in both languages, zh-TW differs from en', keys.every(k => I.TABLE.en[k] && I.TABLE['zh-TW'][k] && I.TABLE.en[k] !== I.TABLE['zh-TW'][k]), keys.filter(k => !(I.TABLE.en[k] && I.TABLE['zh-TW'][k])).join(','));
   const app = fs.readFileSync(path.join(UI, 'app.js'), 'utf8');
   check('card: avatars go through an authenticated fetch and a blob URL, the card uses GET/PATCH /m/roles/cards', /createObjectURL/.test(app) && /headers: headers\(\)/.test(app) && /\/m\/roles\/cards\//.test(app) && /method: 'PATCH'/.test(app) && /'room-info'/.test(app));
@@ -602,6 +602,55 @@ async function pageTests() {
     check(lang + ' picture: a file the browser cannot read gets the translated "cannot be read" line, nothing sent', bad.r.get('role-err').textContent === I.t(lang, 'role.err.avatar') && bad.sent === null);
     const sm = await pick(lang, BIG, { w: 200, h: 300, sizeOf: () => 1000 });
     check(lang + ' picture: a small picture is not enlarged (square of its short side)', sm.rec.cv.width === 200 && sm.rec.cv.height === 200 && JSON.stringify(sm.rec.draws[0].slice(1)) === JSON.stringify([0, 50, 200, 200, 0, 0, 200, 200]), JSON.stringify(sm.rec.draws));
+  }
+  // Change picture on the role card (phone and computer): same in-browser resize, POST /m/roles/avatar/<id>, plain messages
+  {
+    const RID = 'r-11111111', cardApi = (post) => (u, o) => {
+      if (u === '/m/roles/cards/' + RID) return json(200, { id: RID, name: 'Ann', fields: [{ key: 'voice', type: 'text', max: 600, known: true }, { key: 'avatar', type: 'image', known: true }], card: {} });
+      if (u === '/m/roles/avatar/' + RID && o.method === 'POST') return post(o);
+      if (u.startsWith('/api/bots')) return json(200, bots);
+      if (u.startsWith('/api/events')) return new Response('', { status: 200 });
+      return json(200, []);
+    };
+    const open = async (lang, post, browser, opt = {}) => {
+      const sent = [];
+      const r = await run(lang, cardApi(o => { sent.push(JSON.parse(o.body)); return post(o); }), '', opt);
+      const rec = fakeBrowser(r, browser || { sizeOf: () => 1000 });
+      await r.settle(); r.get('card-btn').handlers.click(); await r.settle();
+      return { r, rec, sent };
+    };
+    const pickFile = async (x, f) => { x.r.get('card-pic-file').files = [f]; await x.r.get('card-pic-file').handlers.change(); await x.r.settle(); };
+    check('card: Change picture / Remove picture are in the page, hidden file input takes any image, 44 px buttons', ['card-pic', 'card-pic-btn', 'card-pic-rm', 'card-pic-file'].every(i => html.includes('id="' + i + '"')) && html.includes('id="card-pic-file" type="file" accept="image/*" hidden') && /\.card-pic button\s*\{[^}]*min-height:\s*44px/.test(fs.readFileSync(path.join(UI, 'style.css'), 'utf8')) && I.t('en', 'card.pic.change') === 'Change picture' && I.t('zh-TW', 'card.pic.change') === '更換圖片');
+    for (const lang of ['en', 'zh-TW']) {
+      const t = k => I.t(lang, k);
+      const x = await open(lang, () => json(200, { id: RID, avatar: '/m/roles/avatar/' + RID + '?v=abcd1234' }));
+      check(lang + ' card: the Change picture button opens the file chooser', (() => { let clicked = false; x.r.get('card-pic-file').click = () => { clicked = true; }; x.r.get('card-pic-btn').handlers.click(); return clicked; })());
+      await pickFile(x, BIG);
+      check(lang + ' card: a 6 MB photo is shrunk first, then POSTed once as {avatar:{data}} (the shrunk bytes), and the card says it is changed', x.sent.length === 1 && x.sent[0].avatar && x.sent[0].avatar.data === x.rec.bytes.toString('base64') && x.r.get('card-msg').textContent === t('card.pic.saved') && x.r.get('card-img').hidden === false && x.r.calls.filter(c => c === '/m/roles/avatar/' + RID + ' POST').length === 1, JSON.stringify(x.sent) + x.r.get('card-msg').textContent);
+      x.r.get('card-pic-rm').handlers.click(); await x.r.settle();
+      check(lang + ' card: Remove picture POSTs {avatar:null}, hides the picture and says so', x.sent.length === 2 && JSON.stringify(x.sent[1]) === '{"avatar":null}' && x.r.get('card-img').hidden === true && x.r.get('card-msg').textContent === t('card.pic.removed'));
+      const un = await open(lang, () => json(200, {}), { unreadable: true, sizeOf: () => 1 });
+      await pickFile(un, { type: 'image/heic', size: 3000000, arrayBuffer: async () => new ArrayBuffer(4) });
+      check(lang + ' card: a file the browser cannot read gets the plain "cannot be read" line and nothing is sent', un.sent.length === 0 && un.r.get('card-msg').textContent === t('role.err.avatar'));
+      const big = await open(lang, () => json(200, {}), { sizeOf: () => AVMAX + 1 });
+      await pickFile(big, { type: 'image/png', size: 100, arrayBuffer: async () => new ArrayBuffer(4) });
+      check(lang + ' card: the size check is on the shrunk blob, so an over-size result is refused and nothing is sent', big.sent.length === 0 && big.r.get('card-msg').textContent === t('role.err.avatar'));
+      const f400 = await open(lang, () => json(400, { error: 'x' }));
+      await pickFile(f400, BIG);
+      check(lang + ' card: a refused picture (400) says "could not change the picture" and keeps the old one', f400.r.get('card-msg').textContent === t('card.pic.fail'));
+      const f429 = await open(lang, () => json(429, { error: 'x' }));
+      await pickFile(f429, BIG);
+      check(lang + ' card: a 429 shows the plain too-many-picture-changes line', f429.r.get('card-msg').textContent === t('card.pic.limit') && t('card.pic.limit') === (lang === 'en' ? 'Too many picture changes today. Try again tomorrow.' : '今天更換圖片的次數已達上限，請明天再試。'));
+      const f403 = await open(lang, () => json(403, { error: 'forbidden' }));
+      await pickFile(f403, BIG);
+      check(lang + ' card: a 403 shows the same forbidden line as saving a card', f403.r.get('card-msg').textContent === t('card.save.forbidden'));
+      const anon = await open(lang, () => json(401, { error: 'unauthorized' }));
+      await pickFile(anon, BIG);
+      check(lang + ' card: on a computer page with no token a 401 says it is not connected (no pairing screen takes over)', anon.r.get('card-msg').textContent === t('card.pic.anon') && anon.r.get('auth').hidden === true);
+      const dv = await open(lang, () => json(200, { id: RID, avatar: '/m/roles/avatar/' + RID + '?v=abcd1234' }), null, { seed: { 'taskmote.token': 'dev-token-1', 'taskmote.token.device': '1' } });
+      await pickFile(dv, BIG);
+      check(lang + ' card: a paired phone (read-only text) can still change the picture; Save stays hidden', dv.sent.length === 1 && dv.r.get('card-msg').textContent === t('card.pic.saved') && dv.r.get('card-save').hidden === true);
+    }
   }
   check('picture: the page never compares the original file size to AV_MAX', !/f\.size\s*>\s*AV_MAX/.test(fs.readFileSync(path.join(UI, 'app.js'), 'utf8')));
   check('new-role: empty name or job is refused in the page without a request', await (async () => {

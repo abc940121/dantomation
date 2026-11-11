@@ -49,8 +49,11 @@ const MODEL_PROP = { type: 'string', description: 'Only for engine "opencode": t
 // Per-device daily count of role creations, kept in this module's own state (device-creates.json: {day, counts:{'device:<id>': n}}).
 // Returns today's count for the device; with bump it adds one first. A new UTC day starts the counts again.
 const DEVICE_DAILY_MAX = 20;
-function deviceCreates(dir, devId, bump) {
-  const f = path.join(dir, 'device-creates.json'), day = new Date().toISOString().slice(0, 10);
+const AVATAR_CHANGES_MAX = 20; // picture changes a paired device may make a day (the owner is not limited)
+const AVATAR_CHANGES_FILE = 'device-avatar-changes.json';
+const AVATAR_BYTES_MAX = 225000; // decoded bytes (the base64 text is capped at 300000 characters)
+function deviceCreates(dir, devId, bump, name) {
+  const f = path.join(dir, name || 'device-creates.json'), day = new Date().toISOString().slice(0, 10);
   let j = null; try { j = JSON.parse(fs.readFileSync(f, 'utf8')); } catch { /* none yet */ }
   const counts = j && j.day === day && j.counts && typeof j.counts === 'object' ? j.counts : {};
   if (!bump) return Number.isInteger(counts[devId]) ? counts[devId] : 0;
@@ -283,6 +286,40 @@ module.exports = {
         if (!f) return { status: 404, json: { error: 'no avatar' } };
         let body; try { if (fs.statSync(f.path).size > require('../../lib/modules').RAW_MAX) return { status: 413, json: { error: 'avatar too large' } }; body = fs.readFileSync(f.path); } catch { return { status: 404, json: { error: 'no avatar' } }; }
         return { status: 200, body, type: f.type, etag: String(f.hash || '').replace(/[^A-Za-z0-9._-]/g, '').slice(0, 64) || undefined };
+      } },
+    // Change a role's picture after it was made: the owner and a paired device (the server rewrites a device to an owner actor named device:<id>).
+    // Same checks as New role (base64 JSON, content-sniffed png/jpeg/webp, the card's size limit); the journal line carries the role id and who, never image data.
+    { method: 'POST', path: '/avatar/:id', access: 'owner', description: 'set or clear a role picture {avatar:{data: base64 png/jpeg/webp}} or {avatar:null}; the type is checked by content; answers {id, avatar (the new image URL, or null)}; journals role_avatar_changed {id, by, cleared?} with no image data',
+      handler(ctx) {
+        const bad = error => ({ status: 400, json: { error } });
+        const r = roleOfParam(ctx);
+        if (!r) return { status: 404, json: { error: 'no such role' } };
+        const b = ctx.body && typeof ctx.body === 'object' ? ctx.body : {};
+        if (!('avatar' in b)) return bad(bi('請給 {avatar:{data}} 或 {avatar:null}', 'give {avatar:{data}} or {avatar:null}'));
+        let patch;
+        const by = ctx.actor && ctx.actor.id ? ctx.actor.id : 'owner';
+        const dev = typeof by === 'string' && by.startsWith('device:') ? by : null;
+        if (dev && deviceCreates(ctx.state.dir, dev, false, AVATAR_CHANGES_FILE) >= AVATAR_CHANGES_MAX) {
+          try { ctx.state.append({ type: 'role_rate_limited', by: dev, limit: AVATAR_CHANGES_MAX, what: 'avatar' }); } catch { /* best effort */ }
+          return { status: 429, json: { error: bi('今天更換圖片的次數已達上限，請明天再試。', 'Too many picture changes today. Try again tomorrow.') } };
+        }
+        if (b.avatar === null) patch = null;
+        else {
+          const d = b.avatar && typeof b.avatar === 'object' ? b.avatar.data : undefined;
+          if (typeof d !== 'string' || !d || d.length > 300000 || !/^[A-Za-z0-9+/]+={0,2}$/.test(d) || d.length % 4) return bad(bi('頭像圖檔無法讀取', 'the avatar image could not be read'));
+          const bytes = Buffer.from(d, 'base64');
+          if (bytes.length > AVATAR_BYTES_MAX) return bad(bi('頭像圖檔太大', 'the avatar image is too large'));
+          patch = { bytes }; // the type is decided by card.js from these decoded bytes only (png, jpeg, webp); nothing the caller says about a type or name is read
+        }
+        try {
+          const u = storeOfCtx(ctx).update(r.id, { card: { avatar: patch } });
+          if (dev) deviceCreates(ctx.state.dir, dev, true, AVATAR_CHANGES_FILE);
+          note(ctx, 'role_avatar_changed', r, { by, ...(patch === null ? { cleared: true } : {}) });
+          return { status: 200, json: { id: u.id, avatar: card.avatarUrl(u) || null } };
+        } catch (e) {
+          if (!(e instanceof RoleError)) throw e;
+          return bad(bi('無法更換頭像：' + e.message, e.message));
+        }
       } },
     { method: 'GET', path: '/cards/:id', access: 'owner', description: 'one role card: {id, name, fields:[{key, type, max?, label?, description?, known}], card}',
       handler(ctx) {

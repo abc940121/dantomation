@@ -259,8 +259,10 @@ const ALLOW = [
   ['GET', /^\/m\/roles\/groups\/archived$/],
   // roles: make a role from the chat page (create only; the route validates, takes only name, job and an optional picture, and caps the total)
   ['POST', /^\/m\/roles\/roles$/],
-  // roles: read a role's card and avatar (read-only; editing a card is done from the computer)
+  // roles: read a role's card and avatar (read-only; editing a card's text is done from the computer)
   ['GET', /^\/m\/roles\/avatar\/r-[0-9a-f]{8}$/],
+  // roles: change or clear a role's picture (the one card edit a phone may make; the route checks the image by content and journals role id and device, never the image)
+  ['POST', /^\/m\/roles\/avatar\/r-[0-9a-f]{8}$/],
   ['GET', /^\/m\/roles\/cards\/r-[0-9a-f]{8}$/],
 ];
 const allows = (method, p) => ALLOW.some(([m, re]) => m === method && re.test(String(p)));
