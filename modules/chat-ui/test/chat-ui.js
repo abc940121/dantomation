@@ -685,10 +685,10 @@ async function pageTests() {
     check(lang + ' pairing screen: the CLI way is only inside the collapsed Advanced line', /<details id="auth-adv">(?:(?!<\/details>)[\s\S])*id="token-adv"/.test(html) && /node bin\/harness\.js device pair/.test(t('auth.adv.hint')) && !/<details id="auth-adv" open/.test(html));
     check(lang + ' pairing screen: title, step 1, step 2 and Connect read as asked', t('auth.heading') === zh('Connect this phone', '連接這支手機', lang) && t('auth.step1').includes(zh('press Connect a phone', '按「連接手機」', lang)) && t('auth.step2') === zh('2. Type the 6 digits here', '2. 把畫面上的 6 位數字輸入這裡', lang) && t('auth.save') === zh('Connect', '連接', lang));
     check(lang + ' pairing screen: the too-many-tries line says to wait 30 seconds', /30/.test(t('auth.err.wait')));
-    check(lang + ' condition 2: both the pairing and the phone screen say the exact expired line', t('phone.expired') === zh('Code expired, tap Connect a phone again', '數字已失效，請再按一次「連接手機」', lang) && t('auth.err.bad').includes(t('phone.expired')));
+    check(lang + ' condition 2: both the pairing and the phone screen say the exact expired line', t('phone.expired') === zh('Code expired, tap Connect a phone again', '數字已失效，請再按一次「連接手機」', lang) && /Check it|再確認/.test(t('auth.err.bad')) && !/expired|失效/.test(t('auth.err.bad')));
     const wrong = await run(lang, pairApi(401));
     wrong.get('token').value = SIXFMT; wrong.get('auth-form').handlers.submit({ preventDefault() {} }); await wrong.settle();
-    check(lang + ' condition 2: a refused number shows the expired line and keeps the screen; one redeem call', wrong.get('pair-msg').textContent === t('auth.err.bad') && wrong.get('auth').hidden === false && redeems(wrong).length === 1);
+    check(lang + ' condition 2: a refused number says to check it or tap Connect a phone again (no "expired" after one wrong try), keeps the screen; one redeem call', wrong.get('pair-msg').textContent === t('auth.err.bad') && wrong.get('auth').hidden === false && redeems(wrong).length === 1);
     const lock = await run(lang, pairApi(429));
     lock.get('token').value = SIX; lock.get('auth-form').handlers.submit({ preventDefault() {} }); await lock.settle();
     check(lang + ' pairing screen: a 429 says wait 30 seconds', lock.get('pair-msg').textContent === t('auth.err.wait'));
@@ -717,6 +717,11 @@ async function pageTests() {
     const copied = [], cp = await run(lang, pairApi(200), '', { seed: paired, nav: { clipboard: { writeText: async s => { copied.push(s); } } } });
     await cp.get('phone-btn').handlers.click(); await cp.settle(); await cp.get('phone-copy').handlers.click(); await cp.settle();
     check(lang + ' phone: Copy puts the six digits (no space) on the clipboard and says copied', copied.length === 1 && copied[0] === SIX && cp.get('phone-msg').textContent === t('phone.copied'));
+  }
+  for (const lang of ['en', 'zh-TW']) {
+    const anon = await run(lang, u => (u.startsWith('/m/device-pairing/handoff') ? json(401, { error: 'unauthorized' }) : pairApi(200)(u)));
+    await anon.get('phone-btn').handlers.click(); await anon.settle();
+    check(lang + ' phone: on a computer page with no token a 401 keeps the dialog open with the "not connected yet" line, and the pairing screen stays closed', anon.get('phone-dlg').hidden === false && anon.get('phone-msg').textContent === I.t(lang, 'phone.anon') && anon.get('phone-msg').hidden === false && anon.get('auth').hidden === true && I.t(lang, 'phone.anon') === (lang === 'en' ? 'This computer is not connected yet. Use a phone or browser where Taskmote already works and press Connect a phone there.' : '這台電腦還沒連上。請在已經能用 Taskmote 的手機或瀏覽器上按「連接手機」。'));
   }
   check('condition 3: the phone code in app.js is never logged, stored or put in a URL', (() => { const seg = /let phoneTimer[\s\S]*?async function boot/.exec(appSrc)[0]; return !/console\.|localStorage|sessionStorage|history\.|location|encodeURIComponent/.test(seg); })());
   check('phone strings exist in both languages, with no command name or token / 權杖 / 密碼', ['phone.open', 'phone.line', 'phone.left', 'phone.copy', 'phone.copied', 'phone.close', 'phone.busy', 'phone.expired', 'phone.fail', 'phone.limit'].every(k => I.t('en', k) !== k && I.t('zh-TW', k) !== k && !/harness|token|權杖|密碼/i.test(I.t('en', k) + I.t('zh-TW', k))));
@@ -818,6 +823,10 @@ async function pageTests() {
     await ar.get('edit-archive').handlers.click(); await ar.settle();
     check('edit group: the second tap sends PATCH {archived:true}', ar.sent.length === 1 && JSON.stringify(ar.sent[0].body) === '{"archived":true}', JSON.stringify(ar.sent));
     check('edit group: archived closes the dialog', ar.get('edit-dlg').hidden === true);
+    check('edit group: archiving from the dialog shows the archived-groups entry at once with the new count (no stale 0)', ar.get('arch-btn').hidden === false && ar.get('arch-btn').textContent === I.t('en', 'arch.entry').replace('{n}', '1'), ar.get('arch-btn').textContent);
+    const appA = fs.readFileSync(path.join(UI, 'app.js'), 'utf8');
+    { const k = appA.indexOf('arch.list = arch.list.filter(g => g.id !== id);'), d = appA.indexOf('drawArchList();', k), h = appA.indexOf("$('arch-dlg').hidden = true;", k);
+      check('archived dialog: a successful restore redraws the list before hiding it, so no stale "restoring" row stays in the hidden dialog', k > 0 && d > k && d < h); }
   }
 }
 

@@ -694,6 +694,7 @@
     arch.busy = false;
     if (!ok) { btn.disabled = false; btn.textContent = tr('arch.restore'); archErr(msg); return; } // the server's own text, both languages
     arch.list = arch.list.filter(g => g.id !== id); arch.n = arch.list.length; arch.shown = arch.n > 0; drawArchBtn();
+    drawArchList(); // the hidden dialog must not keep the restored row (it would still read "restoring")
     $('arch-dlg').hidden = true;
     await loadRooms(true);
     ui.cur = 'room:' + id; selectRoom(id);
@@ -750,7 +751,7 @@
     if (edt.busy) return;
     if (!edt.armed) { edt.armed = true; $('edit-archive').classList.add('armed'); $('edit-archive').textContent = tr('group.archive.confirm'); return; }
     const ok = await sendEdit({ archived: true }, 'edit-archive', 'group.archiving', 'group.archive');
-    if (ok) { edt.armed = false; $('edit-archive').classList.remove('armed'); ui.room = null; ui.cur = null; rooms.msgs = []; roomGen++; urlRoom(); render(); } else disarm();
+    if (ok) { arch.n += 1; arch.shown = true; drawArchBtn(); arch.list = []; edt.armed = false; $('edit-archive').classList.remove('armed'); ui.room = null; ui.cur = null; rooms.msgs = []; roomGen++; urlRoom(); render(); } else disarm();
   }
   $('edit-group').addEventListener('click', openEditDlg);
   $('edit-cancel').addEventListener('click', closeEditDlg);
@@ -876,7 +877,11 @@
       phoneDigits = String(r.body.short); phoneUntil = Number.isFinite(until) ? until : Date.now() + 600000;
       $('phone-num').textContent = phoneDigits.slice(0, 3) + ' ' + phoneDigits.slice(3);
       $('phone-copy').disabled = false; phoneMsg(''); phoneTick(); phoneTimer = setInterval(phoneTick, 1000); $('phone-copy').focus();
-    } catch (err) { if (isAuth(err)) $('phone-dlg').hidden = true; else phoneMsg(tr('phone.fail')); }
+    } catch (err) {
+      if (!isAuth(err)) phoneMsg(tr('phone.fail'));
+      else if (!token) { $('auth').hidden = true; ui.needAuth = false; phoneMsg(tr('phone.anon')); $('phone-close').focus(); } // an anonymous computer page: say so, keep the page usable
+      else $('phone-dlg').hidden = true; // a stored token the server refused: the pairing screen is right
+    }
     finally { btn.disabled = false; }
   }
   $('phone-btn').addEventListener('click', openPhone);
