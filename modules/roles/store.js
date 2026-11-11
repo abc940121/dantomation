@@ -96,7 +96,8 @@ function createStore(dir, workdir) {
     // The one main role. When no live role is marked main, make the default one (a data field, never a fixed name).
     // Returns null, and writes nothing, when the default must not be made: a main role existed before (any record, archived
     // included, that is main or was seeded as the default: it is not resurrected), or the live roles are at ROLES_MAX.
-    // onCreate(rec) runs once after the write, only when a default was made (the route journals it there).
+    // onCreate(rec) runs once BEFORE the write, only when a default was made (the route journals it there). If it throws,
+    // nothing is saved and the error propagates: a default main role never exists without its audit line.
     ensureMain(def, onCreate) {
       const roles = read(), have = mainOf(roles);
       if (have) return copy(have);
@@ -106,8 +107,8 @@ function createStore(dir, workdir) {
       let id; do { id = 'r-' + crypto.randomBytes(4).toString('hex'); } while (roles.some(r => r.id === id));
       const now = new Date().toISOString();
       const rec = { id, name: checkName(n), persona: checkPersona(def.persona), kind: 'session', engine: 'claude', main: true, seeded: true, created_at: now, updated_at: now };
+      if (typeof onCreate === 'function') onCreate(copy(rec));
       roles.push(rec); write(roles);
-      if (typeof onCreate === 'function') { try { onCreate(copy(rec)); } catch { /* the journal note is best effort */ } }
       return copy(rec);
     },
     create({ name, persona, engine, model, card: cardPatch } = {}) {

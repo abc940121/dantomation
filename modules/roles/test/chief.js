@@ -29,7 +29,7 @@ const throws = fn => { try { fn(); return null; } catch (e) { return e.message; 
     const dctx = Object.assign({}, ctx, { actor: { kind: 'owner', id: 'device:d-test' } });
     const rolesFile = () => fs.existsSync(path.join(tmp, 'state')) ? fs.readdirSync(path.join(tmp, 'state'), { recursive: true }).map(String).filter(p => fs.statSync(path.join(tmp, 'state', p)).isFile()).sort().join() : '';
     const before = rolesFile();
-    const others = [undefined, null, {}, { kind: 'worker' }, { kind: 'anonymous' }, { kind: 'device', id: 'd-1' }, { kind: 'owner', id: 'x' }, { kind: 'owner', id: '' }, { kind: 'Owner' }];
+    const others = [undefined, null, {}, { kind: 'worker' }, { kind: 'anonymous' }, { kind: 'device', id: 'd-1' }, { kind: 'owner', id: 'x' }, { kind: 'Owner' }];
     const ro = others.map(a => route.handler(Object.assign({}, ctx, { actor: a })));
     check('GET /main by an actor that is neither the owner nor a device fails closed: {id:null}, no role, no file written', ro.every(x => x.status === 200 && x.json.id === null && Object.keys(x.json).join() === 'id') && api.list().length === 0 && api.dynamicBots().length === 0 && rolesFile() === before, JSON.stringify(ro.map(x => x.status)) + ' ' + before + ' -> ' + rolesFile());
 
@@ -141,6 +141,41 @@ const throws = fn => { try { fn(); return null; } catch (e) { return e.message; 
       const m = s.ensureMain(DEF);
       return !!m && m.main === true && s.list().length === ROLES_MAX;
     }));
+    // the audit line comes first: a throwing onCreate saves nothing, and onCreate runs before the role is in the store
+    check('a throwing onCreate makes ensureMain throw, leaves no role, and a later working onCreate makes exactly one main', fresh(d => {
+      const s = createStore(d);
+      const e = throws(() => s.ensureMain(DEF, () => { throw new Error('audit down'); }));
+      const none = e === 'audit down' && s.all().length === 0 && s.getMain() === null && !fs.existsSync(path.join(d, 'roles.json'));
+      const seen = [], m = s.ensureMain(DEF, r => seen.push(r.id));
+      return none && !!m && m.main === true && seen.length === 1 && seen[0] === m.id && s.all().length === 1 && s.all().filter(r => r.main === true).length === 1;
+    }));
+    check('onCreate runs before the role is saved (the audit line comes first)', fresh(d => {
+      const s = createStore(d); let during = null;
+      const m = s.ensureMain(DEF, r => { during = { all: s.all().length, got: s.get(r.id), main: s.getMain(), file: fs.existsSync(path.join(d, 'roles.json')) }; });
+      return !!during && during.all === 0 && during.got === null && during.main === null && during.file === false && s.all().length === 1 && s.get(m.id).main === true;
+    }));
+    check('a failing audit append answers 500 and no main role is made; once it works the default is made once', fresh(d => {
+      let fail = true; const log = [];
+      const c = { state: { dir: d, append: e => { if (fail) throw new Error('journal down'); log.push(e); } }, config: cfg, actor: { kind: 'owner', id: 'device:d-test' } };
+      const r = route.handler(c), none = r.status === 500 && r.json.id === undefined && createStore(d).all().length === 0 && log.length === 0;
+      fail = false;
+      const ok = route.handler(c);
+      return none && ok.status === 200 && !!ok.json.id && createStore(d).all().length === 1 && log.length === 1 && log[0].type === 'role_created' && log[0].main === true;
+    }));
+    // through the registry (the real path: the actor is normalised, an owner has id ''), on a fresh roles state each time
+    const viaReg = async (label, actors) => {
+      fs.rmSync(path.join(ctx.state.dir, 'roles.json'), { force: true });
+      const reg = M.registry({ modules: { roles: true } });
+      const call = a => reg.callRoute(reg.findRoute('GET', '/m/roles/main'), { actor: a });
+      const rs = await Promise.all(actors.map(call));
+      const z = await call(actors[0]);
+      const live = M.apiOf(reg.mods, 'roles').list(), mains = live.filter(r => r.main === true);
+      const ids = rs.concat([z]).map(r => r.json && r.json.id);
+      check(label, rs.every(r => r.status === 200) && z.status === 200 && !!ids[0] && ids.every(i => i === ids[0]) && mains.length === 1 && live.length === 1 && mains[0].id === ids[0], JSON.stringify({ rs, z, live: live.length, mains: mains.length }));
+    };
+    await viaReg('through the registry, the owner GET /main on a fresh state creates the default: 200 with an id', [{ kind: 'owner' }]);
+    await viaReg('through the registry, two GET /main at once from the owner create exactly one main role, same id, a third call agrees', [{ kind: 'owner' }, { kind: 'owner' }]);
+    await viaReg('through the registry, one owner and one paired device GET /main at once create exactly one main role, same id', [{ kind: 'owner' }, { kind: 'owner', id: 'device:d-test' }]);
     check('role_update tool offers a main property', !!tools.role_update.inputSchema.properties.main);
   } catch (e) { check('suite ran without an exception', false, e && e.stack); }
   finally { try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* temp dir */ } }
