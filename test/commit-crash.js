@@ -21,7 +21,7 @@ const base = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-'));
 const state = path.join(base, 'state');
 const w = path.join(base, 'w');
 const env = { ...process.env, HARNESS_STATE_DIR: state, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
-const g = (...a) => execFileSync('git', a, { cwd: w, encoding: 'utf8', env }).trim();
+const g = (...a) => execFileSync('git', a, { cwd: w, encoding: 'utf8', env , windowsHide: true }).trim();
 const tick = ms => new Promise(r => setTimeout(r, ms));
 
 async function main() {
@@ -41,14 +41,14 @@ async function main() {
   await tick(1000); // well inside the hook
   if (p.exitCode !== null) throw new Error(`setup: the commit exited (code ${p.exitCode}) before it could be killed inside its pre-commit hook`);
   // taskkill /T can exit non-zero when part of the tree (the hook's sleep) is already gone; what counts is that the commit died
-  try { execSync(`taskkill /T /F /PID ${p.pid}`, { stdio: 'ignore' }); } catch { /* checked below */ }
+  try { execSync(`taskkill /T /F /PID ${p.pid}`, { stdio: 'ignore' , windowsHide: true }); } catch { /* checked below */ }
   const tk = Date.now();
   while (p.exitCode === null && p.signalCode === null && Date.now() - tk < 10000) await tick(100);
   if (p.exitCode === null && p.signalCode === null) throw new Error('setup: the commit process survived taskkill');
   await tick(1000);
 
   const atKill = { lock: fs.existsSync(lockFile), staged: g('diff', '--cached', '--name-only'), head: g('rev-parse', 'HEAD') === head0 };
-  const r1 = spawnSync(process.execPath, [EFFECT, 'commit', 'C1', 's1-commit', 'add a', 'a.txt'], { cwd: w, env, encoding: 'utf8', timeout: 90000 });
+  const r1 = spawnSync(process.execPath, [EFFECT, 'commit', 'C1', 's1-commit', 'add a', 'a.txt'], { cwd: w, env, encoding: 'utf8', timeout: 90000 , windowsHide: true });
   const trailers = g('log', '--all', '--format=%B').split('Effect-Id: C1/s1-commit').length - 1;
   const reflog1 = g('reflog').split('\n');
   console.log(`1 at kill: index.lock=${atKill.lock}; staged=[${atKill.staged}]; HEAD unchanged=${atKill.head}`);
@@ -60,14 +60,14 @@ async function main() {
   fs.writeFileSync(path.join(w, 'b.txt'), 'b\n'); g('add', 'b.txt');
   fs.appendFileSync(path.join(state, 'journal.jsonl'), JSON.stringify({ id: 'c2', type: 'effect_intent', task_id: 'C2', effect_id: 's1-commit', kind: 'commit', target: w, message: 'add b' }) + '\n');
   fs.copyFileSync(path.join(w, '.git', 'index'), lockFile);
-  const r2 = spawnSync(process.execPath, [EFFECT, 'commit', 'C2', 's1-commit', 'add b', 'b.txt'], { cwd: w, env, encoding: 'utf8' });
+  const r2 = spawnSync(process.execPath, [EFFECT, 'commit', 'C2', 's1-commit', 'add b', 'b.txt'], { cwd: w, env, encoding: 'utf8' , windowsHide: true });
   const after = { lock: fs.existsSync(lockFile), staged: g('diff', '--cached', '--name-only'), head: g('rev-parse', 'HEAD') === head1, reflog: g('reflog').split('\n').length, file: fs.readFileSync(path.join(w, 'b.txt'), 'utf8') };
   console.log(`2 resume: exit ${r2.status} "${r2.stdout.trim()}"`);
   console.log(`2 after: index.lock=${after.lock}; staged=[${after.staged}]; HEAD unchanged=${after.head}; reflog entries=${after.reflog}; b.txt intact=${after.file === 'b\n'}`);
 
   // case 3: real kill between `git add` and `git commit` (fresh repo)
   const w3 = path.join(base, 'w3');
-  const g3 = (...a) => execFileSync('git', a, { cwd: w3, encoding: 'utf8', env }).trim();
+  const g3 = (...a) => execFileSync('git', a, { cwd: w3, encoding: 'utf8', env , windowsHide: true }).trim();
   fs.mkdirSync(w3); g3('init', '-q', '-b', 'main');
   fs.writeFileSync(path.join(w3, 'base.txt'), 'base'); g3('add', '.'); g3('commit', '-qm', 'base');
   const head3 = g3('rev-parse', 'HEAD');
@@ -78,12 +78,12 @@ async function main() {
   const t3 = Date.now();
   while (!(fs.existsSync(flag) && /MID/.test(fs.readFileSync(flag, 'utf8'))) && Date.now() - t3 < 90000) await tick(100);
   if (!(fs.existsSync(flag) && /MID/.test(fs.readFileSync(flag, 'utf8')))) throw new Error('setup: the effect never paused mid-act within 90 s (machine overloaded?)');
-  execSync(`taskkill /T /F /PID ${p3.pid}`, { stdio: 'ignore' });
+  execSync(`taskkill /T /F /PID ${p3.pid}`, { stdio: 'ignore' , windowsHide: true });
   await tick(1000);
   fs.rmSync(flag, { force: true });
   const kill3 = { lock: fs.existsSync(path.join(w3, '.git', 'index.lock')), staged: g3('diff', '--cached', '--name-only'), head: g3('rev-parse', 'HEAD') === head3 };
-  const r3 = spawnSync(process.execPath, [EFFECT, 'commit', 'C3', 's1-commit', 'add c', 'c.txt'], { cwd: w3, env, encoding: 'utf8' });
-  const r3b = spawnSync(process.execPath, [EFFECT, 'commit', 'C3', 's1-commit', 'add c', 'c.txt'], { cwd: w3, env, encoding: 'utf8' });
+  const r3 = spawnSync(process.execPath, [EFFECT, 'commit', 'C3', 's1-commit', 'add c', 'c.txt'], { cwd: w3, env, encoding: 'utf8' , windowsHide: true });
+  const r3b = spawnSync(process.execPath, [EFFECT, 'commit', 'C3', 's1-commit', 'add c', 'c.txt'], { cwd: w3, env, encoding: 'utf8' , windowsHide: true });
   const tr3 = g3('log', '--all', '--format=%B').split('Effect-Id: C3/s1-commit').length - 1;
   console.log(`3 at kill (between add and commit): index.lock=${kill3.lock}; staged=[${kill3.staged}]; HEAD unchanged=${kill3.head}`);
   console.log(`3 resume: exit ${r3.status} "${r3.stdout.trim()}"; again: "${r3b.stdout.trim()}"; commits with trailer=${tr3}; commits=${g3('rev-list', '--count', 'HEAD')}`);
@@ -91,10 +91,10 @@ async function main() {
   // case 4: trailer is matched as a whole line. C4/s1-commit2 exists; an intent
   // for C4/s1-commit must not reconcile against it.
   fs.writeFileSync(path.join(w3, 'd.txt'), 'd\n');
-  const r4a = spawnSync(process.execPath, [EFFECT, 'commit', 'C4', 's1-commit2', 'add d', 'd.txt'], { cwd: w3, env, encoding: 'utf8' });
+  const r4a = spawnSync(process.execPath, [EFFECT, 'commit', 'C4', 's1-commit2', 'add d', 'd.txt'], { cwd: w3, env, encoding: 'utf8' , windowsHide: true });
   fs.writeFileSync(path.join(w3, 'e.txt'), 'e\n');
   fs.appendFileSync(path.join(state, 'journal.jsonl'), JSON.stringify({ id: 'c4', type: 'effect_intent', task_id: 'C4', effect_id: 's1-commit', kind: 'commit', target: w3, message: 'add e' }) + '\n');
-  const r4 = spawnSync(process.execPath, [EFFECT, 'commit', 'C4', 's1-commit', 'add e', 'e.txt'], { cwd: w3, env, encoding: 'utf8' });
+  const r4 = spawnSync(process.execPath, [EFFECT, 'commit', 'C4', 's1-commit', 'add e', 'e.txt'], { cwd: w3, env, encoding: 'utf8' , windowsHide: true });
   const own4 = g3('log', '--format=%B', '-1').split('\n').includes('Effect-Id: C4/s1-commit');
   console.log(`4 s1-commit2 committed (${r4a.stdout.trim()}); intent for s1-commit -> "${r4.stdout.trim()}"; HEAD carries its own trailer=${own4}`);
 
@@ -102,7 +102,7 @@ async function main() {
   fs.appendFileSync(path.join(state, 'journal.jsonl'), JSON.stringify({ id: 'c5', type: 'effect_intent', task_id: 'C5', effect_id: 's1-commit', kind: 'commit', target: w3, params: { target: w3, message: 'add f', paths: ['f.txt'] } }) + '\n');
   fs.writeFileSync(path.join(w3, 'g.txt'), 'g\n');
   const head5 = g3('rev-parse', 'HEAD');
-  const r5 = spawnSync(process.execPath, [EFFECT, 'commit', 'C5', 's1-commit', 'add g', 'g.txt'], { cwd: w3, env, encoding: 'utf8' });
+  const r5 = spawnSync(process.execPath, [EFFECT, 'commit', 'C5', 's1-commit', 'add g', 'g.txt'], { cwd: w3, env, encoding: 'utf8' , windowsHide: true });
   console.log(`5 params differ: exit ${r5.status} "${r5.stdout.trim()}"; HEAD unchanged=${g3('rev-parse', 'HEAD') === head5}`);
 
   const res = {

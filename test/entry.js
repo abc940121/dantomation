@@ -39,7 +39,7 @@ const tokens = l => (l.match(/"[^"]*"|\S+/g) || []).map(t => t.replace(/^"|"$/g,
 const run = (line, env, extra = {}) => {
   const t = tokens(line);
   if (t[0] !== 'node') throw new Error('quickstart line must start with node: ' + line);
-  const r = spawnSync(process.execPath, t.slice(1), { cwd: ROOT, env: { ...env, ...extra }, encoding: 'utf8', timeout: 120000 });
+  const r = spawnSync(process.execPath, t.slice(1), { cwd: ROOT, env: { ...env, ...extra }, encoding: 'utf8', timeout: 120000 , windowsHide: true });
   return { status: r.status, out: (r.stdout || '') + (r.stderr || '') };
 };
 
@@ -62,7 +62,7 @@ const u1 = run(undoL, env);
 res['undo #1 restores out.txt to the earlier content'] = u1.status === 0 && read(outFile) === request + '\n';
 const back = (u1.out.match(/Undo this with: taskmote undo --to (\d+) (\S+)/) || []);
 res['undo prints how to get back (undo --to <n> <task>)'] = back[2] === start.task_id;
-const redo = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'taskmote.js'), 'undo', '--to', back[1] || '0', back[2] || 'x'], { cwd: ROOT, env, encoding: 'utf8' });
+const redo = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'taskmote.js'), 'undo', '--to', back[1] || '0', back[2] || 'x'], { cwd: ROOT, env, encoding: 'utf8' , windowsHide: true });
 res['undo, then redo by undo --to: content is back exactly'] = redo.status === 0 && beforeUndo !== null && beforeUndo !== request + '\n' && read(outFile) === beforeUndo;
 const u2 = run(undo2L, env);
 res['undo #2 steps back further (out.txt gone)'] = u2.status === 0 && !fs.existsSync(outFile);
@@ -83,7 +83,7 @@ res['status shows the open task (request, folder, steps done, last step)'] = /op
 const inEngine = run(undoL, env, { HARNESS_TASK_ID: 'tX' });
 res['undo refuses with HARNESS_TASK_ID set (exit 6)'] = inEngine.status === 6 && /not for agents/.test(inEngine.out);
 const GUARD = path.join(ROOT, 'guards', 'guard.js');
-const hook = command => spawnSync(process.execPath, [GUARD], { cwd: ROOT, env, input: JSON.stringify({ session_id: 's', tool_name: 'Bash', tool_input: { command }, cwd: ROOT }), encoding: 'utf8' });
+const hook = command => spawnSync(process.execPath, [GUARD], { cwd: ROOT, env, input: JSON.stringify({ session_id: 's', tool_name: 'Bash', tool_input: { command }, cwd: ROOT }), encoding: 'utf8' , windowsHide: true });
 const verbCmds = ['node bin/taskmote.js undo', 'bin/taskmote undo', 'taskmote.cmd undo', 'node "bin/taskmote.js"   undo', 'node bin/harness.js undo'];
 res['guard blocks an agent Bash call to the undo verb (5 spellings)'] = verbCmds.every(c => { const r = hook(c); return r.status === 2 && /owner_only/.test(r.stderr); });
 res['guard still allows do and status for agents'] = ['node bin/taskmote.js status', 'node bin/taskmote.js do "x"'].every(c => hook(c).status === 0);

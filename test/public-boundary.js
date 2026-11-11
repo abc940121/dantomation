@@ -14,9 +14,9 @@ const ROOT = path.resolve(__dirname, '..');
 const MARK = ['PRIVATE', 'MARKER', String(7000 + 731)].join('-');
 const env = { ...process.env, HARNESS_ENGINE_SCRIPT: path.join(__dirname, 'fake-engine.js'), HARNESS_FAKE_DELAY_MS: '0' };
 delete env.HARNESS_STATE_DIR; delete env.HARNESS_LOG_DIR;
-const git = (...a) => spawnSync('git', a, { cwd: ROOT, encoding: 'utf8', maxBuffer: 1 << 28 });
+const git = (...a) => spawnSync('git', a, { cwd: ROOT, encoding: 'utf8', maxBuffer: 1 << 28 , windowsHide: true });
 
-const s = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'harness.js'), 'start', `Synthetic task ${MARK}`], { cwd: ROOT, env, encoding: 'utf8', timeout: 60000 });
+const s = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'harness.js'), 'start', `Synthetic task ${MARK}`], { cwd: ROOT, env, encoding: 'utf8', timeout: 60000 , windowsHide: true });
 console.log(`synthetic task: exit ${s.status} ${s.stdout.trim()}`);
 const recs = fs.readFileSync(path.join(ROOT, 'state', 'journal.jsonl'), 'utf8').trim().split('\n').map(l => { try { return JSON.parse(l); } catch { return {}; } });
 const startRec = recs.filter(r => r.type === 'task_start' && (r.request || '').includes(MARK)).pop();
@@ -24,7 +24,7 @@ const task = startRec.task_id;
 const wdRel = path.relative(ROOT, path.resolve(ROOT, startRec.workdir || `work/${task}`)).split(path.sep).join('/');
 
 // a guard block whose logged command carries the marker
-spawnSync(process.execPath, [path.join(ROOT, 'guards', 'guard.js')], { input: JSON.stringify({ session_id: 'boundary', tool_name: 'Bash', tool_input: { command: `rm -rf work/${MARK}` }, cwd: ROOT }), encoding: 'utf8' });
+spawnSync(process.execPath, [path.join(ROOT, 'guards', 'guard.js')], { input: JSON.stringify({ session_id: 'boundary', tool_name: 'Bash', tool_input: { command: `rm -rf work/${MARK}` }, cwd: ROOT }), env, encoding: 'utf8' , windowsHide: true }); // same env as the task above: a HARNESS_LOG_DIR set by the caller must not move the guard log
 
 const files = {
   journal: 'state/journal.jsonl',
@@ -99,17 +99,41 @@ const scan = (where, text) => { text = strip(text); for (const [name, re] of FOR
   for (const [k, v] of Object.entries(ctl)) res[k] = v;
   if (hits.length !== real) throw new Error('controls leaked into hits');
 }
+// Vendored third-party bundles: minified code holds short letter runs that look like the words above.
+// A bundle is skipped only while its git blob id is one pinned here, so an edited or swapped file is
+// scanned again. A new upstream version needs its blob id added (keep the old one: it stays in history).
+const VENDORED = { 'modules/chat-ui/ui/vendor/vue-advanced-chat.umd.js': ['15feb6a87bf903a76c7f3c5d6fb9cddd75d7b0b2'] };
+// The history scan runs with --full-index, and a blob id counts only as the whole 40 hex digits (or all
+// zeros, for an added or deleted file): a short prefix can be matched by a crafted blob.
+const pinned = (f, id) => /^[0-9a-f]{40}$/.test(id) && (/^0+$/.test(id) || (VENDORED[f] || []).includes(id));
+const vendoredChunk = chunk => {
+  const m = /^diff --git a\/(\S+) b\/\1\n(?:(?:new|deleted) file mode \d+\n)?index ([0-9a-f]+)\.\.([0-9a-f]+)/.exec(chunk);
+  return !!m && !!VENDORED[m[1]] && pinned(m[1], m[2]) && pinned(m[1], m[3]);
+};
+{
+  const f = Object.keys(VENDORED)[0], b = VENDORED[f][0], head = `diff --git a/${f} b/${f}\n`, zero = '0'.repeat(40);
+  const ctl = {
+    'a pinned vendored bundle is skipped': vendoredChunk(`${head}new file mode 100644\nindex ${zero}..${b}\n`),
+    'a changed bundle is not skipped': !vendoredChunk(`${head}index ${b}..${'abcdef1'.padEnd(40, '0')} 100644\n`),
+    'another file with the pinned id is not skipped': !vendoredChunk(`diff --git a/x.js b/x.js\nindex ${zero}..${b}\n`),
+    'a blob that shares only the id prefix is not skipped': !vendoredChunk(`${head}new file mode 100644\nindex ${zero}..${b.slice(0, 7)}\n`)
+      && !vendoredChunk(`${head}new file mode 100644\nindex ${zero}..${b.slice(0, 7).padEnd(40, 'f')}\n`),
+  };
+  for (const [k, v] of Object.entries(ctl)) res[`control: vendored: ${k}`] = v;
+}
 const tree = git('ls-files', '-co', '--exclude-standard').stdout.split('\n').filter(Boolean);
 for (const f of tree) {
   if (f === ALLOW) continue;
+  if (VENDORED[f] && VENDORED[f].includes(git('hash-object', '--', f).stdout.trim())) continue;
   let t; try { t = fs.readFileSync(path.join(ROOT, f), 'utf8'); } catch { continue; }
   scan(`tree ${f}`, t);
 }
-const hist = git('log', '-p', '--format=commit %H%nauthor %an <%ae>%ncommitter %cn <%ce>%n%B', 'HEAD');
+const hist = git('log', '-p', '--full-index', '--format=commit %H%nauthor %an <%ae>%ncommitter %cn <%ce>%n%B', 'HEAD');
 let nChunks = 0;
 for (const chunk of hist.stdout.split(/\n(?=diff --git |commit [0-9a-f]{40}\n)/)) {
   nChunks++;
   if (chunk.startsWith(`diff --git a/${ALLOW} `) || chunk.startsWith(`diff --git a/${ALLOW_OLD} `)) continue;
+  if (vendoredChunk(chunk)) continue;
   scan(`history ${chunk.split('\n')[0].slice(0, 60)}`, chunk);
 }
 console.log(`owner-specific strings: ${FORBID.length} patterns over ${tree.length} files and ${nChunks} history chunks of HEAD; hits ${hits.length}`);

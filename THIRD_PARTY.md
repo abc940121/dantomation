@@ -25,3 +25,9 @@ Qwen3-ASR and Qwen3-TTS are Copyright Alibaba Cloud / the Qwen team, licensed un
 | `mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit` | `41d3337e8b7f2843a75841595fc14e4b9a7a4b96` | `Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice` (card metadata) | apache-2.0 | 2026-11-08 HF API |
 
 - License facts above were taken from the repos' stated licenses, not from opening each LICENSE file; check the LICENSE file in the official repo before any redistribution.
+
+# Third-party components (modules/chat-ui/)
+
+| Component | Used by | License | Bundled? | Source |
+|---|---|---|---|---|
+| vue-advanced-chat 2.0.4 (web component build) | `modules/chat-ui/ui/` | MIT (`modules/chat-ui/ui/vendor/vue-advanced-chat.LICENSE`) | Yes, unmodified `dist/vue-advanced-chat.umd.js` | https://www.npmjs.com/package/vue-advanced-chat |

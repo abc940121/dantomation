@@ -8,10 +8,10 @@ const { spawnSync } = require('child_process');
 
 const SCRIPT = path.join(__dirname, 'trunk-diff.js');
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'harness-trunkdiff-'));
-const git = (...a) => { const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...a], { cwd: dir, encoding: 'utf8' }); if (r.status !== 0) throw new Error('git ' + a.join(' ') + ': ' + r.stderr); return r.stdout.trim(); };
+const git = (...a) => { const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...a], { cwd: dir, encoding: 'utf8' , windowsHide: true }); if (r.status !== 0) throw new Error('git ' + a.join(' ') + ': ' + r.stderr); return r.stdout.trim(); };
 const put = (f, t = 'x\n') => { fs.mkdirSync(path.dirname(path.join(dir, f)), { recursive: true }); fs.writeFileSync(path.join(dir, f), t + Math.random()); };
 const commit = (msg, ...files) => { files.forEach(f => put(f)); git('add', '-A'); git('commit', '-m', msg); };
-const run = (...a) => spawnSync(process.execPath, [SCRIPT, ...a], { cwd: dir, env: { ...process.env, TRUNK_REPO: dir, TRUNK_BASE: '' }, encoding: 'utf8' });
+const run = (...a) => spawnSync(process.execPath, [SCRIPT, ...a], { cwd: dir, env: { ...process.env, TRUNK_REPO: dir, TRUNK_BASE: '' }, encoding: 'utf8' , windowsHide: true });
 
 let fails = 0;
 const check = (name, cond, info) => { console.log(`${cond ? 'PASS' : 'FAIL'} ${name}${cond ? '' : ' :: ' + info}`); if (!cond) fails++; };

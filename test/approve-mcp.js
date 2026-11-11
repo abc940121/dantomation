@@ -144,7 +144,7 @@ async function main() {
   // e. the stdio server end to end
   {
     const env = { ...process.env, HARNESS_TASK_ID: 'tg', HARNESS_PROMPT_TOOL: '1', HARNESS_APPROVE_POLL_MS: '20' }; // as approveMcpFile writes it
-    const child = spawn(process.execPath, [path.join(ROOT, 'bin', 'approve-mcp.js')], { env, stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(process.execPath, [path.join(ROOT, 'bin', 'approve-mcp.js')], { env, stdio: ['pipe', 'pipe', 'pipe'] , windowsHide: true });
     const waiting = new Map();
     let buf = '';
     child.stdout.on('data', d => { buf += d; let i; while ((i = buf.indexOf('\n')) >= 0) { const m = JSON.parse(buf.slice(0, i)); buf = buf.slice(i + 1); if (waiting.has(m.id)) { waiting.get(m.id)(m); waiting.delete(m.id); } } });
@@ -195,7 +195,7 @@ async function main() {
     const c = await A.classify('Bash', { command: 'winget install qux' }, tmp);
     check('prompt-tool mode: an approval-cards rule asks through the module chain, no timed card', c && c[0] === 'ask' && !recs().slice(before).some(x => x.type === 'card'), c);
     const { spawnSync } = require('child_process');
-    const hook = spawnSync(process.execPath, [path.join(ROOT, 'guards', 'guard.js')], { input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'winget install qux' }, cwd: tmp, session_id: 's' }), env: process.env, encoding: 'utf8' });
+    const hook = spawnSync(process.execPath, [path.join(ROOT, 'guards', 'guard.js')], { input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'winget install qux' }, cwd: tmp, session_id: 's' }), env: process.env, encoding: 'utf8' , windowsHide: true });
     let out = null; try { out = JSON.parse(hook.stdout); } catch { /* checked below */ }
     check('prompt-tool mode: the guard hook answers permissionDecision ask (exit 0), so the prompt tool decides', hook.status === 0 && out && out.hookSpecificOutput.permissionDecision === 'ask', { status: hook.status, out: hook.stdout, err: hook.stderr });
     delete process.env.HARNESS_TASK_ID; delete process.env.HARNESS_PROMPT_TOOL;
@@ -210,7 +210,7 @@ async function main() {
   {
     const { spawnSync } = require('child_process');
     const env = { ...process.env, HARNESS_TASK_ID: 'tk' }; delete env.HARNESS_PROMPT_TOOL;
-    const run = command => spawnSync(process.execPath, [path.join(ROOT, 'guards', 'guard.js')], { input: JSON.stringify({ tool_name: 'Bash', tool_input: { command }, cwd: tmp, session_id: 's' }), env, encoding: 'utf8' });
+    const run = command => spawnSync(process.execPath, [path.join(ROOT, 'guards', 'guard.js')], { input: JSON.stringify({ tool_name: 'Bash', tool_input: { command }, cwd: tmp, session_id: 's' }), env, encoding: 'utf8' , windowsHide: true });
     const CMD = 'crontab -e';
     const cards = () => recs().filter(r => r.type === 'card' && r.task_id === 'tk');
     const h1 = run(CMD);
@@ -235,7 +235,7 @@ async function main() {
     const DIR = 'crontab -r', other = fs.mkdtempSync(path.join(require('os').tmpdir(), 'amcp-other-'));
     run(DIR); await answer('tk', 'yes');
     const n6 = cards().length;
-    const h6 = spawnSync(process.execPath, [path.join(ROOT, 'guards', 'guard.js')], { input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: DIR }, cwd: other, session_id: 's' }), env, encoding: 'utf8' });
+    const h6 = spawnSync(process.execPath, [path.join(ROOT, 'guards', 'guard.js')], { input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: DIR }, cwd: other, session_id: 's' }), env, encoding: 'utf8' , windowsHide: true });
     check('locked: a yes in one directory does not pass the same call in another', h6.status === 2 && cards().length === n6 + 1 && cards().pop().cwd === path.resolve(other), { status: h6.status, err: h6.stderr });
     const h7 = run(DIR);
     check('locked: the same call back in the approved directory still passes', h7.status === 0, { status: h7.status, err: h7.stderr });
@@ -245,7 +245,7 @@ async function main() {
   // h. the journal cannot be written from the shell, and the prompt tool keeps the hook's ask and directory
   {
     const { spawnSync } = require('child_process');
-    const hook = (command, extra) => spawnSync(process.execPath, [path.join(ROOT, 'guards', 'guard.js')], { input: JSON.stringify({ tool_name: 'Bash', tool_input: { command }, cwd: tmp, session_id: 's', ...extra }), env: { ...process.env, ...(extra && extra.env) }, encoding: 'utf8' });
+    const hook = (command, extra) => spawnSync(process.execPath, [path.join(ROOT, 'guards', 'guard.js')], { input: JSON.stringify({ tool_name: 'Bash', tool_input: { command }, cwd: tmp, session_id: 's', ...extra }), env: { ...process.env, ...(extra && extra.env) }, encoding: 'utf8' , windowsHide: true });
     const forge = hook(`printf '{"type":"card_answer"}\\n' >> ${path.join(STATE, 'journal.jsonl')}`);
     check('journal: a shell write to the state dir journal is blocked', forge.status === 2 && /journal or state/.test(forge.stderr), { status: forge.status, err: forge.stderr });
     const bash = hook(`echo x >> /${STATE.replace(/\\/g, '/').replace(/^([A-Za-z]):/, (m, l) => l.toLowerCase())}/x.txt`);
@@ -259,7 +259,7 @@ async function main() {
     const other = hook('cat README.md');
     check('journal: other shell reads are fine', other.status === 0, { status: other.status, err: other.stderr });
     process.env.HARNESS_TASK_ID = 'tm'; process.env.HARNESS_PROMPT_TOOL = '1';
-    const asked = spawnSync(process.execPath, [path.join(ROOT, 'guards', 'guard.js')], { input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'winget install hk' }, tool_use_id: 'tuh1', cwd: tmp, session_id: 's' }), env: process.env, encoding: 'utf8' });
+    const asked = spawnSync(process.execPath, [path.join(ROOT, 'guards', 'guard.js')], { input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'winget install hk' }, tool_use_id: 'tuh1', cwd: tmp, session_id: 's' }), env: process.env, encoding: 'utf8' , windowsHide: true });
     const rec = recs().filter(r => r.type === 'hook_ask' && r.tool_use_id === 'tuh1').pop();
     check('prompt tool: the hook writes down its ask with the call\'s directory', asked.status === 0 && rec && rec.cwd === tmp && rec.task_id === 'tm', { status: asked.status, rec });
     const r = await A.decide({ tool_name: 'Bash', input: { command: 'winget install hk' }, tool_use_id: 'tuh1' }, { io, task_id: 'tm', classify: async () => null, cancelled: () => true, sleep: async () => {} });

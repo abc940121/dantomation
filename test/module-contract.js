@@ -25,7 +25,7 @@ const check = (label, ok, info) => { results.push(!!ok); console.log(`${ok ? 'PA
 
 // Core = every tracked file outside modules/, plus anything in bin/ lib/ guards/ config/.
 function coreHash() {
-  const g = spawnSync('git', ['ls-files', '-z'], { cwd: ROOT, encoding: 'utf8' });
+  const g = spawnSync('git', ['ls-files', '-z'], { cwd: ROOT, encoding: 'utf8' , windowsHide: true });
   const files = new Set(g.status === 0 ? g.stdout.split('\0').filter(f => f && !f.startsWith('modules/')) : []);
   const walk = d => {
     if (!fs.existsSync(path.join(ROOT, d))) return;
@@ -54,10 +54,10 @@ const env = cfg => {
   return e;
 };
 const guard = (cfg, command) => {
-  const r = spawnSync(process.execPath, [path.join(ROOT, 'guards', 'guard.js')], { input: JSON.stringify({ session_id: 'c', tool_name: 'Bash', tool_input: { command }, cwd: tmp }), env: env(cfg), encoding: 'utf8' });
+  const r = spawnSync(process.execPath, [path.join(ROOT, 'guards', 'guard.js')], { input: JSON.stringify({ session_id: 'c', tool_name: 'Bash', tool_input: { command }, cwd: tmp }), env: env(cfg), encoding: 'utf8' , windowsHide: true });
   return { code: r.status, kind: (r.stderr.match(/BLOCKED \(([^)]+)\)/) || [])[1] || null, err: r.stderr.trim() };
 };
-const harness = (cfg, ...a) => spawnSync(process.execPath, [path.join(ROOT, 'bin', 'harness.js'), ...a], { env: env(cfg), encoding: 'utf8', timeout: 60000 });
+const harness = (cfg, ...a) => spawnSync(process.execPath, [path.join(ROOT, 'bin', 'harness.js'), ...a], { env: env(cfg), encoding: 'utf8', timeout: 60000 , windowsHide: true });
 
 const PROOF = `'use strict';
 let ticks = 0;

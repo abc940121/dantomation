@@ -53,7 +53,7 @@ const repo = path.join(tmp, 'repo');
 fs.cpSync(ROOT, repo, { recursive: true, filter: s => !/[\\/](\.git|node_modules|state)$/.test(s) });
 const cfgFile = path.join(tmp, 'config.json');
 const env = { ...process.env, HARNESS_CONFIG: cfgFile, HARNESS_NO_SERVER: '1', HARNESS_STATE_DIR: path.join(tmp, 'state'), HOME: tmp, USERPROFILE: tmp };
-const run = (args, opts) => spawnSync(process.execPath, args, { env, encoding: 'utf8', cwd: repo, timeout: 30000, ...opts });
+const run = (args, opts) => spawnSync(process.execPath, args, { env, encoding: 'utf8', cwd: repo, timeout: 30000, ...opts , windowsHide: true });
 const cli = args => run([path.join(repo, 'bin', 'taskmote.js'), ...args]);
 const TRACE = /\n\s+at .*[(:]\d+(:\d+)?\)?|(?:TypeError|ReferenceError|SyntaxError|Cannot find module)/;
 const clean = r => r.status !== null && !TRACE.test(r.stdout + r.stderr);

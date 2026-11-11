@@ -35,7 +35,7 @@ function mkEnv(name, modules) {
 
 // One server process; call(method, params) -> the JSON-RPC response (rejects after 30 s).
 function startServer(env, args = []) {
-  const child = spawn(process.execPath, [path.join(ROOT, 'bin', 'taskmote-mcp.js'), ...args], { env, stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, [path.join(ROOT, 'bin', 'taskmote-mcp.js'), ...args], { env, stdio: ['pipe', 'pipe', 'pipe'] , windowsHide: true });
   const waiting = new Map(); let buf = '', nextId = 1;
   child.stdout.on('data', c => {
     buf += c;
@@ -122,7 +122,7 @@ async function main() {
     `process.env.HARNESS_STATE_DIR=${JSON.stringify(env.HARNESS_STATE_DIR)};`,
     `const J=require(${JSON.stringify(path.join(ROOT, 'lib', 'journal'))});`,
     `const l=J.lock(require('path').join(J.STATE,'executor.lock'),{pids:[process.pid],task_id:${JSON.stringify(tid)}});`,
-    `console.log(l.held?'held':'no'); setInterval(()=>{},1000);`].join('\n')], { stdio: ['ignore', 'pipe', 'ignore'] });
+    `console.log(l.held?'held':'no'); setInterval(()=>{},1000);`].join('\n')], { stdio: ['ignore', 'pipe', 'ignore'] , windowsHide: true });
   await new Promise(r => holder.stdout.once('data', r));
   const undoCount = () => journal(env).filter(r => r.type === 'undo').length;
   const cardCount = () => journal(env).filter(r => r.type === 'question').length;
@@ -149,7 +149,7 @@ async function main() {
   const askP = s.tool('ask_owner', { question: 'Ship it?', choices: ['yes', 'no'], timeout_s: 30 });
   const qrec = await until(() => journal(env).filter(r => r.type === 'question')[seenQ]);
   check('ask_owner: a question card is raised and the call waits', !!qrec);
-  const ans = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'taskmote.js'), 'ask', 'answer', qrec.question_id, '2'], { env, encoding: 'utf8' });
+  const ans = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'taskmote.js'), 'ask', 'answer', qrec.question_id, '2'], { env, encoding: 'utf8' , windowsHide: true });
   const ar = await askP;
   check('ask_owner: the owner\'s answer comes back', ans.status === 0 && !ar.err && ar.json.answered === true && ar.json.choice === 2 && ar.json.option === 'no', { ans: ans.stderr, ar });
   const to = await s.tool('ask_owner', { question: 'Anyone there?', choices: ['a', 'b'], timeout_s: 0.4 });

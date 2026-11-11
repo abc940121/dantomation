@@ -20,11 +20,11 @@ const state = path.join(base, 'state');
 fs.mkdirSync(state);
 const env = { ...process.env, HARNESS_STATE_DIR: state, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
 const sha = s => crypto.createHash('sha256').update(s).digest('hex');
-const eff = (args, input = '', cwd = base) => spawnSync(process.execPath, [EFFECT, ...args], { cwd, env, input, encoding: 'utf8' });
+const eff = (args, input = '', cwd = base) => spawnSync(process.execPath, [EFFECT, ...args], { cwd, env, input, encoding: 'utf8' , windowsHide: true });
 const intent = rec => fs.appendFileSync(path.join(state, 'journal.jsonl'), JSON.stringify({ id: 'i' + Math.random(), type: 'effect_intent', ...rec }) + '\n');
 const journal = () => fs.readFileSync(path.join(state, 'journal.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
 const done = (t, e) => journal().filter(r => r.task_id === t && r.effect_id === e && r.type === 'effect_done');
-const g = (cwd, ...a) => execFileSync('git', a, { cwd, encoding: 'utf8', env, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+const g = (cwd, ...a) => execFileSync('git', a, { cwd, encoding: 'utf8', env, stdio: ['ignore', 'pipe', 'pipe'] , windowsHide: true }).trim();
 const res = {};
 const show = (k, r) => console.log(`${k}: exit ${r.status} "${r.stdout.trim()}"`);
 

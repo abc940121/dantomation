@@ -189,7 +189,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       && J.readAll().records.some(x => x.type === 'module_uninstalled' && x.module === mg), JSON.stringify(un));
     const cf = path.join(tmp, 'un.json');
     fs.writeFileSync(cf, JSON.stringify({ owner_name: 'Tester', modules: {} }));
-    const agent = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'harness.js'), 'uninstall', mg], { env: { ...process.env, HARNESS_CONFIG: cf, HARNESS_STATE_DIR: STATE, HARNESS_TASK_ID: 'T1' }, encoding: 'utf8' });
+    const agent = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'harness.js'), 'uninstall', mg], { env: { ...process.env, HARNESS_CONFIG: cf, HARNESS_STATE_DIR: STATE, HARNESS_TASK_ID: 'T1' }, encoding: 'utf8' , windowsHide: true });
     check('the uninstall verb refuses inside an agent task', agent.status === 2 && /not from inside a task/.test(agent.stderr), agent.stderr.trim());
 
     // ---- hook time budget: the hooks of one engine call must add up to less than the engine's 60 s
@@ -220,7 +220,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       check('a module throwing a null-prototype object ends in a block, not a crash', hit && /unprintable|module/.test(hit[0] + hit[1]), JSON.stringify(hit));
       const gcfg = path.join(tmp, 'guard-cfg.json');
       fs.writeFileSync(gcfg, JSON.stringify({ modules: { [nul]: true } }));
-      const gr = require('child_process').spawnSync(process.execPath, [path.join(ROOT, 'guards', 'guard.js')], { input: JSON.stringify({ session_id: 's', tool_name: 'Bash', tool_input: { command: 'echo hi' }, cwd: tmp }), env: { ...process.env, HARNESS_CONFIG: gcfg, HARNESS_STATE_DIR: STATE, HARNESS_LOG_DIR: path.join(tmp, 'logs') }, encoding: 'utf8' });
+      const gr = require('child_process').spawnSync(process.execPath, [path.join(ROOT, 'guards', 'guard.js')], { input: JSON.stringify({ session_id: 's', tool_name: 'Bash', tool_input: { command: 'echo hi' }, cwd: tmp }), env: { ...process.env, HARNESS_CONFIG: gcfg, HARNESS_STATE_DIR: STATE, HARNESS_LOG_DIR: path.join(tmp, 'logs') }, encoding: 'utf8' , windowsHide: true });
       check('the real guard process exits 2 for it', gr.status === 2 && /BLOCKED/.test(gr.stderr), `${gr.status} ${gr.stderr}`);
       const rp = mod(N('rp'), `{ contract: 1, name: '${N('rp')}',
         settings: { tok: { type: 'secret', description: 'a token' } },
@@ -286,7 +286,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       fs.writeFileSync(pre, `const C = require(${JSON.stringify(path.join(ROOT, 'lib', 'config'))}); C.load = () => { throw Object.create(null); };\n`);
       const pre2 = path.join(tmp, 'pre-require.js');
       fs.writeFileSync(pre2, `const Mod = require('module'); const L = Mod._load; Mod._load = function (r, ...a) { if (/lib[\\/]redact$/.test(r)) throw 'boom'; return L.call(this, r, ...a); };\n`);
-      const g = pre => spawnSync(process.execPath, ['--require', pre, path.join(ROOT, 'guards', 'guard.js')], { input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'echo hi' } }), encoding: 'utf8', env: { ...process.env, HARNESS_STATE_DIR: STATE } });
+      const g = pre => spawnSync(process.execPath, ['--require', pre, path.join(ROOT, 'guards', 'guard.js')], { input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'echo hi' } }), encoding: 'utf8', env: { ...process.env, HARNESS_STATE_DIR: STATE } , windowsHide: true });
       const g1 = g(pre), g2 = g(pre2);
       check('guard: a config load that throws a non-Error blocks with exit 2', g1.status === 2 && /BLOCKED \(config\)/.test(g1.stderr), `${g1.status} ${g1.stderr}`);
       check('guard: a throw while loading requires exits 2, not 1', g2.status === 2 && /BLOCKED/.test(g2.stderr), `${g2.status} ${g2.stderr}`);
@@ -309,7 +309,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
         const cfg3 = path.join(tmp, 'guard3-cfg.json');
         const runGuard = (modName, args = [], input = { session_id: 's', tool_name: 'Bash', tool_input: { command: 'echo hi' }, cwd: tmp }) => {
           fs.writeFileSync(cfg3, JSON.stringify({ modules: { [modName]: true } }));
-          return spawnSync(process.execPath, [path.join(ROOT, 'guards', 'guard.js'), ...args], { input: typeof input === 'string' ? input : JSON.stringify(input), env: { ...process.env, HARNESS_CONFIG: cfg3, HARNESS_STATE_DIR: STATE, HARNESS_LOG_DIR: path.join(tmp, 'logs3') }, encoding: 'utf8' });
+          return spawnSync(process.execPath, [path.join(ROOT, 'guards', 'guard.js'), ...args], { input: typeof input === 'string' ? input : JSON.stringify(input), env: { ...process.env, HARNESS_CONFIG: cfg3, HARNESS_STATE_DIR: STATE, HARNESS_LOG_DIR: path.join(tmp, 'logs3') }, encoding: 'utf8' , windowsHide: true });
         };
         for (const [label, body] of [['an async throw', "new Promise(() => { setTimeout(() => { throw new Error('boom ' + secret('tok')); }, 5); })"], ['an unhandled rejection', "(Promise.reject(new Error('boom ' + secret('tok'))), new Promise(() => {}))"]]) {
           const am = mod(N('as' + label.length), `{ contract: 1, name: '${N('as' + label.length)}', settings: { tok: { type: 'secret', description: 't' } },
@@ -354,7 +354,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
         const f2 = runGuard(fm, ['--after'], '[1]'.replace('[1]', '5'));
         check('security 3 (f): --after with a non-object input exits 0', f2.status === 0, `${f2.status} ${f2.stderr}`);
         fs.writeFileSync(cfg3, '{ broken json');
-        const f3 = spawnSync(process.execPath, [path.join(ROOT, 'guards', 'guard.js'), '--after'], { input: JSON.stringify({ tool_name: 'Bash', tool_input: {} }), env: { ...process.env, HARNESS_CONFIG: cfg3, HARNESS_STATE_DIR: STATE, HARNESS_LOG_DIR: path.join(tmp, 'logs3') }, encoding: 'utf8' });
+        const f3 = spawnSync(process.execPath, [path.join(ROOT, 'guards', 'guard.js'), '--after'], { input: JSON.stringify({ tool_name: 'Bash', tool_input: {} }), env: { ...process.env, HARNESS_CONFIG: cfg3, HARNESS_STATE_DIR: STATE, HARNESS_LOG_DIR: path.join(tmp, 'logs3') }, encoding: 'utf8' , windowsHide: true });
         check('security 3 (f): --after with a broken config exits 0', f3.status === 0, `${f3.status} ${f3.stderr}`);
         // (g) review round: ctx cannot override sanitized params
         const pm1 = mod(N('pp'), `{ contract: 1, name: '${N('pp')}', routes: [{ method: 'GET', path: '/:a', description: 'p', handler: ({ params }) => ({ status: 200, json: { a: params.a } }) }] }`);
@@ -441,8 +441,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       const env0 = { ...process.env, HARNESS_STATE_DIR: GS, HARNESS_LOG_DIR: GL };
       delete env0.HARNESS_TASK_ID;
       const cfgOf = on => { const f = path.join(gdir, 'c' + on + '.json'); fs.writeFileSync(f, JSON.stringify({ owner_name: 'Tester', modules: on ? { [gm]: true } : {} })); return f; };
-      spawnSync(process.execPath, [path.join(ROOT, 'bin', 'harness.js'), 'secret', gm, 'tok'], { env: { ...env0, HARNESS_CONFIG: cfgOf(1) }, input: GSEC, encoding: 'utf8' });
-      const run = (input, on, args = [], more = {}) => spawnSync(process.execPath, [path.join(ROOT, 'guards', 'guard.js'), ...args], { env: { ...env0, HARNESS_CONFIG: cfgOf(on), ...more }, input, encoding: 'utf8', timeout: 30000 });
+      spawnSync(process.execPath, [path.join(ROOT, 'bin', 'harness.js'), 'secret', gm, 'tok'], { env: { ...env0, HARNESS_CONFIG: cfgOf(1) }, input: GSEC, encoding: 'utf8' , windowsHide: true });
+      const run = (input, on, args = [], more = {}) => spawnSync(process.execPath, [path.join(ROOT, 'guards', 'guard.js'), ...args], { env: { ...env0, HARNESS_CONFIG: cfgOf(on), ...more }, input, encoding: 'utf8', timeout: 30000 , windowsHide: true });
       const ok = c => JSON.stringify({ tool_name: 'Bash', tool_input: { command: c } });
       check('round 5 guard: [] / {} / missing tool_input / non-string tool_name block (exit 2)', ['[]', '{}', '{"tool_name":"Bash"}', '{"tool_name":5,"tool_input":{}}', '{"tool_name":"Bash","tool_input":[]}'].every(i => run(i, 0).status === 2));
       check('round 5 guard: a valid call is allowed, and --after still exits 0 on junk', run(ok('ls'), 0).status === 0 && run('[]', 0, ['--after']).status === 0);
@@ -494,8 +494,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       const env0 = { ...process.env, HARNESS_STATE_DIR: GS, HARNESS_LOG_DIR: GL };
       delete env0.HARNESS_TASK_ID;
       const cfg = path.join(gdir, 'c.json'); fs.writeFileSync(cfg, JSON.stringify({ owner_name: 'Tester', modules: { [gm]: true } }));
-      spawnSync(process.execPath, [path.join(ROOT, 'bin', 'harness.js'), 'secret', gm, 'tok'], { env: { ...env0, HARNESS_CONFIG: cfg }, input: G6, encoding: 'utf8' });
-      const run = (input, args = []) => spawnSync(process.execPath, [path.join(ROOT, 'guards', 'guard.js'), ...args], { env: { ...env0, HARNESS_CONFIG: cfg }, input, encoding: 'utf8', timeout: 30000 });
+      spawnSync(process.execPath, [path.join(ROOT, 'bin', 'harness.js'), 'secret', gm, 'tok'], { env: { ...env0, HARNESS_CONFIG: cfg }, input: G6, encoding: 'utf8' , windowsHide: true });
+      const run = (input, args = []) => spawnSync(process.execPath, [path.join(ROOT, 'guards', 'guard.js'), ...args], { env: { ...env0, HARNESS_CONFIG: cfg }, input, encoding: 'utf8', timeout: 30000 , windowsHide: true });
       const call = c => JSON.stringify({ tool_name: 'Bash', tool_input: { command: c }, tool_response: {} });
       check('round 6 guard: a hook throw 50 ms after it returned null still blocks (exit 2)', run(call('late-50')).status === 2);
       check('round 6 guard: a plain allow still exits 0', run(call('ls')).status === 0);

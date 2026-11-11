@@ -14,7 +14,7 @@ const env = { ...process.env, HARNESS_CONFIG: cfg, HARNESS_NO_SERVER: '1', HARNE
 // Retry once only when the process never started (status null, or Windows 0xC0000142 under load).
 // The retry is logged, and a real FAIL is never retried.
 const retries = [];
-const spawn1 = (file, args) => spawnSync(process.execPath, [path.join(BIN, file), ...args], { env, encoding: 'utf8', cwd: home });
+const spawn1 = (file, args) => spawnSync(process.execPath, [path.join(BIN, file), ...args], { env, encoding: 'utf8', cwd: home , windowsHide: true });
 const run = (file, args) => {
   const r = spawn1(file, args);
   if (r.status !== null && r.status !== 3221225794) return r;

@@ -5,29 +5,40 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
 <title>Chat</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%227%22%20fill%3D%22%232f6fed%22%2F%3E%3Cpath%20d%3D%22M8%2010h16v10H15l-5%204v-4H8z%22%20fill%3D%22%23fff%22%2F%3E%3C%2Fsvg%3E">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <div id="app">
   <header id="top">
     <h1 data-i18n="title">Chat</h1>
-    <select id="room-pick" aria-label="Room" data-i18n-aria-label="room.aria" hidden></select>
     <span id="claims-badge" class="badge" hidden></span>
     <button id="waiting" class="badge warn" type="button" hidden></button>
     <span id="conn" class="conn" data-state="connecting">connecting</span>
+    <button id="new-group" class="badge" type="button" data-i18n="group.new">New group</button>
     <button id="lang-btn" class="badge" type="button" aria-label="Change language" data-i18n="lang.change" data-i18n-aria-label="lang.change.aria">Language</button>
   </header>
-  <nav id="roster" aria-label="Bots" data-i18n-aria-label="bots.aria"></nav>
-  <section id="questions" aria-live="polite"></section>
-  <main id="thread" aria-live="polite"></main>
-  <form id="composer" autocomplete="off">
-    <div id="targets" role="group" aria-label="Send to" data-i18n-aria-label="send.to.aria"></div>
-    <div class="row">
-      <textarea id="text" rows="2" placeholder="Message" aria-label="Message" data-i18n-placeholder="message" data-i18n-aria-label="message.aria"></textarea>
-      <button id="send" type="submit" data-i18n="send">Send</button>
-    </div>
-    <p id="send-msg" class="hint" role="status"></p>
-  </form>
+  <section id="strip" aria-live="polite" aria-label="Needs you" data-i18n-aria-label="strip.aria" hidden>
+    <div id="questions"></div>
+    <div id="cards"></div>
+    <div id="undo"></div>
+  </section>
+  <p id="send-msg" class="hint" role="status" hidden></p>
+  <vue-advanced-chat id="chat" height="100%" responsive-breakpoint="600" current-user-id="me"
+    show-files="false" show-audio="false" show-emojis="false" show-reaction-emojis="false" show-add-room="false"
+    show-search="false" show-new-messages-divider="true" show-footer="true"
+    message-actions="[]" room-actions="[]" menu-actions="[]" text-formatting='{"disabled":false,"italic":"¦","bold":"¤","strike":"¬","underline":"¶","multilineCode":"```","inlineCode":"`"}'
+    rooms-loaded="false" messages-loaded="false" theme="light"></vue-advanced-chat>
+  <div id="group-dlg" class="overlay" hidden>
+    <form id="group-form" class="dlg" role="dialog" aria-modal="true" aria-labelledby="group-title" novalidate>
+      <h2 id="group-title" data-i18n="group.title">New group chat</h2>
+      <label for="group-name" data-i18n="group.name">Group name</label>
+      <input id="group-name" type="text" maxlength="40" autocomplete="off" data-i18n-placeholder="group.name.ph" placeholder="e.g. Weekend plan">
+      <fieldset id="group-members"><legend data-i18n="group.members">Members</legend><div id="group-list"></div></fieldset>
+      <p id="group-err" class="hint" role="alert" hidden></p>
+      <div class="btns"><button id="group-cancel" type="button" data-i18n="group.cancel">Cancel</button><button id="group-create" type="submit" data-i18n="group.create">Create</button></div>
+    </form>
+  </div>
   <section id="lang-gate" hidden>
     <div class="lang-box">
       <h2>Choose your language / 請選擇語言</h2>
@@ -45,7 +56,9 @@
     </form>
   </section>
 </div>
+<script src="vendor/vue-advanced-chat.umd.js"></script>
 <script src="i18n.js"></script>
+<script src="clean.js"></script>
 <script src="state.js"></script>
 <script src="rooms.js"></script>
 <script src="app.js"></script>

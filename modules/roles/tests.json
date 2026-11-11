@@ -11,6 +11,11 @@
       "needs": []
     },
     {
+      "label": "roles-group-route",
+      "file": "test/group-route.js",
+      "needs": []
+    },
+    {
       "label": "roles-ask",
       "file": "test/ask.js",
       "needs": []

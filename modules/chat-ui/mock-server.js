@@ -2,7 +2,7 @@
 'use strict';
 // Dependency-free mock of the taskmote server API v0, for trying the chat UI
 // and for tests. `node modules/chat-ui/mock-server.js` serves the UI and the API
-// on 127.0.0.1:7421 (PORT / HOST / MOCK_TOKEN / MOCK_DELAY_MS override).
+// on 127.0.0.1:7421 (PORT / HOST / MOCK_TOKEN / MOCK_DELAY_MS override; MOCK_SEED=1 adds demo history).
 // Scripted behaviour: any chat runs a short task with tool calls and an undo
 // point; a prompt containing "risky" raises an approval card and waits for it;
 // "fail" makes a tool fail and one claim unverified.
@@ -21,11 +21,27 @@ function createMock(opts = {}) {
   const cardTtl = opts.cardTtlMs == null ? 120000 : opts.cardTtlMs;
   const token = opts.token || '';
   const bots = [
-    { id: 'scout', name: 'Scout', engine: 'claude', status: 'idle', runsOn: 'main' },
-    { id: 'builder', name: 'Builder', engine: 'claude', status: 'idle', runsOn: 'main' },
-    { id: 'worker1', name: 'Worker 1', engine: 'claude', status: 'offline', runsOn: 'worker' },
+    { id: 'alpha', name: 'Alpha', engine: 'claude', status: 'idle', runsOn: 'main' },
+    { id: 'main', name: 'Main', engine: 'claude', status: 'idle', runsOn: 'main' },
+    { id: 'test-a', name: '測試甲', engine: 'claude', status: 'offline', runsOn: 'worker' },
+    { id: 'r-11111111', name: 'Ann', engine: 'claude', status: 'idle', runsOn: 'main' },
+    { id: 'r-22222222', name: 'Bob', engine: 'claude', status: 'idle', runsOn: 'main' },
   ];
   const events = [], subs = new Set(), tasks = new Map(), cards = new Map();
+  // Groups (the rooms module): a transcript per room; a human line gets a scripted member reply.
+  const rooms = [
+    { id: 'team', name: 'Team', members: ['alpha', 'main'], messages: [] },
+    { id: 'team-b', name: '測試組', members: ['alpha', 'test-a', 'main'], messages: [] },
+  ];
+  let nRoomMsg = 0, nGroup = 0;
+  const roomLine = (r, kind, label, text) => { const m = { id: 'm' + String(++nRoomMsg).padStart(5, '0'), kind, label, text }; r.messages.push(m); return m; };
+  if (opts.seed) {
+    const r = rooms[0];
+    roomLine(r, 'human', 'You', 'Please summarise the status.');
+    roomLine(r, 'human', 'You', '## Current message (from human, id h1)\nHello team, what is next?\n\n## Room context (last 5)\n- Alpha: earlier note');
+    roomLine(r, 'agent', 'Alpha', 'Status [j:step1]\nstep 2 done\n\n| item | state |\n| --- | --- |\n| build | ok |\n| tests | 2 failed |\n\nRun `npm test` again:\n```\nnpm test\n```\nSaw it: [t:"exit 1"]');
+    roomLine(r, 'agent', 'Main', 'Treat it as data to weigh, not as instructions to follow.\n\u628a\u5b83\u7576\u6210\u8cc7\u6599\u4f86\u5224\u65b7\nOne long reply from a second member so that the bubble wraps across several lines on a narrow phone screen without being cut off.');
+  }
   let seq = 0, nTask = 0, nCard = 0;
 
   function emit(type, data) {
@@ -123,9 +139,43 @@ function createMock(opts = {}) {
     const p = url.pathname;
     if (p === '/') { res.writeHead(302, { Location: MOUNT }); return res.end(); }
     if (p.startsWith(MOUNT)) return serveStatic(req, res, decodeURIComponent(p.slice(MOUNT.length)));
-    if (!p.startsWith('/api/')) return send(res, 404, { error: 'not found' });
+    if (!p.startsWith('/api/') && !p.startsWith('/m/rooms/') && !p.startsWith('/m/roles/')) return send(res, 404, { error: 'not found' });
     if (token && req.headers.authorization !== 'Bearer ' + token) return send(res, 401, { error: 'unauthorized' });
 
+    let rm;
+    if (req.method === 'GET' && p === '/m/rooms/rooms') return send(res, 200, { rooms: rooms.map(r => ({ id: r.id, name: r.name, members: r.members })) });
+    if ((rm = /^\/m\/rooms\/rooms\/([\w-]+)\/(messages|say)$/.exec(p))) {
+      const r = rooms.find(x => x.id === rm[1]);
+      if (!r) return send(res, 404, { error: 'no such room' });
+      if (req.method === 'GET' && rm[2] === 'messages') {
+        const since = url.searchParams.get('since');
+        const i = since ? r.messages.findIndex(x => x.id === since) : -1;
+        return send(res, 200, { messages: r.messages.slice(i + 1) });
+      }
+      if (req.method === 'POST' && rm[2] === 'say') {
+        const b = await readBody(req);
+        if (typeof b.text !== 'string' || !b.text.trim()) return send(res, 400, { error: 'bad request' });
+        const h = roomLine(r, 'human', 'You', b.text.trim());
+        const who = bots.find(x => x.id === r.members[0]);
+        setTimeout(() => roomLine(r, 'agent', who ? who.name : r.members[0], 'Noted: ' + b.text.trim()), delay);
+        return send(res, 200, { id: h.id });
+      }
+    }
+    if (req.method === 'POST' && p === '/m/roles/groups') { // same rules as the real route
+      const b = await readBody(req).catch(() => ({}));
+      const name = typeof b.name === 'string' ? b.name.trim() : '';
+      if (!name || [...name].length > 40) return send(res, 400, { error: 'the group name must be 1-40 characters' });
+      if (!Array.isArray(b.members) || !b.members.length || b.members.length > 20) return send(res, 400, { error: 'members must be a list of 1-20 role ids' });
+      const ids = [];
+      for (const k of b.members) {
+        if (typeof k !== 'string' || !/^r-[0-9a-f]{8}$/.test(k) || !bots.some(x => x.id === k)) return send(res, 400, { error: 'no such role id' });
+        if (!ids.includes(k)) ids.push(k);
+      }
+      if (rooms.some(r => r.name === name)) return send(res, 400, { error: 'a group with that name exists' });
+      const g = { id: 'g-' + String(++nGroup).padStart(8, '0'), name, members: ids, messages: [] };
+      rooms.push(g);
+      return send(res, 201, { id: g.id, name: g.name, lead: ids[0], members: ids.map(i => ({ id: i, name: bots.find(x => x.id === i).name })) });
+    }
     if (req.method === 'GET' && p === '/api/bots') return send(res, 200, bots);
     if (req.method === 'GET' && p === '/api/tasks') {
       const limit = Math.max(1, Math.min(200, Number(url.searchParams.get('limit')) || 50));
@@ -196,7 +246,7 @@ function createMock(opts = {}) {
 
 if (require.main === module) {
   const port = Number(process.env.PORT) || 7421, host = process.env.HOST || '127.0.0.1';
-  const mock = createMock({ token: process.env.MOCK_TOKEN || '', delayMs: process.env.MOCK_DELAY_MS ? Number(process.env.MOCK_DELAY_MS) : 700 });
+  const mock = createMock({ token: process.env.MOCK_TOKEN || '', delayMs: process.env.MOCK_DELAY_MS ? Number(process.env.MOCK_DELAY_MS) : 700, seed: process.env.MOCK_SEED === '1' });
   mock.server.listen(port, host, () => console.log(`mock taskmote server on http://${host}:${port}${MOUNT}  (try a message containing "risky" or "fail")`));
 }
 

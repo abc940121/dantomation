@@ -35,7 +35,7 @@ const tick = ms => new Promise(r => setTimeout(r, ms));
 const waitFor = async (fn, ms = 60000) => { const t0 = Date.now(); let v; while (!(v = await fn()) && Date.now() - t0 < ms) await tick(80); return v; };
 const journal = () => { try { return fs.readFileSync(path.join(state, 'journal.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean); } catch { return []; } };
 const alive = pid => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
-const killTree = pid => { if (process.platform === 'win32') spawnSync('taskkill', ['/T', '/F', '/PID', String(pid)], { stdio: 'ignore' }); else try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } };
+const killTree = pid => { if (process.platform === 'win32') spawnSync('taskkill', ['/T', '/F', '/PID', String(pid)], { stdio: 'ignore' , windowsHide: true }); else try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } };
 const info = () => { try { return JSON.parse(fs.readFileSync(path.join(state, 'server.json'), 'utf8')); } catch { return null; } };
 
 let srv = null;
@@ -96,7 +96,7 @@ async function main() {
   let i = await startServer({ HARNESS_PAUSE_EFFECT: 's2-write', HARNESS_PAUSE_AFTER_ACT_MS: '120000' });
   const port1 = i.port, token = null;
   note('bots: config bots listed', (await req(port1, 'GET', '/api/bots')).body.map(b => b.id).join() === 'main,remote');
-  const doOut = spawnSync(process.execPath, [DANT, 'do', 'server kill test'], { env, cwd: work, encoding: 'utf8', timeout: 30000 });
+  const doOut = spawnSync(process.execPath, [DANT, 'do', 'server kill test'], { env, cwd: work, encoding: 'utf8', timeout: 30000 , windowsHide: true });
   const taskId = (/task (t\S+) sent to the server/.exec(doOut.stdout) || [])[1];
   note('cli: do goes to the running server', doOut.status === 0 && taskId, doOut.stdout + doOut.stderr);
   const paused = await waitFor(() => fs.existsSync(path.join(state, 'paused.flag')), 60000);
@@ -104,7 +104,7 @@ async function main() {
   const before = await req(port1, 'GET', `/api/tasks/${taskId}`);
   note('task is running before the kill', before.body && before.body.state === 'running', JSON.stringify(before.body));
   const evBefore = await sse(port1, 0, e => e.some(x => x.type === 'tool_result' && x.callId === 's1-message'), 10000);
-  const stat = spawnSync(process.execPath, [DANT, 'status'], { env, cwd: work, encoding: 'utf8' });
+  const stat = spawnSync(process.execPath, [DANT, 'status'], { env, cwd: work, encoding: 'utf8' , windowsHide: true });
   note('cli: status via server', /open task: /.test(stat.stdout), stat.stdout + stat.stderr);
 
   const lock = (() => { try { return JSON.parse(fs.readFileSync(path.join(state, 'executor.lock'), 'utf8')); } catch { return null; } })();
@@ -206,7 +206,7 @@ async function main() {
   note('settings: no token -> 401; unknown module -> 404', (await req(port2, 'PATCH', '/api/settings/approval-cards', { timeout_minutes: 3 }, { authorization: null })).status === 401 && (await req(port2, 'GET', '/api/settings/nope')).status === 404);
   // an agent (HARNESS_TASK_ID set) tries to answer its OWN pending card over HTTP
   const agentEnv = { ...env, HARNESS_TASK_ID: 'tagent', HARNESS_TASK_DIR: work };
-  const agentHook = (tool, ti) => spawnSync(process.execPath, [path.join(ROOT, 'guards', 'guard.js')], { input: JSON.stringify({ session_id: 'fake', tool_name: tool, tool_input: ti, cwd: work }), env: agentEnv, encoding: 'utf8' });
+  const agentHook = (tool, ti) => spawnSync(process.execPath, [path.join(ROOT, 'guards', 'guard.js')], { input: JSON.stringify({ session_id: 'fake', tool_name: tool, tool_input: ti, cwd: work }), env: agentEnv, encoding: 'utf8' , windowsHide: true });
   const tokFile = path.join(state, 'server.token').split(path.sep).join('/');
   const apiUrl = `http://127.0.0.1:${port2}/api/cards/${card.card_id}`;
   const stillPending = async () => (await req(port2, 'GET', '/api/cards', undefined, { authorization: null })).body.some(c => c.id === card.card_id && c.state === 'pending');
@@ -220,9 +220,9 @@ async function main() {
   note('agent (token readable): shell-to-API call with the token blocked', a3.status === 2, a3.stdout + a3.stderr);
   note('agent (token readable): shell-to-API call from node blocked', a4.status === 2, a4.stdout + a4.stderr);
   // (b) the token is not available to it: the server itself refuses, from a process that carries the agent env
-  const agentPost = spawnSync(process.execPath, ['-e', `fetch(${JSON.stringify(apiUrl)},{method:'POST',headers:{'content-type':'application/json'},body:'{"answer":"yes"}'}).then(r=>{console.log(r.status)})`], { env: agentEnv, encoding: 'utf8', timeout: 20000 });
+  const agentPost = spawnSync(process.execPath, ['-e', `fetch(${JSON.stringify(apiUrl)},{method:'POST',headers:{'content-type':'application/json'},body:'{"answer":"yes"}'}).then(r=>{console.log(r.status)})`], { env: agentEnv, encoding: 'utf8', timeout: 20000 , windowsHide: true });
   note('agent (no token): tokenless HTTP answer -> 401', agentPost.stdout.trim() === '401', agentPost.stdout + agentPost.stderr);
-  const agentCli = spawnSync(process.execPath, [DANT, 'do', 'agent starts a task'], { env: agentEnv, cwd: work, encoding: 'utf8', timeout: 30000 });
+  const agentCli = spawnSync(process.execPath, [DANT, 'do', 'agent starts a task'], { env: agentEnv, cwd: work, encoding: 'utf8', timeout: 30000 , windowsHide: true });
   note('agent: the CLI under HARNESS_TASK_ID does not send the owner token (server refuses)', agentCli.status !== 0 && /refused/.test(agentCli.stderr + agentCli.stdout), agentCli.stdout + agentCli.stderr);
   note('agent: its card is still pending after all attempts', await stillPending());
   const unclear = await req(port2, 'POST', `/api/cards/${card.card_id}`, { answer: 'hmm maybe' });
@@ -306,7 +306,7 @@ async function main() {
   const wdMissing = await req(port2, 'POST', '/api/tasks', { prompt: 'x', workdir: path.join(base, 'no-such-folder') });
   const wdWorker = await req(port2, 'POST', '/api/tasks', { prompt: 'x', workdir: wdDir }, wauth);
   note('workdir: relative path -> 400, missing folder -> 400, worker token -> 403', wdRel.status === 400 && wdMissing.status === 400 && wdWorker.status === 403, [wdRel.status, wdMissing.status, wdWorker.status].join());
-  const wdDo = spawnSync(process.execPath, [DANT, 'do', 'workdir test', '--workdir', wdDir], { env, cwd: work, encoding: 'utf8', timeout: 30000 });
+  const wdDo = spawnSync(process.execPath, [DANT, 'do', 'workdir test', '--workdir', wdDir], { env, cwd: work, encoding: 'utf8', timeout: 30000 , windowsHide: true });
   const wdTask = (/task (t\S+) sent to the server/.exec(wdDo.stdout) || [])[1];
   const wdStart = wdTask && await waitFor(() => journal().find(r => r.type === 'task_start' && r.task_id === wdTask), 60000);
   note('workdir: do --workdir through the server starts the task in that folder', !!wdStart && path.resolve(wdStart.workdir) === path.resolve(wdDir), wdDo.stdout + wdDo.stderr + JSON.stringify(wdStart || null));
@@ -316,9 +316,9 @@ async function main() {
   fs.rmSync(path.join(state, 'server.json'), { force: true });
   fs.rmSync(path.join(state, 'server.token'), { force: true });
   writeCfg({ host: '0.0.0.0' });
-  const refuse = spawnSync(process.execPath, [DANT, 'serve'], { env, cwd: work, encoding: 'utf8', timeout: 20000 });
+  const refuse = spawnSync(process.execPath, [DANT, 'serve'], { env, cwd: work, encoding: 'utf8', timeout: 20000 , windowsHide: true });
   note('auth: non-local bind without a token refuses to start', refuse.status === 2 && /token/.test(refuse.stderr) && !info(), refuse.stdout + refuse.stderr);
-  const tk = spawnSync(process.execPath, [DANT, 'token', 'new'], { env, encoding: 'utf8' });
+  const tk = spawnSync(process.execPath, [DANT, 'token', 'new'], { env, encoding: 'utf8' , windowsHide: true });
   const tokenText = fs.readFileSync(path.join(state, 'server.token'), 'utf8').trim();
   note('auth: token new writes a token file', tk.status === 0 && tokenText.length >= 32);
   i = await startServer({}, { local_no_auth: false });
@@ -363,7 +363,7 @@ async function main() {
   killTree(srv.pid); await waitFor(() => !alive(srv.pid), 15000);
 
   // a turn run by the CLI (not the server) that ended without task-done: closed by the sweep, never while the executor lock is held
-  const cli = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'harness.js'), 'start', 'cli turn [no-done]'], { env: { ...env, HARNESS_NO_SERVER: '1' }, encoding: 'utf8', timeout: 60000 });
+  const cli = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'harness.js'), 'start', 'cli turn [no-done]'], { env: { ...env, HARNESS_NO_SERVER: '1' }, encoding: 'utf8', timeout: 60000 , windowsHide: true });
   const cliT = (journal().filter(r => r.type === 'engine_exit').pop() || {}).task_id;
   const lockFile = path.join(state, 'executor.lock');
   fs.writeFileSync(lockFile, JSON.stringify({ pids: [process.pid], task_id: cliT, nonce: 'test-holder' }));
@@ -375,16 +375,16 @@ async function main() {
   killTree(srv.pid); await waitFor(() => !alive(srv.pid), 15000);
 
   // a restart during a live card's wait: the engine that polled it is gone, so the startup sweep closes the card (no allow ever), and the task is not left open
-  const cli2 = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'harness.js'), 'start', 'orphan turn [no-done]'], { env: { ...env, HARNESS_NO_SERVER: '1' }, encoding: 'utf8', timeout: 60000 });
+  const cli2 = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'harness.js'), 'start', 'orphan turn [no-done]'], { env: { ...env, HARNESS_NO_SERVER: '1' }, encoding: 'utf8', timeout: 60000 , windowsHide: true });
   const orT = (journal().filter(r => r.type === 'engine_exit').pop() || {}).task_id;
   const orId = 'card-0badc0';
   J.append({ type: 'card', card_id: orId, task_id: orT, tool: 'Bash', input: { command: 'winget install x' }, sha256: cardsMod.hashOf('Bash', { command: 'winget install x' }), summary: 'install x', rule: 'redline:install', created_at: new Date().toISOString(), expires_at: null, live: true });
-  const deadPid = spawnSync(process.execPath, ['-e', '']).pid;
+  const deadPid = spawnSync(process.execPath, ['-e', ''], { windowsHide: true }).pid;
   J.append({ type: 'card', card_id: 'card-0dead01', task_id: null, tool: 'Bash', input: { command: 'winget install y' }, sha256: cardsMod.hashOf('Bash', { command: 'winget install y' }), summary: 'install y', rule: 'redline:install', created_at: new Date().toISOString(), expires_at: null, live: true, waiter_pid: deadPid });
   J.append({ type: 'card', card_id: 'card-0a11e0', task_id: null, tool: 'Bash', input: { command: 'winget install y' }, sha256: cardsMod.hashOf('Bash', { command: 'winget install y' }), summary: 'install y', rule: 'redline:install', created_at: new Date().toISOString(), expires_at: null, live: true, waiter_pid: process.pid });
   // pid reuse: the recorded waiter pid is alive (another process now has it) but no heartbeat; an old card is closed.
   // The same with a fresh heartbeat stays pending.
-  const reused = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 120000)'], { stdio: 'ignore' });
+  const reused = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 120000)'], { stdio: 'ignore' , windowsHide: true });
   const oldAt = new Date(Date.now() - 10 * 60000).toISOString();
   J.append({ type: 'card', card_id: 'card-0e05ed', task_id: null, tool: 'Bash', input: { command: 'winget install r' }, sha256: cardsMod.hashOf('Bash', { command: 'winget install r' }), summary: 'install r', rule: 'redline:install', created_at: oldAt, expires_at: null, live: true, waiter_pid: reused.pid });
   J.waiterBeat(process.pid);
@@ -411,7 +411,7 @@ async function main() {
   note('legacy: a young live card with no pid and no task is left pending', !journal().some(r => r.type === 'card_answer' && r.card_id === 'card-01e9ad'));
   reused.kill();
   // a waiter alive at startup that exits while the server runs: the running sweep closes its card
-  const lateWaiter = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'ignore' });
+  const lateWaiter = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'ignore' , windowsHide: true });
   J.append({ type: 'card', card_id: 'card-0de1a7', task_id: null, tool: 'Bash', input: { command: 'winget install z' }, sha256: cardsMod.hashOf('Bash', { command: 'winget install z' }), summary: 'install z', rule: 'redline:install', created_at: new Date().toISOString(), expires_at: null, live: true, waiter_pid: lateWaiter.pid });
   await new Promise(r => setTimeout(r, 6000));
   note('running sweep: a card whose waiter is still alive stays pending', !journal().some(r => r.type === 'card_answer' && r.card_id === 'card-0de1a7'));
@@ -427,7 +427,7 @@ async function main() {
 
   // ---- 2b: a bot must not read the token (guard-base is on in this config)
   const tokenPath = path.join(state, 'server.token');
-  const hook = (tool, ti) => spawnSync(process.execPath, [path.join(ROOT, 'guards', 'guard.js')], { input: JSON.stringify({ session_id: 'fake', tool_name: tool, tool_input: ti, cwd: work }), env, encoding: 'utf8' });
+  const hook = (tool, ti) => spawnSync(process.execPath, [path.join(ROOT, 'guards', 'guard.js')], { input: JSON.stringify({ session_id: 'fake', tool_name: tool, tool_input: ti, cwd: work }), env, encoding: 'utf8' , windowsHide: true });
   const rd = hook('Read', { file_path: tokenPath });
   const cat = hook("Bash", { command: "cat " + JSON.stringify(tokenPath.split(path.sep).join("/")) });
   const gl = hook('Glob', { pattern: '**/server.token', path: base });

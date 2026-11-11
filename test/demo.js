@@ -13,7 +13,7 @@ const check = (name, ok, extra) => { console.log(`${ok ? 'PASS' : 'FAIL'} ${name
 for (const answer of ['yes', 'no']) {
   const env = { ...process.env, TASKMOTE_DEMO_AUTO: answer };
   delete env.HARNESS_TASK_ID;
-  const r = spawnSync(process.execPath, [TASKMOTE, 'demo'], { env, encoding: 'utf8', timeout: 120000 });
+  const r = spawnSync(process.execPath, [TASKMOTE, 'demo'], { env, encoding: 'utf8', timeout: 120000 , windowsHide: true });
   const out = (r.stdout || '') + (r.stderr || '');
   check(`demo (${answer}) exits 0`, r.status === 0, out);
   for (const step of ['(a) edit', '(b) block', 'crash', 'resume', '(c) card', 'answer', '(d) undo']) check(`demo (${answer}) shows ${step}`, out.includes(step), out);

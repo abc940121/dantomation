@@ -13,10 +13,10 @@ const EFFECT = path.join(__dirname, '..', 'bin', 'effect.js');
 const base = fs.mkdtempSync(path.join(os.tmpdir(), 'push-'));
 const state = path.join(base, 'state');
 const env = { ...process.env, HARNESS_STATE_DIR: state, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
-const g = (cwd, ...a) => execFileSync('git', a, { cwd, encoding: 'utf8', env }).trim();
+const g = (cwd, ...a) => execFileSync('git', a, { cwd, encoding: 'utf8', env , windowsHide: true }).trim();
 const tick = ms => new Promise(r => setTimeout(r, ms));
 const journal = () => fs.readFileSync(path.join(state, 'journal.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
-const eff = (cwd, args, extra = {}) => spawnSync(process.execPath, [EFFECT, ...args], { cwd, env: { ...env, ...extra }, encoding: 'utf8' });
+const eff = (cwd, args, extra = {}) => spawnSync(process.execPath, [EFFECT, ...args], { cwd, env: { ...env, ...extra }, encoding: 'utf8' , windowsHide: true });
 
 function repo(name, remoteUrl) {
   const bare = path.join(base, name + '.git');
@@ -36,7 +36,7 @@ async function main() {
     const p = spawn(process.execPath, [EFFECT, 'push', 'T1', 's1-push', 'origin', 'main'], { cwd: w, env: { ...env, HARNESS_PAUSE_AFTER_ACT_MS: '600000', HARNESS_PAUSE_EFFECT: 's1-push' }, stdio: 'ignore', windowsHide: true });
     const t0 = Date.now();
     while (!fs.existsSync(path.join(state, 'paused.flag')) && Date.now() - t0 < 60000) await tick(200);
-    execSync(`taskkill /T /F /PID ${p.pid}`, { stdio: 'ignore' }); await tick(500);
+    execSync(`taskkill /T /F /PID ${p.pid}`, { stdio: 'ignore' , windowsHide: true }); await tick(500);
     fs.rmSync(path.join(state, 'paused.flag'));
     const before = journal().filter(r => r.task_id === 'T1').map(r => r.type).join(',');
     const reflogBefore = g(bare, 'rev-parse', 'refs/heads/main');

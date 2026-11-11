@@ -80,7 +80,7 @@ if (l.held) {
 process.stdout.write(JSON.stringify(r));
 `;
 
-const deadPid = () => Number(spawnSync(process.execPath, ['-e', 'process.stdout.write(String(process.pid))'], { encoding: 'utf8' }).stdout);
+const deadPid = () => Number(spawnSync(process.execPath, ['-e', 'process.stdout.write(String(process.pid))'], { encoding: 'utf8' , windowsHide: true }).stdout);
 const runChild = at => new Promise(ok => {
   const c = spawn(process.execPath, ['-e', CHILD, lockFile, String(at)], { stdio: ['ignore', 'pipe', 'inherit'], windowsHide: true });
   track(c, 'rounds', progress.step);

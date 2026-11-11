@@ -17,7 +17,7 @@ const task = (prompt.match(/task_id: (\S+?)\)/) || [])[1];
 const request = prompt.split('\n')[1] || '';
 const EFFECT = path.join(__dirname, '..', 'bin', 'effect.js');
 const GUARD = path.join(__dirname, '..', 'guards', 'guard.js');
-const eff = (a, input) => spawnSync(process.execPath, [EFFECT, ...a], { input: input || '', encoding: 'utf8' });
+const eff = (a, input) => spawnSync(process.execPath, [EFFECT, ...a], { input: input || '', encoding: 'utf8' , windowsHide: true });
 const viaGuard = process.env.HARNESS_FAKE_GUARD === '1';
 // HARNESS_FAKE_HOOKS=1: act like the real engine and run the hook commands from the --settings file
 // the harness passed (PreToolUse before the write, PostToolUse after it), with a tool_use_id.
@@ -28,14 +28,14 @@ function hookRun(kind, a, id) {
   if (!h) return;
   const command = "node \"" + EFFECT + "\" " + a.join(" ");
   const input = { session_id: 'fake', tool_name: 'Bash', tool_input: { command }, cwd: process.cwd(), tool_use_id: id, tool_response: { stdout: '' } };
-  const r = spawnSync(h.command, { shell: true, input: JSON.stringify(input), encoding: 'utf8' });
+  const r = spawnSync(h.command, { shell: true, input: JSON.stringify(input), encoding: 'utf8' , windowsHide: true });
   if (r.status !== 0) { process.stderr.write(r.stderr || 'hook blocked'); process.exit(2); }
 }
 function guarded(a) {
   if (process.env.HARNESS_FAKE_HOOKS === '1') { hookRun('PreToolUse', a, 'toolu_fake' + (++hookN)); return; }
   if (!viaGuard) return;
   const command = `node "${EFFECT}" ${a.join(' ')}`;
-  const r = spawnSync(process.execPath, [GUARD], { input: JSON.stringify({ session_id: 'fake', tool_name: 'Bash', tool_input: { command }, cwd: process.cwd() }), encoding: 'utf8' });
+  const r = spawnSync(process.execPath, [GUARD], { input: JSON.stringify({ session_id: 'fake', tool_name: 'Bash', tool_input: { command }, cwd: process.cwd() }), encoding: 'utf8' , windowsHide: true });
   if (r.status !== 0) { process.stderr.write(r.stderr || 'guard blocked'); process.exit(2); }
 }
 

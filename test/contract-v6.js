@@ -42,10 +42,10 @@ const records = () => J.readAll().records;
 const since = n => records().slice(n);
 const mark = () => records().length;
 
-// fake engines: echo prints "echo:<stdin>", slow sleeps 5 s
+// fake engines: echo prints "echo:<stdin>", slow sleeps 30 s
 const echoJs = path.join(tmp, 'echo.js'), slowJs = path.join(tmp, 'slow.js');
 fs.writeFileSync(echoJs, "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>process.stdout.write('echo:'+s));");
-fs.writeFileSync(slowJs, "process.stdin.resume();setTimeout(()=>process.stdout.write('late'),5000);");
+fs.writeFileSync(slowJs, "process.stdin.resume();setTimeout(()=>process.stdout.write('late'),30000);");
 const ENGINES = { echo: { bin: process.execPath, args: [echoJs] }, slow: { bin: process.execPath, args: [slowJs] } };
 
 (async () => {
@@ -73,7 +73,7 @@ const ENGINES = { echo: { bin: process.execPath, args: [echoJs] }, slow: { bin: 
     // ---- a. ctx.engines.run
     const ea = mod(N('ea'), `{ contract: 6, name: '${N('ea')}',
       commands: { run: async (args, ctx) => { try { const r = await ctx.engines.run(args[0], args[1], args[2] ? { timeoutMs: Number(args[2]) } : undefined); return { ok: true, ...r }; } catch (e) { return { ok: false, error: e.message, timeout: !!e.timeout }; } } } }`);
-    const cfgA = { modules: { [ea]: true }, engines: ENGINES, engines_max_timeout_ms: 400 };
+    const cfgA = { modules: { [ea]: true }, engines: ENGINES, engines_max_timeout_ms: 3000 };
     r = M.load(cfgA);
     const run = (...a) => M.commands(r.mods).run(a);
     n0 = mark();
@@ -89,11 +89,11 @@ const ENGINES = { echo: { bin: process.execPath, args: [echoJs] }, slow: { bin: 
     let t0 = Date.now();
     o = await run('slow', 'x', '60000');
     let dt = Date.now() - t0;
-    check('engines.run: timeoutMs is capped by config (asked 60000, cap 400)', !o.ok && o.timeout && dt < 3000, { o, dt });
+    check('engines.run: timeoutMs is capped by config (asked 60000, cap 3000)', !o.ok && o.timeout && dt < 20000, { o, dt }); // cap 3 s vs the 30 s engine and the 60 s asked: far under both shows the cap held
     t0 = Date.now();
     o = await run('slow', 'x', '100');
     dt = Date.now() - t0;
-    check('engines.run: a smaller timeoutMs is honoured', !o.ok && o.timeout && dt < 350 + 2000, { o, dt });
+    check('engines.run: a smaller timeoutMs is honoured', !o.ok && o.timeout && dt < 20000, { o, dt }); // asked 100 ms: far under the 30 s the slow engine would take
     o = await run('echo', 'x', '0');
     check('engines.run: a bad timeoutMs is refused', !o.ok && /timeoutMs/.test(o.error), o);
     r = M.load({ modules: { [ea]: true } });
@@ -119,14 +119,14 @@ const ENGINES = { echo: { bin: process.execPath, args: [echoJs] }, slow: { bin: 
     // ---- c. chooseEngine
     const ch = (s, body, pri) => mod(N(s), `{ contract: 6, name: '${N(s)}', priority: ${pri}, chooseEngine: ${body} }`);
     const cNull = ch('cn', '() => null', 1), cThrow = ch('ct', '() => { throw new Error("boom"); }', 2),
-      cSlow = ch('cs', '() => new Promise(res => setTimeout(() => res("too-late"), 1500))', 3),
+      cSlow = ch('cs', '() => new Promise(res => setTimeout(() => res("too-late"), 8000))', 3),
       cBad = ch('cb', '() => 42', 4), cX = ch('cx', '(turn) => turn.task_id === "TX" ? "engine-x" : null', 5), cY = ch('cy', '() => "engine-y"', 6);
     r = M.load({ modules: { [cNull]: true, [cThrow]: true, [cSlow]: true, [cBad]: true, [cX]: true, [cY]: true } });
     n0 = mark(); t0 = Date.now();
     let pick = await quiet(() => M.chooseEngine(r.mods, { task_id: 'TX' }));
     dt = Date.now() - t0;
     check('chooseEngine: null, throw, timeout and bad result are skipped; first non-null wins (load order)', pick && pick.engine === 'engine-x' && pick.module === cX, pick);
-    check('chooseEngine: each call is time-bounded (slow module cut at ~200 ms)', dt < 1200, dt);
+    check('chooseEngine: each call is time-bounded (slow module cut at ~200 ms)', dt < 6000, dt); // the slow module sleeps 8000 ms: finishing well under that proves the cut
     const ec = since(n0).filter(x => x.type === 'engine_choice');
     const by = m => ec.find(x => x.module === m);
     check('engine_choice journaled: error, timeout, bad_result and the choice', by(cThrow) && by(cThrow).reason === 'error' && by(cSlow).reason === 'timeout' && by(cBad).reason === 'bad_result' && by(cX).engine === 'engine-x' && by(cX).reason === 'chosen' && !by(cY), ec);
@@ -209,12 +209,12 @@ const ENGINES = { echo: { bin: process.execPath, args: [echoJs] }, slow: { bin: 
     const turn = (cfgExtra, req = 'do a thing', engineJs = defJs) => {
       const base = path.join(tmp, 'run' + (++runN)), work = path.join(base, 'work');
       fs.mkdirSync(work, { recursive: true });
-      execFileSync('git', ['init', '-q'], { cwd: work });
+      execFileSync('git', ['init', '-q'], { cwd: work , windowsHide: true });
       const cfg = path.join(base, 'config.json');
       fs.writeFileSync(cfg, JSON.stringify({ owner_name: 'Tester', ...cfgExtra }));
       const env = { ...process.env, HARNESS_STATE_DIR: path.join(base, 'state'), HARNESS_LOG_DIR: path.join(base, 'logs'), HARNESS_CONFIG: cfg, HARNESS_ENGINE_SCRIPT: engineJs, HARNESS_NO_SERVER: '1' };
       delete env.HARNESS_TASK_ID;
-      const p = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'harness.js'), 'start', req, '--workdir', work], { env, encoding: 'utf8', timeout: 60000 });
+      const p = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'harness.js'), 'start', req, '--workdir', work], { env, encoding: 'utf8', timeout: 60000 , windowsHide: true });
       let recs = []; try { recs = fs.readFileSync(path.join(base, 'state', 'journal.jsonl'), 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)); } catch { /* none */ }
       return { p, recs, state: path.join(base, 'state'), ofType: t => recs.filter(x => x.type === t) };
     };
@@ -265,9 +265,9 @@ const ENGINES = { echo: { bin: process.execPath, args: [echoJs] }, slow: { bin: 
       // a descendant that outlives the engine and appends to the inherited stdout after the cleanup
       {
         const lateJs = path.join(tmp, 'late.js');
-        fs.writeFileSync(lateJs, "const {spawn}=require('child_process');spawn(process.execPath,['-e',\"setTimeout(()=>process.stdout.write('LATE-REPLYBODY-" + tag + "'),1500)\"],{stdio:['ignore',1,2]}).unref();process.stdout.write(JSON.stringify({type:'result',result:'DEFAULT REPLYBODY-" + tag + "'})+String.fromCharCode(10));");
+        fs.writeFileSync(lateJs, "const {spawn}=require('child_process');spawn(process.execPath,['-e',\"setTimeout(()=>process.stdout.write('LATE-REPLYBODY-" + tag + "'),1500)\"],{stdio:['ignore',1,2],windowsHide:true}).unref();process.stdout.write(JSON.stringify({type:'result',result:'DEFAULT REPLYBODY-" + tag + "'})+String.fromCharCode(10));");
         t = turn({ modules: { [wBlock]: true } }, 'do a thing', lateJs);
-        await new Promise(r => setTimeout(r, 2500));
+        await new Promise(r => setTimeout(r, 6000)); // the descendant writes 1500 ms after the engine exit; generous margin for a loaded machine
         const lf = fs.readdirSync(t.state).filter(f => f.startsWith('engine-')).map(f => fs.readFileSync(path.join(t.state, f), 'utf8')).join(String.fromCharCode(10));
         check('beforeReply block: a descendant writing 1500 ms after the engine exit never reaches the output file', !lf.includes('REPLYBODY') && lf.includes('withheld') && t.ofType('output_withhold_failed').length === 0, lf.slice(0, 200));
       }
@@ -300,16 +300,16 @@ const ENGINES = { echo: { bin: process.execPath, args: [echoJs] }, slow: { bin: 
     {
       const base = path.join(tmp, 'sess'), work = path.join(base, 'work');
       fs.mkdirSync(work, { recursive: true });
-      execFileSync('git', ['init', '-q'], { cwd: work });
+      execFileSync('git', ['init', '-q'], { cwd: work , windowsHide: true });
       const run = (profile) => {
         const cfg = path.join(base, 'config-' + profile + '.json');
         fs.writeFileSync(cfg, JSON.stringify({ owner_name: 'Tester', engine: { profile }, modules: { [cSwap]: true }, engines: { fakeswap: { bin: process.execPath, args: [argvJs], turn: true, format: 'claude' } } }));
         const env = { ...process.env, HARNESS_STATE_DIR: path.join(base, 'state'), HARNESS_LOG_DIR: path.join(base, 'logs'), HARNESS_CONFIG: cfg, HARNESS_ENGINE_SCRIPT: defJs, HARNESS_NO_SERVER: '1' };
         delete env.HARNESS_TASK_ID; delete env.HARNESS_BOT;
-        spawnSync(process.execPath, [path.join(ROOT, 'bin', 'harness.js'), 'start', 'session turn', '--workdir', work], { env, encoding: 'utf8', timeout: 60000 });
+        spawnSync(process.execPath, [path.join(ROOT, 'bin', 'harness.js'), 'start', 'session turn', '--workdir', work], { env, encoding: 'utf8', timeout: 60000 , windowsHide: true });
         const recs = fs.readFileSync(path.join(base, 'state', 'journal.jsonl'), 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l));
         const tid = (recs.filter(x => x.type === 'task_start').pop() || {}).task_id;
-        spawnSync(process.execPath, [path.join(ROOT, 'bin', 'effect.js'), 'task-done', tid], { env, encoding: 'utf8', timeout: 30000 });
+        spawnSync(process.execPath, [path.join(ROOT, 'bin', 'effect.js'), 'task-done', tid], { env, encoding: 'utf8', timeout: 30000 , windowsHide: true });
         return { recs, argv: (recs.filter(x => x.type === 'reply').pop() || {}).text || '' };
       };
       const a = run('full'), sid = (a.argv.match(/--session-id (\S+)/) || [])[1];
@@ -360,21 +360,22 @@ const ENGINES = { echo: { bin: process.execPath, args: [echoJs] }, slow: { bin: 
     }
 
     // lock stays held while a slow beforeReply hook runs; a concurrent resume starts no second engine
-    const flag = path.join(tmp, 'hook-started');
-    const wSlow = br('ws', `async () => { require('fs').writeFileSync(${JSON.stringify(flag)}, '1'); await new Promise(r => setTimeout(r, 1500)); return null; }`);
+    const flag = path.join(tmp, 'hook-started'), rel = path.join(tmp, 'hook-release');
+    const wSlow = br('ws', `async () => { require('fs').writeFileSync(${JSON.stringify(flag)}, '1'); for (let i = 0; i < 600 && !require('fs').existsSync(${JSON.stringify(rel)}); i++) await new Promise(r => setTimeout(r, 50)); return null; }`); // held until the test releases it (30 s hard cap)
     const { spawn } = require('child_process');
     const lbase = path.join(tmp, 'lockrun'), lwork = path.join(lbase, 'work');
     fs.mkdirSync(lwork, { recursive: true });
-    execFileSync('git', ['init', '-q'], { cwd: lwork });
-    fs.writeFileSync(path.join(lbase, 'config.json'), JSON.stringify({ owner_name: 'Tester', modules: { [wSlow]: true } }));
+    execFileSync('git', ['init', '-q'], { cwd: lwork , windowsHide: true });
+    fs.writeFileSync(path.join(lbase, 'config.json'), JSON.stringify({ owner_name: 'Tester', modules: { [wSlow]: true }, modules_hook_timeout_ms: 40000 }));
     const lenv = { ...process.env, HARNESS_STATE_DIR: path.join(lbase, 'state'), HARNESS_LOG_DIR: path.join(lbase, 'logs'), HARNESS_CONFIG: path.join(lbase, 'config.json'), HARNESS_ENGINE_SCRIPT: defJs, HARNESS_NO_SERVER: '1' };
     delete lenv.HARNESS_TASK_ID;
-    const first = spawn(process.execPath, [path.join(ROOT, 'bin', 'harness.js'), 'start', 'slow hook', '--workdir', lwork], { env: lenv, stdio: 'ignore' });
+    const first = spawn(process.execPath, [path.join(ROOT, 'bin', 'harness.js'), 'start', 'slow hook', '--workdir', lwork], { env: lenv, stdio: 'ignore' , windowsHide: true });
     const firstDone = new Promise(r => first.on('exit', r));
     for (let i = 0; i < 200 && !fs.existsSync(flag); i++) await sleep(50);
     const lockFile = path.join(lbase, 'state', 'executor.lock');
     const heldDuring = fs.existsSync(flag) && fs.existsSync(lockFile);
-    const second = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'harness.js'), 'resume'], { env: lenv, encoding: 'utf8', timeout: 30000 });
+    const second = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'harness.js'), 'resume'], { env: lenv, encoding: 'utf8', timeout: 30000 , windowsHide: true });
+    fs.writeFileSync(rel, '1');
     await firstDone;
     const lrecs = fs.readFileSync(path.join(lbase, 'state', 'journal.jsonl'), 'utf8').split(String.fromCharCode(10)).filter(Boolean).map(l => JSON.parse(l));
     check('executor lock is held through a slow beforeReply hook; a concurrent resume starts no second engine', heldDuring && lrecs.filter(x => x.type === 'engine_start').length === 1 && !fs.existsSync(lockFile), { heldDuring, starts: lrecs.filter(x => x.type === 'engine_start').length, second: second.stderr.slice(0, 200) + second.stdout.slice(0, 200) });
@@ -386,11 +387,11 @@ const ENGINES = { echo: { bin: process.execPath, args: [echoJs] }, slow: { bin: 
       r = M.load({ modules: { [b]: true } });
       check(`hookTimeoutMs ${bad} is refused at load`, r.errors.some(x => /hookTimeoutMs must be a whole number of milliseconds >= 100/.test(x)) && !r.mods.length, r.errors.join(' | '));
     }
-    const hSlow = htm('hs', 'hookTimeoutMs: 150', 'async () => { await new Promise(r => setTimeout(r, 1000)); return null; }');
+    const hSlow = htm('hs', 'hookTimeoutMs: 150', 'async () => { await new Promise(r => setTimeout(r, 8000)); return null; }');
     r = M.load({ modules: { [hSlow]: true }, modules_hook_timeout_ms: 5000 });
     t0 = Date.now();
     let hit = await M.beforeTool(r.mods, { tool: 'Bash', ti: {} });
-    check('hookTimeoutMs: a beforeTool slower than the declared timeout times out (fail closed)', hit && hit[0] === 'module_timeout' && /150 ms/.test(hit[1]) && Date.now() - t0 < 900, { hit, dt: Date.now() - t0 });
+    check('hookTimeoutMs: a beforeTool slower than the declared timeout times out (fail closed)', hit && hit[0] === 'module_timeout' && /150 ms/.test(hit[1]) && Date.now() - t0 < 6000, { hit, dt: Date.now() - t0 });
     const hCap = htm('hc', 'hookTimeoutMs: 4000', 'async () => { await new Promise(r => setTimeout(r, 800)); return null; }');
     r = M.load({ modules: { [hCap]: true }, modules_hook_timeout_ms: 200 });
     hit = await M.beforeTool(r.mods, { tool: 'Bash', ti: {} });

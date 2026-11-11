@@ -18,7 +18,7 @@ const base = args[0] || process.env.TRUNK_BASE;
 const cwd = process.env.TRUNK_REPO || path.resolve(__dirname, '..');
 
 if (!base) { console.log('SKIP: no base ref given (node test/trunk-diff.js <base-ref>)'); process.exit(0); }
-const git = (...a) => spawnSync('git', a, { cwd, encoding: 'utf8', maxBuffer: 1 << 26 });
+const git = (...a) => spawnSync('git', a, { cwd, encoding: 'utf8', maxBuffer: 1 << 26 , windowsHide: true });
 
 const SEP = '\x1e';
 const log = git('log', '--no-merges', `--format=${SEP}%H%x09%s`, '--name-only', `${base}..${head}`);

@@ -454,6 +454,25 @@ const idLines = p => p.split('\n').filter(l => l.startsWith('- [id='));
     un4();
   }
 
+  // ---- group hand-over: a lead answering a plain human line is told who else is in the room and how to hand over
+  {
+    const G = { lead: 'main', members: [{ id: 'main', name: 'main' }, { id: 'r-1', name: 'Researcher' }, { id: 'r-2', name: 'Writer' }], window: 20, id: 'g' };
+    const h = { id: 'h1', kind: 'human', speaker: 'human', text: 'plan a trip' };
+    const lead = buildContext({ room: G, member: G.members[0], messages: [h], trigger: h });
+    check('lead prompt lists the other members and the @name hand-over', /Researcher/.test(lead.prompt) && /Writer/.test(lead.prompt) && /@Name|@name/.test(lead.prompt), lead.prompt);
+    check('lead prompt does not list the member itself as a hand-over target', !lead.prompt.split(String.fromCharCode(10)).filter(l => l.startsWith('Other members')).join('').includes('main'), lead.prompt);
+    const bot = { id: 'b1', kind: 'bot', speaker: 'main', text: 'ask @Writer', reply_to: 'h1' };
+    const hop = buildContext({ room: G, member: G.members[2], messages: [h, bot], trigger: bot });
+    check('a hop turn gets no hand-over note (one hop only)', !/Other members/.test(hop.prompt), hop.prompt);
+    const solo = { id: 'g2', lead: 'main', members: [{ id: 'main', name: 'main' }], window: 20 };
+    check('a one-member room gets no hand-over note', !/Other members/.test(buildContext({ room: solo, member: solo.members[0], messages: [h], trigger: h }).prompt));
+    // end to end with a fake delivery: the lead hands over in its reply, the named member answers
+    const m = make({ g: { lead: 'main', members: G.members } }, { main: 'Let me ask @Researcher.', 'r-1': 'Found three routes.', 'r-2': 'x' });
+    const r = await m.eng.say('g', 'plan a trip');
+    check('lead hand-over wakes the named member once', JSON.stringify(who(m.store)) === '["main","r-1"]', who(m.store));
+    check('the hand-over note reached the lead only', /Other members/.test(m.calls[0].prompt) && !/Other members/.test(m.calls[1].prompt), m.calls.map(c => c.prompt));
+  }
+
   console.log(`result: ${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });

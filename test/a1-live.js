@@ -12,7 +12,7 @@ const H = require('../bin/harness');
 const ROOT = path.resolve(__dirname, '..');
 const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'a1live-'));
 const logDir = path.join(sandbox, '_logs');
-const g = (...a) => execFileSync('git', a, { cwd: sandbox, encoding: 'utf8' });
+const g = (...a) => execFileSync('git', a, { cwd: sandbox, encoding: 'utf8' , windowsHide: true });
 g('init', '-q'); fs.mkdirSync(path.join(sandbox, 'build')); fs.writeFileSync(path.join(sandbox, 'build', 'keep.txt'), 'keep');
 fs.writeFileSync(path.join(sandbox, '.env'), 'DUMMY_SECRET=not-a-real-secret\n');
 g('add', 'build'); g('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'init');
@@ -31,7 +31,7 @@ const settings = H.settingsFile();
 function session(prompt, extraEnv) {
   const r = spawnSync(claude, ['-p', prompt, '--setting-sources', 'local', '--settings', settings, '--tools', 'Bash', '--allowedTools', 'Bash',
     '--strict-mcp-config', '--disable-slash-commands', '--output-format', 'json'],
-  { cwd: sandbox, env: { ...env, HARNESS_LOG_DIR: logDir, ...extraEnv }, encoding: 'utf8', timeout: 300000 });
+  { cwd: sandbox, env: { ...env, HARNESS_LOG_DIR: logDir, ...extraEnv }, encoding: 'utf8', timeout: 300000 , windowsHide: true });
   try { return JSON.parse(r.stdout); } catch { return { raw: (r.stdout || '') + r.stderr }; }
 }
 

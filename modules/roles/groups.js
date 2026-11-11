@@ -56,12 +56,22 @@ function createGroups(dirOf, rolesStore) {
   return {
     list: ctx => live(read()).map(g => view(g, ctx)),
     get: (key, ctx) => { const g = find(read(), key); return g ? view(g, ctx) : null; },
-    create({ name, members } = {}, ctx) {
+    // the same checks create() makes, with nothing written; lets a caller refuse a bad request before it acts
+    check({ name, members } = {}) {
+      const n = checkName(name), ids = roleIds(members, 'members');
+      if (!ids.length) throw new RoleError(bi('群組至少要有一個角色成員（主機器人一定在群組裡）', 'a group needs at least one role member (the main bot is always in it)'));
+      if (taken(read(), n)) throw new RoleError(bi(`已經有名為「${n}」的群組`, `a group named "${n}" already exists`));
+    },
+    // a fresh group id in the store's own format, so a caller can journal it before create({ id })
+    newId() { const gs = read(); let id; do { id = 'g-' + crypto.randomBytes(4).toString('hex'); } while (gs.some(g => g.id === id)); return id; },
+    create({ name, members, id: given } = {}, ctx) {
       const n = checkName(name), ids = roleIds(members, 'members');
       if (!ids.length) throw new RoleError(bi('群組至少要有一個角色成員（主機器人一定在群組裡）', 'a group needs at least one role member (the main bot is always in it)'));
       const gs = read();
       if (taken(gs, n)) throw new RoleError(bi(`已經有名為「${n}」的群組`, `a group named "${n}" already exists`));
-      let id; do { id = 'g-' + crypto.randomBytes(4).toString('hex'); } while (gs.some(g => g.id === id));
+      let id = given;
+      if (id !== undefined && (!ID_RE.test(id) || gs.some(g => g.id === id))) throw new RoleError('bad group id');
+      if (id === undefined) do { id = 'g-' + crypto.randomBytes(4).toString('hex'); } while (gs.some(g => g.id === id));
       const now = new Date().toISOString();
       const rec = { id, name: n, members: ids, created_at: now, updated_at: now };
       gs.push(rec); write(gs);

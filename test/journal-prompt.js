@@ -38,10 +38,25 @@ checks['journal ends with newline'] = fs.readFileSync(J.JOURNAL, 'utf8').endsWit
 // fail closed: journal path exists but cannot be read as a file
 const bad = fs.mkdtempSync(path.join(os.tmpdir(), 'jp-bad-'));
 fs.mkdirSync(path.join(bad, 'journal.jsonl'));
-const st = spawnSync(process.execPath, [path.join(__dirname, '..', 'bin', 'harness.js'), 'status'], { env: { ...process.env, HARNESS_STATE_DIR: bad }, encoding: 'utf8' });
+const st = spawnSync(process.execPath, [path.join(__dirname, '..', 'bin', 'harness.js'), 'status'], { env: { ...process.env, HARNESS_STATE_DIR: bad }, encoding: 'utf8' , windowsHide: true });
 console.log(`unreadable journal -> harness status exit ${st.status}: ${st.stderr.trim()}`);
 checks['unreadable journal -> exit 5, not empty'] = st.status === 5 && !/no open task/.test(st.stdout);
 fs.rmSync(bad, { recursive: true, force: true });
+// relock: a transient rename error (a reader has the lock open) is retried; a persistent one is rethrown and leaves no tmp file
+{
+  const lf = path.join(process.env.HARNESS_STATE_DIR, 'rl.lock');
+  const realRename = fs.renameSync;
+  const stubR = (n, code) => { let c = 0; fs.renameSync = (x, y) => { if (String(y) === lf && ++c <= n) throw Object.assign(new Error(code), { code }); return realRename(x, y); }; return () => c; };
+  try {
+    const l = J.lock(lf, { pids: [process.pid] }); let calls = stubR(3, 'EPERM');
+    J.relock(lf, { pids: [process.pid, 1] }, l.nonce);
+    checks['relock retries transient EPERM then succeeds'] = calls() === 4 && J.readLock(lf).pids.length === 2;
+    fs.renameSync = realRename; calls = stubR(1e9, 'EBUSY');
+    let threw = null; try { J.relock(lf, { pids: [process.pid] }, l.nonce); } catch (e) { threw = e.code; }
+    checks['relock: persistent EBUSY is rethrown after 5 tries, no tmp file left'] = threw === 'EBUSY' && calls() === 5 && !fs.readdirSync(path.dirname(lf)).some(f => f.startsWith('rl.lock.') && f.endsWith('.tmp'));
+  } finally { fs.renameSync = realRename; J.unlock(lf, J.readLock(lf) && J.readLock(lf).nonce); }
+}
+
 // unlock/unlinkRetry: transient unlink errors are retried; persistent ones are reported
 {
   const lf = path.join(process.env.HARNESS_STATE_DIR, 'ul.lock');
@@ -69,9 +84,12 @@ fs.rmSync(bad, { recursive: true, force: true });
     J.unlock(lf, other.nonce);
     // total nap bound
     l = J.lock(lf, { pids: [process.pid] }); calls = stub(1e9, 'EBUSY');
-    const t0 = Date.now(); J.unlock(lf, l.nonce); const dt = Date.now() - t0;
+    // Count the requested nap time instead of timing the wall clock: a loaded machine stretches wall time but not the request.
+    const realWait = Atomics.wait; let asked = 0;
+    Atomics.wait = (a, i, v, ms) => { asked += ms; return realWait(a, i, v, ms); };
+    const t0 = Date.now(); try { J.unlock(lf, l.nonce); } finally { Atomics.wait = realWait; } const dt = Date.now() - t0;
     fs.unlinkSync = real;
-    checks['failed unlink naps <= ~50ms total (got ' + dt + 'ms)'] = dt >= 45 && dt < 120;
+    checks['failed unlink naps <= ~50ms total (asked ' + asked + 'ms, took ' + dt + 'ms)'] = asked >= 45 && asked < 120 && dt >= 45;
     J.unlock(lf, l.nonce);
   } finally { fs.unlinkSync = real; }
 }
@@ -86,7 +104,8 @@ const qcDone = (async () => {
   const r = await store.withLock({ state: { dir } }, async () => 'result');
   fs.unlinkSync = real;
   checks['question-cards: operation result kept, lock stranded right after'] = r === 'result' && fs.existsSync(lockf);
-  await new Promise(r2 => setTimeout(r2, 400));
+  // wait for the release (first retry is due after 100 ms; the full schedule ends near 2.6 s), not a fixed 400 ms
+  const t1 = Date.now(); while (fs.existsSync(lockf) && Date.now() - t1 < 8000) await new Promise(r2 => setTimeout(r2, 50));
   checks['question-cards: async retry releases stranded lock'] = !fs.existsSync(lockf);
   fs.rmSync(dir, { recursive: true, force: true });
 })();

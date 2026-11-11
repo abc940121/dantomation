@@ -157,6 +157,7 @@ The owner can ask in chat for a group ("make a group called 週末計畫 with An
 群組聊天：直接在聊天裡說「開一個群組」即可，不用改設定也不用重新啟動；需要先開啟 rooms 模組，沒開時工具會回覆中英文說明。
 
 - Tools: `group_create {name, members}`, `group_update {group, name?, add?, remove?}`, `group_remove {group}` (archives, never deletes), `group_list`. Members are role names or ids; `group` is the `g-<8hex>` id or the current name.
+- Button route (owner): `POST /m/roles/groups {name, members:[role id]}` does what `group_create` does, with no model in between. Name 1-40 characters, 1-20 members, every one an existing role id (a name or unknown id is a 400). Answers 201 with the group; its id is the room id.
 - Stored in `<state>/m/roles/groups.json` (same atomic save and damaged-file handling as `roles.json`). The room id is `g-<8hex>`; the display name is whatever the owner chose, in any language.
 - The main bot is always a member and the lead (a message with no @mention goes to it; `@everyone` wakes all; `@<role id>` wakes one role). Each role member is its own bot (`bot: "r-..."`), so it answers with its own persona, engine and conversation.
 - A role that is archived or removed drops out of the group on read; the stored list is not rewritten.

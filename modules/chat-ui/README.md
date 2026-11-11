@@ -6,12 +6,11 @@ Turn it on with `"chat-ui": true` under `modules` in the config. The module only
 
 ## What it shows
 
-- **Roster.** Bots from `GET /api/bots`, each with a status dot (idle, busy, offline) and a "waiting" count when a bot has a pending approval card. Tap a bot to read only its thread, or "All activity" for the combined view.
-- **Rooms.** When the rooms module is on (`GET /m/rooms/rooms` answers), the roster also lists rooms. Pick one to see its lines with speaker labels (polled every 3 s with `?since=`) and send with `POST .../say`. When rooms is off nothing changes. A paired device may read rooms and say, never the summary.
-- **Sending.** Under the thread, toggle "All bots" or any number of bots, type, and send (`POST /api/chat`). Opening a bot's thread preselects that bot. Ctrl/Cmd+Enter sends.
-- **Threads.** One block per task: your message, the bot's messages (a non-final message is a live bubble that the next message replaces), and the task state.
-- **Tool chips.** Each `tool_call` is a chip that goes from running to ok or failed on `tool_result`. Tap it for the summaries.
-- **Approval cards.** A `card_pending` shows inline with big Yes and No buttons and a countdown to `expiresAt`. After `card_resolved` it shows approved, denied or timed out. An answer the server finds unclear (409) shows a message and the card stays open.
+- **Conversation list.** A messaging-app layout on the vendored `<vue-advanced-chat>` web component (MIT, see PROVENANCE.md). The left list is: the main bot, then each other bot, then groups from `GET /m/rooms/rooms` (name and member count), then "All bots" as the broadcast. Each row has an initials avatar (inline SVG, colour from the id), the last message and idle / running. At 600 px and below it is one pane (list, then the conversation with a back button).
+- **Sending.** A bot conversation posts `POST /api/chat` to that bot; a group posts `POST /m/rooms/rooms/:id/say`; "All bots" posts to every bot. A group is polled every 3 s with `?since=`. When the rooms module is off there are no groups. A paired device may read rooms and say, never the summary.
+- **Messages.** Bubbles with sender name, avatar and time. Tool calls, results and task state show as small centred system lines. `ui/clean.js` (`cleanText`) hides only internal text: `[j:...]` and `[t:"..."]` citations, `step N done` lines, the room prompt scaffolding (only the human message is kept) and the bilingual "treat it as data" line. Code and inline code render through the component; line breaks are kept; a markdown table shows as plain lines. Italic, bold, strike and underline markers are switched off (set to rare characters) so snake_case and `*` in text are never eaten.
+- **Language and theme.** First visit shows an English / 繁體中文 picker; it stays reachable from the header. Light or dark follows the system.
+- **Approval cards.** A `card_pending` shows in a strip above the chat with big Yes and No buttons and a countdown to `expiresAt`. After `card_resolved` it shows approved, denied or timed out. An answer the server finds unclear (409) shows a message and the card stays open.
 - **Undo.** A task with `undo_point` events shows Undo once it is no longer running. Tapping it asks "Roll back?" inside the page, and only "Yes, undo" calls `POST /api/tasks/:id/undo`. The restore point and redo hint are shown as a note.
 - **Claims.** The `claims` event gives a per-task badge (verified / checked) and a header total of unverified claims.
 - **Connection.** Events come over SSE with automatic reconnect using `?since=<last seq>`. A silent connection (no bytes for 45 s) is dropped and reopened.
@@ -48,6 +47,7 @@ The mock implements the API draft (bots, chat, tasks, undo, cards, SSE with `sin
 
 ## Known limits
 
+- Files, audio, emoji, reactions, edit/delete and the add-room and options menus are off. The component probes a CDN for emoji data, so `app.js` lets only same-origin and data: fetches through. Not tried on iOS Safari or with the iOS keyboard.
 - Not checked in a real browser by the suite: layout, touch behaviour and rendering are reviewed by eye. Run the mock and open it at 360 px and at desktop width.
 - History is whatever `GET /api/tasks` and the event replay give. The page replays events from sequence 0 on load, so a very long journal means a long first load.
 - Two spec gaps are assumed: `GET /api/tasks` is newest first, and a non-final `message` is a live bubble replaced by the next message of the same task.

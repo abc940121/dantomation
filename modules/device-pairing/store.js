@@ -164,6 +164,8 @@ const ALLOW = [
   // question-cards: list pending questions and answer one (the undo card); never ask, cancel or read history
   ['GET', /^\/m\/question-cards\/questions$/],
   ['POST', /^\/m\/question-cards\/questions\/[\w-]+\/answer$/],
+  // roles: make a group chat from the chat page (create only; the route validates and journals who made it)
+  ['POST', /^\/m\/roles\/groups$/],
 ];
 const allows = (method, p) => ALLOW.some(([m, re]) => m === method && re.test(String(p)));
 

@@ -26,13 +26,13 @@ const tick = ms => new Promise(r => setTimeout(r, ms));
 const log = (...a) => console.log(`[${new Date().toISOString().slice(11, 19)}]`, ...a);
 
 function survivors() {
-  const out = execSync(`powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.Name -notin @('powershell.exe','cmd.exe') -and ($_.CommandLine -like '*effect.js*' -or $_.CommandLine -like '*${path.basename(base)}*') } | ForEach-Object { $_.Name + ':' + $_.ProcessId }"`, { encoding: 'utf8' });
+  const out = execSync(`powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.Name -notin @('powershell.exe','cmd.exe') -and ($_.CommandLine -like '*effect.js*' -or $_.CommandLine -like '*${path.basename(base)}*') } | ForEach-Object { $_.Name + ':' + $_.ProcessId }"`, { encoding: 'utf8' , windowsHide: true });
   return out.split(/\s+/).filter(Boolean);
 }
 
 async function main() {
   fs.mkdirSync(work, { recursive: true });
-  execFileSync('git', ['init', '-q'], { cwd: work });
+  execFileSync('git', ['init', '-q'], { cwd: work , windowsHide: true });
   log(`mode ${mode}; base ${base}`);
   const h = spawn(process.execPath, [path.join(ROOT, 'bin', 'harness.js'), 'start', REQUEST, '--workdir', work], { env: { ...env, ...pauseEnv }, stdio: 'ignore', windowsHide: true });
   const t0 = Date.now();
@@ -44,7 +44,7 @@ async function main() {
       ? rs.some(r => r.type === 'step' && r.step === 3 && r.status === 'started')
       : fs.existsSync(path.join(stateDir, 'paused.flag'));
     if (trigger) {
-      execSync(`taskkill /T /F /PID ${h.pid}`, { stdio: 'ignore' });
+      execSync(`taskkill /T /F /PID ${h.pid}`, { stdio: 'ignore' , windowsHide: true });
       killed = true;
       log(`killed tree of harness pid ${h.pid}`);
       break;
@@ -62,7 +62,7 @@ async function main() {
   const tr = Date.now();
   const code = await new Promise(res => {
     const r = spawn(process.execPath, [path.join(ROOT, 'bin', 'harness.js'), 'resume'], { env, stdio: 'ignore', windowsHide: true });
-    const timer = setTimeout(() => { execSync(`taskkill /T /F /PID ${r.pid}`, { stdio: 'ignore' }); res('timeout'); }, 600000);
+    const timer = setTimeout(() => { execSync(`taskkill /T /F /PID ${r.pid}`, { stdio: 'ignore' , windowsHide: true }); res('timeout'); }, 600000);
     r.on('exit', c => { clearTimeout(timer); res(c); });
   });
   const resumeSec = Math.round((Date.now() - tr) / 1000);
@@ -80,7 +80,7 @@ async function main() {
     if (!e) fail.push(`s${n}-${v} missing`);
     else if (e.performed + e.reconciled !== 1 || e.performed > 1) fail.push(`s${n}-${v} done ${JSON.stringify(e)}`);
   }
-  const logLines = execFileSync('git', ['log', '--all', '--format=%B%x00'], { cwd: work, encoding: 'utf8' }).split('\0').filter(s => s.trim());
+  const logLines = execFileSync('git', ['log', '--all', '--format=%B%x00'], { cwd: work, encoding: 'utf8' , windowsHide: true }).split('\0').filter(s => s.trim());
   const trailerCounts = {};
   for (const m of logLines) { const t = (m.match(/Effect-Id: \S+\/(s\d-commit)/) || [])[1]; if (t) trailerCounts[t] = (trailerCounts[t] || 0) + 1; }
   for (let n = 1; n <= 5; n++) {

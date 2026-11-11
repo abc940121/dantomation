@@ -8,6 +8,7 @@
 //   node test/run-all.js default         no HARNESS_CONFIG: the owner's real config, if any
 //   node test/run-all.js every           core, each module alone, all
 //   add --parallel [--jobs N] to run the suites of a mode at the same time (output stays in suite order)
+//   a full run (all, every) takes a machine-wide lock in os.tmpdir() (test/gate-lock.js) and waits if another full run holds it
 //   add --base <ref> to enable the trunk-diff suite against that base ref (else it SKIPs)
 // Modules are discovered: every modules/<name>/ with an index.js. Its suites come from
 // modules/<name>/tests.json {"suites": [{label, file, needs: [modules]}]} (file is relative
@@ -33,6 +34,8 @@ const CORE_SUITES = [
   ['module-events', 'test/module-events.js', [], true],
   ['module-seams', 'test/module-seams.js', [], true],
   ['contract-v6', 'test/contract-v6.js', [], true],
+  ['raw-route', 'test/raw-route.js', [], true],
+  ['raw-route', 'test/raw-route.js', [], true],
   ['approve-mcp', 'test/approve-mcp.js', []],
   ['taskmote-mcp', 'test/taskmote-mcp.js', []],
   ['entry', 'test/entry.js', ['guard-base', 'checkpoint']],
@@ -43,11 +46,12 @@ const CORE_SUITES = [
   ['executor-race', 'test/executor-race.js', []],
   ['push-reconcile', 'test/push-reconcile.js', []],
   ['server', 'test/server.js', []],
-  ['server-jobs', 'test/server-jobs.js', []],
+  ['server-jobs', 'test/server-jobs.js', [], true], // scratch modules appear under modules/ while it runs: other suites must not see them
   ['integration', 'test/integration.js', ['chat-ui', 'approval-cards']],
   ['trunk-diff', 'test/trunk-diff.js', []],
   ['trunk-diff-test', 'test/trunk-diff.test.js', []],
   ['alias', 'test/alias.test.js', []],
+  ['gate-lock', 'test/gate-lock.test.js', []],
   ['demo', 'test/demo.js', ['guard-base', 'checkpoint', 'approval-cards', 'chat-ui']],
   ['combo-v1', 'test/combo-v1.js', [], true],
 ];
@@ -74,7 +78,7 @@ function e2e(cfgFile) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'harness-e2e-'));
   const env = { ...process.env, HARNESS_CONFIG: cfgFile, HARNESS_STATE_DIR: path.join(dir, 'state'), HARNESS_LOG_DIR: path.join(dir, 'logs'), HARNESS_ENGINE_SCRIPT: path.resolve(ROOT, 'test', 'fake-engine.js'), HARNESS_FAKE_DELAY_MS: '0' };
   delete env.HARNESS_OWNER;
-  const r = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'harness.js'), 'start', 'core only task', '--workdir', path.join(dir, 'w')], { env, encoding: 'utf8', timeout: 60000 });
+  const r = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'harness.js'), 'start', 'core only task', '--workdir', path.join(dir, 'w')], { env, encoding: 'utf8', timeout: 60000 , windowsHide: true });
   let types = [];
   try { types = fs.readFileSync(path.join(dir, 'state', 'journal.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l).type); } catch { /* none */ }
   const out = fs.existsSync(path.join(dir, 'w', 'out.txt'));
@@ -85,7 +89,7 @@ function e2e(cfgFile) {
 
 
 const sleepless = (cmdArgs, opts) => new Promise(resolve => {
-  const p = spawn(process.execPath, cmdArgs, { ...opts, stdio: ['ignore', 'pipe', 'pipe'] });
+  const p = spawn(process.execPath, cmdArgs, { ...opts, stdio: ['ignore', 'pipe', 'pipe'] , windowsHide: true });
   let out = '';
   const t = setTimeout(() => p.kill(), 300000);
   p.stdout.on('data', d => { out += d; }); p.stderr.on('data', d => { out += d; });
@@ -166,8 +170,11 @@ async function runMode(mode, opts) {
   const valid = ['core', 'all', 'default', 'every', ...MODULES, ...MODULES.map(m => 'module:' + m)];
   if (!valid.includes(arg)) { console.error(`usage: node test/run-all.js [--parallel] [--base <ref>] core|all|default|every|<module>|module <name>  (modules: ${MODULES.join(', ')})`); process.exit(2); }
   const modes = arg === 'every' ? ['core', ...MODULES, 'all'] : [arg];
+  // a full run takes a machine-wide lock (test/gate-lock.js): two full gates at once load the machine and fail timing suites
+  let release = null;
+  if (arg === 'all' || arg === 'every') release = await require('./gate-lock').acquire();
   let total = 0;
-  for (const m of modes) total += await runMode(m, opts);
+  try { for (const m of modes) total += await runMode(m, opts); } finally { if (release) release(); }
   console.log(`\n${total ? 'FAILED' : 'ok'}: ${total} failing suite(s)`);
   process.exit(total ? 1 : 0);
 })();

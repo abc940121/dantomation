@@ -19,10 +19,10 @@ const res = {};
 const cfgFile = (name, obj) => { const f = path.join(tmp, name + '.json'); fs.writeFileSync(f, JSON.stringify(obj)); return f; };
 const env = cfg => { const e = { ...process.env, HARNESS_CONFIG: cfg, HARNESS_STATE_DIR: path.join(tmp, 'state'), HARNESS_LOG_DIR: path.join(tmp, 'logs') }; delete e.HARNESS_OWNER; delete e.HARNESS_TASK_ID; delete e.HARNESS_TASK_DIR; delete e.HARNESS_VOICE; return e; };
 const guard = (cfg, tool, ti) => {
-  const r = spawnSync(process.execPath, [path.join(ROOT, 'guards', 'guard.js')], { input: JSON.stringify({ session_id: 'm', tool_name: tool, tool_input: ti, cwd: tmp }), env: env(cfg), encoding: 'utf8' });
+  const r = spawnSync(process.execPath, [path.join(ROOT, 'guards', 'guard.js')], { input: JSON.stringify({ session_id: 'm', tool_name: tool, tool_input: ti, cwd: tmp }), env: env(cfg), encoding: 'utf8' , windowsHide: true });
   return { code: r.status, kind: (r.stderr.match(/BLOCKED \(([^)]+)\)/) || [])[1] || null, err: r.stderr.trim() };
 };
-const harness = (cfg, ...a) => spawnSync(process.execPath, [path.join(ROOT, 'bin', 'harness.js'), ...a], { env: { ...env(cfg), HARNESS_ENGINE_SCRIPT: path.resolve(ROOT, 'test', 'fake-engine.js'), HARNESS_FAKE_DELAY_MS: '0' }, encoding: 'utf8', timeout: 60000 });
+const harness = (cfg, ...a) => spawnSync(process.execPath, [path.join(ROOT, 'bin', 'harness.js'), ...a], { env: { ...env(cfg), HARNESS_ENGINE_SCRIPT: path.resolve(ROOT, 'test', 'fake-engine.js'), HARNESS_FAKE_DELAY_MS: '0' }, encoding: 'utf8', timeout: 60000 , windowsHide: true });
 const OFF = { 'guard-base': true, checkpoint: false, 'guard-private-rules': false, 'spend-count': false, voice: false };
 const RM = ['Bash', { command: 'rm -rf /data' }];
 
@@ -44,7 +44,7 @@ for (const rel of ['lib/config.js', 'lib/modules.js', 'lib/preset.js', 'presets/
   const cl = M.verbClaimers([fake('a', ['x', 'y']), fake('b', ['x']), { name: 'c' }], 'x');
   res['verbClaimers lists every module that claims a verb, in load order'] = cl.join() === 'a,b';
   res['verbClaimers ignores inherited names (constructor)'] = M.verbClaimers([fake('a', ['x'])], 'constructor').length === 0;
-  const tm = (cfg, ...a) => spawnSync(process.execPath, [path.join(ROOT, 'bin', 'taskmote.js'), ...a], { env: { ...process.env, HARNESS_CONFIG: cfg, HARNESS_NO_SERVER: '1' }, encoding: 'utf8' });
+  const tm = (cfg, ...a) => spawnSync(process.execPath, [path.join(ROOT, 'bin', 'taskmote.js'), ...a], { env: { ...process.env, HARNESS_CONFIG: cfg, HARNESS_NO_SERVER: '1' }, encoding: 'utf8' , windowsHide: true });
   const proto = tm(off, 'constructor');
   res['taskmote constructor: usage, exit 2 (no prototype lookup)'] = proto.status === 2 && /usage:/.test(proto.stderr);
   const sc = tm(cfgFile('hello-off', { modules: { ...OFF, 'hello-stub': false } }), 'hello');

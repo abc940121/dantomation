@@ -16,7 +16,7 @@ const claude = process.env.HARNESS_CLAUDE || 'claude';
 const { env, stripped } = H.cleanEnv();
 
 function first(args, e) {
-  const r = spawnSync(claude, ['-p', 'Reply with just: ok', ...args, '--output-format', 'stream-json', '--verbose'], { cwd: dir, env: e, encoding: 'utf8', timeout: 300000 });
+  const r = spawnSync(claude, ['-p', 'Reply with just: ok', ...args, '--output-format', 'stream-json', '--verbose'], { cwd: dir, env: e, encoding: 'utf8', timeout: 300000 , windowsHide: true });
   let init, msg;
   for (const l of r.stdout.split('\n')) {
     let j; try { j = JSON.parse(l); } catch { continue; }

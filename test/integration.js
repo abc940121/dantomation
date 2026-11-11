@@ -90,7 +90,7 @@ async function main() {
     note('card: card_resolved event', await waitFor(() => events.find(e => e.type === 'card_resolved' && e.cardId === card.card_id && e.answer === 'yes'), 10000));
     sreq.destroy();
   } catch (e) { console.log('  error: ' + (e.stack || e)); res.exception = false; }
-  finally { if (process.platform === 'win32') spawnSync('taskkill', ['/T', '/F', '/PID', String(srv.pid)], { stdio: 'ignore' }); else srv.kill('SIGKILL'); }
+  finally { if (process.platform === 'win32') spawnSync('taskkill', ['/T', '/F', '/PID', String(srv.pid)], { stdio: 'ignore' , windowsHide: true }); else srv.kill('SIGKILL'); }
   const failed = Object.entries(res).filter(([, v]) => !v).map(([k]) => k);
   console.log(`integration: ${Object.keys(res).length - failed.length}/${Object.keys(res).length} ${failed.length ? 'FAIL ' + failed.join('; ') : 'PASS'}`);
   process.exit(failed.length ? 1 : 0);

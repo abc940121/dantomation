@@ -16,7 +16,8 @@ const storeOf = self => createStore(() => dirOf(self));
 const storeOfCtx = ctx => createStore(() => ctx.state.dir);
 const groupsOfCtx = ctx => createGroups(() => ctx.state.dir, storeOfCtx(ctx));
 const needRooms = ctx => { if (!roomsOn(ctx)) throw new Error(bi('群組聊天需要先開啟 rooms 模組（在設定裡把 modules.rooms 設為 true，並重新啟動一次）。', 'Group chats need the rooms module to be on (set modules.rooms to true in the config and restart once).')); };
-const groupNote = (ctx, type, g) => { try { ctx.state.append({ type, id: g.id, name: g.name }); } catch { /* best effort */ } };
+const MAX_GROUP_MEMBERS = 16; // the most role members a group made through the route may have
+const groupNote = (ctx, type, g, more) => { try { ctx.state.append({ type, id: g.id, name: g.name, ...more }); } catch { /* best effort */ } };
 const GROUP_KEY = { type: 'string', description: 'Group id (g-...) or its current name.' };
 const ROLE_LIST = d => ({ type: 'array', items: { type: 'string' }, description: d });
 
@@ -87,6 +88,39 @@ module.exports = {
   runsOn: 'main',
   priority: 61,
   optionalDependsOn: ['rooms'],
+
+  // The chat page's "new group" button. Same effect as the group_create tool, for the owner, with no model in between.
+  // Members must be existing role ids (a name or an unknown id is a 400, never skipped); the answer carries the room id.
+  routes: [
+    { method: 'POST', path: '/groups', access: 'owner', description: 'create a group chat {name, members:[role id]}; answers 201 {id (the room id), name, lead, members}',
+      handler(ctx) {
+        const bad = error => ({ status: 400, json: { error } });
+        const b = ctx.body && typeof ctx.body === 'object' ? ctx.body : {};
+        const name = typeof b.name === 'string' ? b.name.trim() : '';
+        if (!name || [...name].length > 40) return bad(bi('群組名稱要 1-40 個字', 'the group name must be 1-40 characters'));
+        if (!Array.isArray(b.members) || !b.members.length || b.members.length > MAX_GROUP_MEMBERS) return bad(bi(`成員要是 1-${MAX_GROUP_MEMBERS} 個角色 id 的清單`, `members must be a list of 1-${MAX_GROUP_MEMBERS} role ids`));
+        const store = storeOfCtx(ctx), ids = [];
+        for (const k of b.members) {
+          const r = typeof k === 'string' ? store.get(k) : null;
+          if (!r || r.archived_at || r.id !== k) return bad(bi(`找不到角色 id「${String(k).slice(0, 60)}」`, `no such role id "${String(k).slice(0, 60)}"`));
+          if (!ids.includes(r.id)) ids.push(r.id);
+        }
+        const by = ctx.actor && ctx.actor.id;
+        // a phone caller: the audit line comes first and must land, or nothing is created
+        if (String(by || '').startsWith('device:')) {
+          const groups = groupsOfCtx(ctx);
+          let id;
+          try { needRooms(ctx); groups.check({ name, members: ids }); id = groups.newId(); }
+          catch (e) { return bad(String(e && e.message || 'could not create the group').slice(0, 300)); }
+          try { ctx.state.append({ type: 'group_created', id, name, members: ids, by }); }
+          catch { return { status: 500, json: { error: 'could not write the audit line, nothing was created' } }; }
+          try { return { status: 201, json: groups.create({ name, members: ids, id }, ctx) }; }
+          catch { groupNote(ctx, 'group_create_failed', { id, name }, { members: ids, by }); return { status: 500, json: { error: 'could not create the group' } }; }
+        }
+        try { needRooms(ctx); const g = groupsOfCtx(ctx).create({ name, members: ids }, ctx); groupNote(ctx, 'group_created', g, { members: ids, by }); return { status: 201, json: g }; }
+        catch (e) { return bad(String(e && e.message || 'could not create the group').slice(0, 300)); }
+      } },
+  ],
 
   // Before each engine turn: when the task belongs to a role, tell the agent which persona it speaks as.
   prepareTurn(ctx) {

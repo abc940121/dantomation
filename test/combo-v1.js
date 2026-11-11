@@ -54,7 +54,7 @@ const cfgOf = modules => ({ ...C.DEFAULTS, owner_name: 'Tester', modules });
     const f = path.join(sd, name + '.json');
     if (obj !== undefined) fs.writeFileSync(f, typeof obj === 'string' ? obj : JSON.stringify(obj));
     const env = { ...process.env, HARNESS_CONFIG: f };
-    const r = spawnSync(process.execPath, ['-e', "const C=require(process.argv[1]);const c=C.load();console.log(JSON.stringify({modules:c.modules,warn:C.warn()}))", path.join(ROOT, 'lib', 'config.js')], { env, encoding: 'utf8' });
+    const r = spawnSync(process.execPath, ['-e', "const C=require(process.argv[1]);const c=C.load();console.log(JSON.stringify({modules:c.modules,warn:C.warn()}))", path.join(ROOT, 'lib', 'config.js')], { env, encoding: 'utf8' , windowsHide: true });
     try { return JSON.parse(r.stdout); } catch { return { error: (r.stderr || '').slice(0, 300) }; }
   };
   const a1 = loadIn('on', { preset: 'v1' });
@@ -66,7 +66,7 @@ const cfgOf = modules => ({ ...C.DEFAULTS, owner_name: 'Tester', modules });
   check('a locked module cannot be turned off: the config is refused', !!lk.error && /locked on/.test(lk.error) && !lk.modules, JSON.stringify(lk).slice(0, 200));
   const lk2 = loadIn('locked2', { modules: { 'guard-base': 'no' } });
   check('a locked module with a non-true value is refused too', !!lk2.error && /locked on/.test(lk2.error));
-  const sv = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'taskmote.js'), 'serve'], { env: { ...process.env, HARNESS_CONFIG: path.join(sd, 'locked.json'), HARNESS_STATE_DIR: path.join(sd, 'st-locked') }, encoding: 'utf8', timeout: 20000 });
+  const sv = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'taskmote.js'), 'serve'], { env: { ...process.env, HARNESS_CONFIG: path.join(sd, 'locked.json'), HARNESS_STATE_DIR: path.join(sd, 'st-locked') }, encoding: 'utf8', timeout: 20000 , windowsHide: true });
   check('serve refuses to start with guard-base off, and says why', sv.status === 2 && /module "guard-base" is locked on/.test(sv.stderr) && !fs.existsSync(path.join(sd, 'st-locked', 'server.json')), `exit ${sv.status} ${(sv.stderr || '').slice(0, 200)}`);
   const ac = loadIn('acoff', { preset: 'v1', modules: { 'approval-cards': false } });
   check('approval-cards off loads, with a warning that red lines are refused', !ac.error && ac.modules['approval-cards'] === false && /module "approval-cards" is off: red-line steps cannot be approved/.test(ac.warn || ''), JSON.stringify(ac.warn));
@@ -88,9 +88,9 @@ const cfgOf = modules => ({ ...C.DEFAULTS, owner_name: 'Tester', modules });
   let vrc; try { vrc = PV.cli(['v1']); PV.cli(['v1', '--dry-run']); } finally { console.log = log0; }
   check('the preset verb writes nothing (bytes, mtime, directory)', fs.readFileSync(vf).equals(before.b) && fs.statSync(vf).mtimeMs === before.m && fs.readdirSync(sd).join() === before.ls);
   check('the verb names the modules, the user override and the line to add', vrc === 0 && out.some(l => /on: trace/.test(l)) && out.some(l => /kept as you set it: tripwires = false/.test(l)) && out.some(l => /^ +"preset": "v1"$/m.test(l)), out.join(' | ').slice(0, 200));
-  const cli1 = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'taskmote.js'), 'preset', 'v1'], { env: { ...process.env, HARNESS_CONFIG: path.join(sd, 'absent.json') }, encoding: 'utf8' });
+  const cli1 = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'taskmote.js'), 'preset', 'v1'], { env: { ...process.env, HARNESS_CONFIG: path.join(sd, 'absent.json') }, encoding: 'utf8' , windowsHide: true });
   check('the CLI verb works with no config and creates none', cli1.status === 0 && !fs.existsSync(path.join(sd, 'absent.json')) && /"preset": "v1"/.test(cli1.stdout), (cli1.stderr || '').slice(0, 200));
-  const cli2 = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'taskmote.js'), 'preset', '../v1'], { env: { ...process.env, HARNESS_CONFIG: path.join(sd, 'absent.json') }, encoding: 'utf8' });
+  const cli2 = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'taskmote.js'), 'preset', '../v1'], { env: { ...process.env, HARNESS_CONFIG: path.join(sd, 'absent.json') }, encoding: 'utf8' , windowsHide: true });
   check('the CLI verb refuses an invalid name', cli2.status !== 0 && /not valid/.test(cli2.stderr));
   process.env.HARNESS_CONFIG = path.join(tmp, 'inproc.json');
 
@@ -169,7 +169,7 @@ const cfgOf = modules => ({ ...C.DEFAULTS, owner_name: 'Tester', modules });
     const env = { ...process.env, HARNESS_CONFIG: cfgPath, HARNESS_STATE_DIR: path.join(dir, 'state'), HARNESS_LOG_DIR: path.join(dir, 'logs'),
       HARNESS_ENGINE_SCRIPT: path.resolve(ROOT, 'test', 'fake-engine.js'), HARNESS_FAKE_DELAY_MS: '0', HARNESS_FAKE_HOOKS: '1' };
     if (streamText) { const sf = path.join(dir, 'stream.jsonl'); fs.writeFileSync(sf, JSON.stringify({ type: 'result', result: streamText }) + '\n'); env.HARNESS_FAKE_STREAM = sf; }
-    const r = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'harness.js'), 'start', request, '--workdir', path.join(dir, 'w')], { env, encoding: 'utf8', timeout: 120000 });
+    const r = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'harness.js'), 'start', request, '--workdir', path.join(dir, 'w')], { env, encoding: 'utf8', timeout: 120000 , windowsHide: true });
     let recs = [];
     try { recs = fs.readFileSync(path.join(dir, 'state', 'journal.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l)); } catch { /* none */ }
     return { r, recs, dir };

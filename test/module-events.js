@@ -83,7 +83,7 @@ const mods = (cfg, names) => { const r = M.load(cfg); return [r, r.mods.map(m =>
     const badT = M.load({ modules: { [fast]: true }, modules_hook_timeout_ms: 0 });
     check('bad modules_hook_timeout_ms is a config error', badT.errors.some(e => /modules_hook_timeout_ms/.test(e)), badT.errors.join(' | '));
     const cs = cfgFile('slow', { modules: { [slow]: true }, modules_hook_timeout_ms: 100 });
-    const g = spawnSync(process.execPath, [path.join(ROOT, 'guards', 'guard.js')], { input: JSON.stringify({ session_id: 's', tool_name: 'Bash', tool_input: { command: 'echo hi' }, cwd: tmp }), env: env(cs), encoding: 'utf8' });
+    const g = spawnSync(process.execPath, [path.join(ROOT, 'guards', 'guard.js')], { input: JSON.stringify({ session_id: 's', tool_name: 'Bash', tool_input: { command: 'echo hi' }, cwd: tmp }), env: env(cs), encoding: 'utf8' , windowsHide: true });
     check('real guard: slow module blocks (module_timeout), exit 2', g.status === 2 && /BLOCKED \(module_timeout\)/.test(g.stderr), g.stderr.trim().split('\n')[0]);
 
     // ---- dependsOn
@@ -176,7 +176,7 @@ const mods = (cfg, names) => { const r = M.load(cfg); return [r, r.mods.map(m =>
     const ce = cfgFile('ev', { modules: { [ev]: true } });
     fs.mkdirSync(path.join(tmp, 'w'), { recursive: true });
     const run = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'harness.js'), 'start', 'events task', '--workdir', path.join(tmp, 'w')],
-      { env: env(ce, { HARNESS_ENGINE_SCRIPT: path.join(ROOT, 'test', 'fake-engine.js'), HARNESS_FAKE_DELAY_MS: '0', HARNESS_FAKE_HOOKS: '1' }), encoding: 'utf8', timeout: 60000 });
+      { env: env(ce, { HARNESS_ENGINE_SCRIPT: path.join(ROOT, 'test', 'fake-engine.js'), HARNESS_FAKE_DELAY_MS: '0', HARNESS_FAKE_HOOKS: '1' }), encoding: 'utf8', timeout: 60000 , windowsHide: true });
     const saw = J.readAll().records.filter(x => x.type === 'saw' && x.module === ev);
     const st = saw.find(x => x.ev === 'task.start'), en = saw.find(x => x.ev === 'task.end');
     check('real run: task.start fires after the engine_start journal write', run.status === 0 && st && st.after_engine_start === true && st.task_id, `exit ${run.status} ${JSON.stringify(saw)} ${run.stderr.trim().split('\n').slice(-1)[0] || ''}`);
@@ -185,7 +185,7 @@ const mods = (cfg, names) => { const r = M.load(cfg); return [r, r.mods.map(m =>
     check('real run: the generated settings carry a PostToolUse hook, so tool_done is journaled (ok, durationMs, tool_use_id)', tdRec && tdRec.ok === true && tdRec.tool_use_id === 'toolu_fake1' && Number.isFinite(tdRec.durationMs), JSON.stringify(tdRec));
     const tdEv = saw.find(x => x.ev === 'tool.done' && x.task_id === st.task_id);
     check('real run: a module on handler sees tool.done from the engine hook', !!tdEv && tdEv.tool === 'Bash', JSON.stringify(saw));
-    const ga = spawnSync(process.execPath, [path.join(ROOT, 'guards', 'guard.js'), '--after'], { input: JSON.stringify({ session_id: 's', tool_name: 'Bash', tool_input: { command: 'echo hi' }, cwd: tmp }), env: env(ce, { HARNESS_TASK_ID: 'T9' }), encoding: 'utf8' });
+    const ga = spawnSync(process.execPath, [path.join(ROOT, 'guards', 'guard.js'), '--after'], { input: JSON.stringify({ session_id: 's', tool_name: 'Bash', tool_input: { command: 'echo hi' }, cwd: tmp }), env: env(ce, { HARNESS_TASK_ID: 'T9' }), encoding: 'utf8' , windowsHide: true });
     const td = J.readAll().records.find(x => x.type === 'saw' && x.ev === 'tool.done' && x.task_id === 'T9');
     check('real guard --after: tool.done reaches the module, exit 0', ga.status === 0 && td && td.tool === 'Bash' && td.task_id === 'T9', `exit ${ga.status} ${JSON.stringify(td)}`);
 
@@ -214,9 +214,9 @@ const mods = (cfg, names) => { const r = M.load(cfg); return [r, r.mods.map(m =>
     let reg = M.registry({ modules: { [sec]: true } });
     check('unset secret: settings show "missing", the module sees null', reg.errors.length === 0 && reg.settingsFor(sec).token === 'missing' && (await M.commands(reg.mods).zzsecret([])) === null, JSON.stringify(reg.settingsFor(sec)));
     const cset = cfgFile('sec', { modules: { [sec]: true } });
-    const agent = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'harness.js'), 'secret', sec, 'token'], { input: SECRET + '\n', env: env(cset, { HARNESS_TASK_ID: 'T1' }), encoding: 'utf8' });
+    const agent = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'harness.js'), 'secret', sec, 'token'], { input: SECRET + '\n', env: env(cset, { HARNESS_TASK_ID: 'T1' }), encoding: 'utf8' , windowsHide: true });
     check('the secret verb refuses inside an agent task', agent.status !== 0 && !fs.existsSync(M.secretsFile(sec)), agent.stderr.trim());
-    const set = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'harness.js'), 'secret', sec, 'token'], { input: SECRET + '\n', env: env(cset), encoding: 'utf8' });
+    const set = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'harness.js'), 'secret', sec, 'token'], { input: SECRET + '\n', env: env(cset), encoding: 'utf8' , windowsHide: true });
     const sf = M.secretsFile(sec);
     check('harness secret <module> <key> stores it under state/secrets/, not in config', set.status === 0 && fs.existsSync(sf) && JSON.parse(fs.readFileSync(sf, 'utf8')).token === SECRET && !fs.readFileSync(cset, 'utf8').includes(SECRET), (set.stdout + set.stderr).trim());
     if (process.platform === 'win32') {
@@ -230,17 +230,17 @@ const mods = (cfg, names) => { const r = M.load(cfg); return [r, r.mods.map(m =>
     check('set secret: the module sees the value', (await M.commands(reg.mods).zzsecret([])) === SECRET && (await reg.callRoute(reg.findRoute('GET', `/m/${sec}/t`), { actor: { kind: 'owner', id: 'test' } })).json.len === SECRET.length);
     const listings = JSON.stringify([reg.listRoutes(), reg.listPanels(), reg.listJobs(), reg.modules(), reg.settingsFor(sec), reg.listCommands()]);
     check('the value is in no listing: routes, panels, jobs, modules, settings', !listings.includes(SECRET) && reg.settingsFor(sec).token === 'configured' && reg.modules().find(m => m.name === sec).secrets.token === 'configured', listings.slice(0, 160));
-    const status = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'harness.js'), 'status'], { env: env(cset), encoding: 'utf8' });
+    const status = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'harness.js'), 'status'], { env: env(cset), encoding: 'utf8' , windowsHide: true });
     check('the value is not printed by status', !(status.stdout + status.stderr).includes(SECRET));
-    spawnSync(process.execPath, [path.join(ROOT, 'bin', 'harness.js'), 'secret', sec, 'token'], { input: '', env: env(cset), encoding: 'utf8' });
+    spawnSync(process.execPath, [path.join(ROOT, 'bin', 'harness.js'), 'secret', sec, 'token'], { input: '', env: env(cset), encoding: 'utf8' , windowsHide: true });
     check('an empty value removes the secret', M.registry({ modules: { [sec]: true } }).settingsFor(sec).token === 'missing');
 
     // ---- legacy contract 0
     const v0 = mod(N('v0'), `{ name: '${N('v0')}', contract: 0, beforeTool() { return null; }, onTaskStart() {} }`);
-    const gv = spawnSync(process.execPath, [path.join(ROOT, 'guards', 'guard.js')], { input: JSON.stringify({ session_id: 's', tool_name: 'Bash', tool_input: { command: 'echo hi' }, cwd: tmp }), env: env(cfgFile('v0', { modules: { [v0]: true } })), encoding: 'utf8' });
+    const gv = spawnSync(process.execPath, [path.join(ROOT, 'guards', 'guard.js')], { input: JSON.stringify({ session_id: 's', tool_name: 'Bash', tool_input: { command: 'echo hi' }, cwd: tmp }), env: env(cfgFile('v0', { modules: { [v0]: true } })), encoding: 'utf8' , windowsHide: true });
     check('a contract-0 module still loads, with a printed warning', gv.status === 0 && gv.stderr.includes(`module ${v0} uses legacy contract 0`), gv.stderr.trim());
     const nc = mod(N('nc'), `{ name: '${N('nc')}', beforeTool() { return null; } }`);
-    const gn = spawnSync(process.execPath, [path.join(ROOT, 'guards', 'guard.js')], { input: JSON.stringify({ session_id: 's', tool_name: 'Bash', tool_input: { command: 'echo hi' }, cwd: tmp }), env: env(cfgFile('nc', { modules: { [nc]: true } })), encoding: 'utf8' });
+    const gn = spawnSync(process.execPath, [path.join(ROOT, 'guards', 'guard.js')], { input: JSON.stringify({ session_id: 's', tool_name: 'Bash', tool_input: { command: 'echo hi' }, cwd: tmp }), env: env(cfgFile('nc', { modules: { [nc]: true } })), encoding: 'utf8' , windowsHide: true });
     check('a manifest without a contract field is refused', gn.stderr.includes(`module ${nc} has no contract field; add "contract": 2`), gn.stderr.trim());
     const inRepo = fs.readdirSync(M.DIR).filter(n => !n.startsWith('zz-') && fs.existsSync(path.join(M.DIR, n, 'index.js')));
     const legacy = inRepo.filter(n => require(path.join(M.DIR, n, 'index.js')).contract !== 2);

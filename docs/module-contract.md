@@ -74,6 +74,20 @@ Route access kinds: `owner` (default), `worker`, `public-get` (GET only),
 Actor kinds in `ctx.actor`: `owner`, `worker`, `anonymous`, each with an `id` (a
 paired device is `device:<id>`).
 
+Raw route result: besides `{status, json}` a route may return a small image,
+`{status: 200, body: Buffer, type, etag?}`, but only if it is registered with `raw: true` (otherwise a 500). `type` must be one of `image/png`,
+`image/jpeg`, `image/webp`, `image/gif` (no SVG; the type is never guessed from the
+bytes), `body` at most 2 MB, `etag` 1-64 of `A-Za-z0-9._-`. It is sent with
+`X-Content-Type-Options: nosniff` and `Content-Length`; with an `etag` it also gets
+`ETag` and `Cache-Control: private, max-age=31536000, immutable`, and a matching
+`If-None-Match` answers 304 (put a content hash in it, so a changed file gets a new
+URL or tag). Anything else (another type, too big, not a Buffer, both `json` and
+`body`, a status other than 200) is a 500 `internal error` with a journaled
+`route_error`. Access is the route's `access`, as for any route; a browser UI cannot
+use `<img src>` for an `owner` route (it needs the token header), so it fetches
+the file and shows a blob URL. A module bot (`api.dynamicBots()`) may carry
+`avatar`: a `/m/<module>/...` path, passed on by `/api/bots`; any other value (including a path with `..` or `//`) is dropped.
+
 Events: `task.start`, `task.end`, `tool.done` (core), plus `<module>.*` and declared
 `emits` prefixes. `module.*` and `core.*` are reserved.
 

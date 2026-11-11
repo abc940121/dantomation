@@ -1,13 +1,37 @@
 'use strict';
-// Chat UI page. All server text goes into the DOM through textContent / text
-// nodes (helper h below); no HTML string is ever built. Pure logic is in state.js.
+// Chat UI page: a messaging-app view on the vendored <vue-advanced-chat> web component.
+// Server text goes into the DOM through textContent / text nodes (helper h below) or into the
+// component as plain data; no HTML string is ever built. Pure logic: state.js, rooms.js, clean.js.
 (function () {
   const D = window.DantoState;
+  const C = window.DantoClean;
+  // The vendored component probes a CDN for emoji data even with emojis off. This page makes no external
+  // requests, so only same-origin (and data:) fetches go through.
+  if (typeof window.fetch === 'function') {
+    const realFetch = window.fetch.bind(window);
+    window.fetch = (u, o) => {
+      try { const x = new URL(typeof u === 'string' ? u : (u && u.url) || String(u), location.href); if (x.origin !== location.origin && x.protocol !== 'data:' && x.protocol !== 'blob:') return Promise.reject(Object.assign(new TypeError('external request blocked'), { blockedUrl: x.href })); } catch (e) { /* relative or odd input: let it through */ }
+      return realFetch(u, o);
+    };
+  }
+  // The component fires its emoji-data probe without a catch, so the blocked request above surfaced as an empty
+  // "Uncaught (in promise)" (three of them). Say so once, in one line; any other unhandled rejection is logged with its message.
+  let blockedSeen = false;
+  window.addEventListener('unhandledrejection', ev => {
+    const r = ev && ev.reason;
+    if (r && r.blockedUrl) {
+      if (typeof ev.preventDefault === 'function') ev.preventDefault();
+      if (!blockedSeen) { blockedSeen = true; console.info('chat-ui: the chat component asked for an outside address (' + r.blockedUrl + '); it was blocked on purpose.'); }
+      return;
+    }
+    console.error('chat-ui: unhandled error: ' + ((r && r.message) || String(r)));
+  });
   const S = D.create();
   const RM = window.DantoRooms;
   const rooms = { list: [], msgs: [], busy: false }; // stays empty (and invisible) while the rooms module is off
   const TOKEN_KEY = 'taskmote.token';
-  const ui = { view: null, all: false, targets: new Set(), openChips: new Set(), confirmUndo: null, cardMsg: {}, busyCards: new Set(), conn: 'connecting', needAuth: false, room: RM.roomFromSearch(location.search) };
+  const ui = { cur: null, confirmUndo: null, cardMsg: {}, busyCards: new Set(), conn: 'connecting', needAuth: false, room: RM.roomFromSearch(location.search) };
+  if (ui.room) ui.cur = 'room:' + ui.room;
   const $ = id => document.getElementById(id);
 
   // ---- language: en or zh-TW, chosen on first open and kept in localStorage (if storage fails, the picker shows again next time).
@@ -33,7 +57,8 @@
   }
   function showLangGate() { $('lang-gate').hidden = false; }
   for (const b of document.querySelectorAll('#lang-gate [data-lang]')) b.addEventListener('click', () => chooseLang(b.getAttribute('data-lang')));
-  $('lang-btn').addEventListener('click', showLangGate);
+  // once a language is set the button flips en <-> zh-TW in place; the full-screen picker is for the first visit only
+  $('lang-btn').addEventListener('click', () => (lang ? chooseLang(lang === 'en' ? 'zh-TW' : 'en') : showLangGate()));
   applyStatic();
 
   // ---- token: a #t= fragment is stripped from the URL and kept in localStorage.
@@ -87,6 +112,8 @@
     try { body = await r.json(); } catch (e) { /* no body */ }
     return { ok: r.ok, status: r.status, body };
   }
+  // api() throws Error('unauthorized') after opening the pairing screen: callers show no network error for it.
+  const isAuth = err => !!err && err.message === 'unauthorized';
   const post = (path, data) => api(path, { method: 'POST', body: JSON.stringify(data || {}) });
 
   function showAuth() { ui.needAuth = true; $('auth').hidden = false; }
@@ -120,18 +147,175 @@
     }
     return e;
   }
+
   const botName = id => (S.bots[id] && S.bots[id].name) || id || '?';
 
-  // ---- rendering (whole view rebuilt; UI-only state lives in `ui`)
-  let queued = false;
-  function render() { if (!queued) { queued = true; requestAnimationFrame(() => { queued = false; draw(); }); } }
+  // ---- the chat component
+  const chat = $('chat');
+  const VAC = window['vue-advanced-chat'];
+  if (VAC && typeof VAC.register === 'function') { try { VAC.register(); } catch (e) { /* already registered */ } }
+  const ME = 'me';
+  const seen = {}; // first-seen time of an entry that carries no time of its own
+  const stamp = (key, given) => {
+    const g = given == null ? NaN : (typeof given === 'number' ? given : Date.parse(given));
+    if (Number.isFinite(g)) return g;
+    if (!seen[key]) seen[key] = Date.now();
+    return seen[key];
+  };
+  const fmtTime = ms => { try { return new Date(ms).toLocaleTimeString(lang || 'en', { hour: '2-digit', minute: '2-digit' }); } catch (e) { return ''; } };
+  const fmtDate = ms => { try { return new Date(ms).toLocaleDateString(lang || 'en', { month: 'short', day: 'numeric' }); } catch (e) { return ''; } };
+  const oneLine = (s, n) => { const x = String(s || '').replace(/\s+/g, ' ').trim(); return x.length > n ? x.slice(0, n - 1) + '…' : x; };
+  const setProp = (el, k, v) => { try { el[k] = v; } catch (e) { /* ignore */ } };
 
-  function draw() {
-    drawTop(); drawQuestions(); drawRoster(); if (ui.room) drawRoom(); else drawThread(); drawTargets();
-    $('targets').hidden = !!ui.room;
-    $('text').placeholder = ui.room ? tr('message.room') : tr('message');
+  // Conversation list: main bot first, then the other bots, then groups, then "All bots" (the broadcast).
+  function convs() {
+    const ids = S.order.slice();
+    const main = S.bots.main ? 'main' : ids[0];
+    const botIds = main ? [main].concat(ids.filter(i => i !== main)) : ['main'];
+    const out = botIds.map(id => ({ id: 'bot:' + id, kind: 'bot', bot: id }));
+    for (const r of rooms.list) out.push({ id: 'room:' + r.id, kind: 'room', room: r });
+    out.push({ id: 'all', kind: 'all' });
+    return out;
+  }
+  function curConv() {
+    const list = convs();
+    return list.find(c => c.id === ui.cur) || list[0];
   }
 
+  // Messages of one conversation, already cleaned; internal-only text is dropped by cleanText and nothing else is hidden.
+  function messagesOf(c) {
+    const out = [];
+    const push = (key, sender, name, text, ms, system) => {
+      const content = C.cleanText(text);
+      if (!content) return;
+      const m = { _id: key, content, senderId: sender, username: name, avatar: C.avatarUri(sender, name), date: fmtDate(ms), timestamp: fmtTime(ms) };
+      if (system) m.system = true;
+      out.push(m);
+    };
+    if (c.kind === 'room') {
+      // rooms.msgs is the transcript of the OPEN room only; another room must not borrow it for its list preview
+      for (const m of (c.room.id === ui.room ? rooms.msgs : [])) {
+        const human = m.kind === 'human';
+        const name = human ? tr('conv.you') : RM.label(m);
+        push('r' + (m.id == null ? out.length : m.id), human ? ME : 'sp:' + name, name, m.text == null ? '' : String(m.text), stamp('r' + m.id, m.ts || m.at || m.time));
+      }
+      return out;
+    }
+    const all = c.kind === 'all';
+    let lastUser = null;
+    for (const t of D.thread(S, all ? null : c.bot)) {
+      const who = botName(t.bot);
+      t.entries.forEach((e, i) => {
+        const key = t.id + ':' + i;
+        const ms = stamp(key, e.ts || e.at || (i === 0 ? t.startedAt || t.ts || t.createdAt : null));
+        if (e.kind === 'user') {
+          if (all && lastUser === e.text) return;
+          lastUser = e.text;
+          push(key, ME, tr('conv.you'), e.text, ms);
+        } else if (e.kind === 'msg') push(key, t.bot, who, e.text, ms);
+        else if (e.kind === 'note') push(key, t.bot, who, e.text, ms, true);
+        else if (e.kind === 'tool') {
+          const st = tr(e.status === 'running' ? 'chip.running' : e.status === 'ok' ? 'chip.ok' : 'chip.failed');
+          push(key, t.bot, who, e.tool + ': ' + oneLine(e.summary, 140) + ' - ' + st, ms, true);
+        } else if (e.kind === 'card') {
+          const cd = S.cards[e.cardId];
+          if (cd && cd.status !== 'pending') {
+            const res = { yes: tr('card.approved'), no: tr('card.denied'), timeout: tr('card.timeout') }[cd.status] || cd.status;
+            push(key, t.bot, who, (cd.tool || tr('card.approval')) + ': ' + oneLine(cd.summary, 140) + ' - ' + res, ms, true);
+          }
+        }
+      });
+    }
+    return out;
+  }
+
+  function roomObjects() {
+    return convs().map(c => {
+      const users = [{ _id: ME, username: tr('conv.you'), avatar: C.avatarUri(ME, tr('conv.you')) }];
+      let name, avId, typing = [], preview = '';
+      if (c.kind === 'bot') {
+        const b = S.bots[c.bot] || { id: c.bot, name: c.bot, status: 'idle' };
+        name = b.name || c.bot; avId = c.bot;
+        const online = b.status !== 'offline';
+        users.push({ _id: c.bot, username: name, avatar: C.avatarUri(c.bot, name), status: { state: online ? 'online' : 'offline', lastChanged: online ? '' : word('status', 'offline') } });
+        if (b.status === 'busy') typing = [c.bot];
+      } else if (c.kind === 'room') {
+        name = c.room.name + ' (' + c.room.members + ')'; avId = 'room:' + c.room.id;
+        preview = tr(c.room.members === 1 ? 'conv.group.one' : 'conv.group.many', { n: c.room.members });
+        users.push({ _id: avId, username: c.room.name, avatar: C.avatarUri(avId, c.room.name), status: { state: 'online', lastChanged: '' } });
+        // the component shows sender names only when a room has more than two users, so list every speaker
+        if (ui.room === c.room.id) for (const m of rooms.msgs) if (m.kind !== 'human') { const nm = RM.label(m), id = 'sp:' + nm; if (!users.some(u => u._id === id)) users.push({ _id: id, username: nm, avatar: C.avatarUri(id, nm), status: { state: 'online', lastChanged: '' } }); }
+      } else {
+        name = tr('conv.all'); avId = 'all';
+        preview = tr('conv.broadcast');
+        users.push({ _id: 'all', username: name, avatar: C.avatarUri('all', name), status: { state: 'online', lastChanged: '' } });
+        if (S.order.some(i => S.bots[i].status === 'busy')) typing = ['all'];
+        for (const i of S.order) users.push({ _id: i, username: botName(i), avatar: C.avatarUri(i, botName(i)), status: { state: 'online', lastChanged: '' } }); // names show on each bubble
+      }
+      const ms = messagesOf(c);
+      const lastM = ms.length ? ms[ms.length - 1] : null;
+      if (lastM) preview = (lastM.senderId === ME ? tr('conv.you') + ': ' : (c.kind === 'bot' ? '' : lastM.username + ': ')) + oneLine(lastM.content, 60);
+      return { roomId: c.id, roomName: name, avatar: C.avatarUri(avId, name), unreadCount: 0, index: 0,
+        lastMessage: { content: preview || tr('conv.noreply'), timestamp: lastM ? lastM.timestamp : '', saved: true, distributed: true, seen: true, new: false }, users, typingUsers: typing };
+    });
+  }
+
+  // ---- push state into the component only when it changed (a rewritten array would reset the scroll position)
+  let pendingOpen = ui.cur; // a ?room= conversation opens once the group list has loaded
+  const last = { rooms: '', msgs: '', tm: '', styles: '', theme: '', cur: '' };
+  const dark = () => { try { return !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches); } catch (e) { return false; } };
+  function chatStyles(isDark) {
+    const accent = isDark ? '#6ea8fe' : '#2563eb';
+    return { general: { color: isDark ? '#e6e8eb' : '#1a1d21', colorSpinner: accent, borderStyle: '1px solid ' + (isDark ? '#2b3036' : '#dfe3e8') },
+      container: { border: 'none', borderRadius: '0', boxShadow: 'none' },
+      message: { backgroundMe: isDark ? '#1f3a66' : '#dbe8ff', background: isDark ? '#23282e' : '#f0f2f5', colorUsername: accent } };
+  }
+  function drawChat() {
+    if (!chat) return;
+    const th = dark() ? 'dark' : 'light';
+    if (last.theme !== th) { last.theme = th; chat.setAttribute('theme', th); setProp(chat, 'styles', JSON.stringify(chatStyles(th === 'dark'))); }
+    const tm = JSON.stringify({ ROOMS_EMPTY: tr('vac.ROOMS_EMPTY'), ROOM_EMPTY: tr('vac.ROOM_EMPTY'), NEW_MESSAGES: tr('vac.NEW_MESSAGES'), MESSAGE_DELETED: tr('vac.MESSAGE_DELETED'),
+      MESSAGES_EMPTY: tr('vac.MESSAGES_EMPTY'), CONVERSATION_STARTED: tr('vac.CONVERSATION_STARTED'), TYPE_MESSAGE: tr('vac.TYPE_MESSAGE'), SEARCH: tr('vac.SEARCH'),
+      IS_ONLINE: tr('vac.IS_ONLINE'), LAST_SEEN: tr('vac.LAST_SEEN'), IS_TYPING: tr('vac.IS_TYPING'), CANCEL_SELECT_MESSAGE: tr('vac.CANCEL_SELECT_MESSAGE') });
+    if (last.tm !== tm) { last.tm = tm; setProp(chat, 'textMessages', tm); }
+    const c = curConv();
+    const ro = JSON.stringify(roomObjects());
+    if (last.rooms !== ro) { last.rooms = ro; setProp(chat, 'rooms', ro); chat.setAttribute('rooms-loaded', 'true'); }
+    const ms = JSON.stringify(messagesOf(c));
+    const sig = c.id + '\n' + ms;
+    if (last.msgs !== sig) { last.msgs = sig; setProp(chat, 'messages', ms); chat.setAttribute('messages-loaded', 'true'); }
+    if (pendingOpen && c.id === pendingOpen) { pendingOpen = null; last.cur = c.id; chat.setAttribute('room-id', c.id); }
+    else if (!last.cur) { last.cur = c.id; if (window.innerWidth > 600) chat.setAttribute('room-id', c.id); }
+  }
+  // Open a conversation from code (the "waiting" button); on a phone this also leaves the list pane.
+  function openConv(id) { setCurrent(id); last.cur = id; chat.setAttribute('room-id', id); render(); }
+  function setCurrent(id) {
+    ui.cur = id; last.msgs = '';
+    if (id.indexOf('room:') === 0) selectRoom(id.slice(5)); else { ui.room = null; roomGen++; rooms.msgs = []; urlRoom(); }
+  }
+  function urlRoom() {
+    try { const q = RM.withRoom(location.search, ui.room); if (q !== location.search) history.replaceState(null, '', location.pathname + q + location.hash); } catch (e) { /* ignore */ }
+  }
+  if (chat) {
+    chat.addEventListener('fetch-messages', e => {
+      const d = e.detail && e.detail[0], id = d && d.room && d.room.roomId;
+      if (id && id !== ui.cur) { setCurrent(id); render(); } else if (id) { last.msgs = ''; render(); }
+    });
+    chat.addEventListener('send-message', e => { const d = e.detail && e.detail[0]; if (d) sendFrom(d.roomId || ui.cur, d.content); });
+  }
+  const mq = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+  if (mq && mq.addEventListener) mq.addEventListener('change', () => render());
+
+  // ---- header and the strip above the chat (approvals, questions, undo, send errors)
+  let queued = false;
+  function render() { if (!queued) { queued = true; requestAnimationFrame(() => { queued = false; draw(); }); } }
+  function draw() {
+    drawTop(); drawQuestions(); drawCards(); drawUndo();
+    $('strip').hidden = !($('questions').childNodes.length || $('cards').childNodes.length || $('undo').childNodes.length);
+    $('send-msg').hidden = !$('send-msg').textContent;
+    drawChat();
+    tick();
+  }
   function drawTop() {
     const un = D.unverifiedTotal(S);
     const cb = $('claims-badge');
@@ -140,49 +324,13 @@
     const n = D.pendingCards(S).length, w = $('waiting');
     w.hidden = !n; w.textContent = tr('waiting', { n });
     const c = $('conn'); c.dataset.state = ui.conn; c.textContent = word('conn', ui.conn);
-    drawRoomPick();
   }
-
-  // Room picker: a select shown only while the rooms module answers. Options are rebuilt only when the list
-  // changes, so an open dropdown is not closed by a re-render. The ?room= query follows the selection.
-  function drawRoomPick() {
-    const sel = $('room-pick');
-    sel.hidden = !rooms.list.length;
-    const sig = lang + '\n' + rooms.list.map(r => r.id + '\n' + r.name).join('\n');
-    if (sel.dataset.sig !== sig) {
-      sel.dataset.sig = sig;
-      sel.replaceChildren(h('option', { value: '' }, tr('room.none')), ...rooms.list.map(r => h('option', { value: r.id }, r.name)));
-    }
-    sel.value = ui.room || '';
-    try {
-      const q = RM.withRoom(location.search, ui.room);
-      if (q !== location.search) history.replaceState(null, '', location.pathname + q + location.hash);
-    } catch (e) { /* ignore */ }
-  }
-  $('room-pick').addEventListener('change', e => selectRoom(e.target.value || null));
-
-  function drawRoster() {
-    const pend = {};
-    for (const c of D.pendingCards(S)) pend[c.bot] = (pend[c.bot] || 0) + 1;
-    const items = [h('button', { type: 'button', 'aria-current': String(ui.view === null), onclick: () => selectView(null) }, h('span', null, tr('all.activity')))];
-    for (const id of S.order) {
-      const b = S.bots[id];
-      items.push(h('button', { type: 'button', 'aria-current': String(ui.view === id), onclick: () => selectView(id) },
-        h('span', { class: 'dot ' + b.status, title: word('status', b.status) }),
-        h('span', null, b.name),
-        h('span', { class: 'meta' }, word('status', b.status) + (b.runsOn === 'worker' ? tr('meta.worker') : '') + (pend[id] ? tr('meta.waiting', { n: pend[id] }) : ''))));
-    }
-    for (const r of rooms.list) {
-      items.push(h('button', { type: 'button', class: 'room-btn', 'aria-current': String(ui.room === r.id), onclick: () => selectRoom(r.id) },
-        h('span', null, r.name), h('span', { class: 'meta' }, tr(r.members === 1 ? 'room.meta.one' : 'room.meta.many', { n: r.members }))));
-    }
-    $('roster').replaceChildren(...items);
-  }
+  $('waiting').addEventListener('click', () => { const p = D.pendingCards(S)[0]; if (p && S.bots[p.bot]) openConv('bot:' + p.bot); });
 
   let roomGen = 0; // bumped on every room pick and on leaving room mode; stale poll responses are dropped
   function selectRoom(id) {
     roomGen++;
-    ui.room = id; rooms.msgs = []; stickBottom = true; render();
+    ui.room = id; rooms.msgs = []; urlRoom(); render();
     if (id) pollRoom();
   }
   async function pollRoom() {
@@ -200,82 +348,16 @@
     let ok = false;
     const prev = rooms.list;
     try { const r = await api(RM.listPath()); rooms.list = RM.parseRooms(r); ok = RM.listOk(r); } catch (err) { rooms.list = []; }
-    if (!ok && keepOnError) rooms.list = prev; // a failed refresh keeps the picker as it was
+    if (!ok && keepOnError) rooms.list = prev; // a failed refresh keeps the list as it was
     // Only a successful list can say the requested room is gone; a 401 or network error keeps ?room= until the next try.
-    if (ok && ui.room && !rooms.list.some(r => r.id === ui.room)) { ui.room = null; roomGen++; }
+    if (ok && ui.room && !rooms.list.some(r => r.id === ui.room)) { ui.room = null; ui.cur = null; roomGen++; urlRoom(); }
   }
 
-  function selectView(id) {
-    ui.view = id; ui.room = null; roomGen++;
-    if (id) { ui.all = false; ui.targets = new Set([id]); }
-    render(); stickBottom = true;
+  // Approval cards (every pending one, with the bot's name), question cards and the undo row sit above the chat.
+  function drawCards() {
+    $('cards').replaceChildren(...D.pendingCards(S).map(c => cardView(c)));
   }
-
-  function drawTargets() {
-    const items = [h('button', { type: 'button', 'aria-pressed': String(ui.all), onclick: () => { ui.all = !ui.all; if (ui.all) ui.targets.clear(); render(); } }, tr('all.bots'))];
-    for (const id of S.order) {
-      items.push(h('button', { type: 'button', 'aria-pressed': String(!ui.all && ui.targets.has(id)),
-        onclick: () => { ui.all = false; if (ui.targets.has(id)) ui.targets.delete(id); else ui.targets.add(id); render(); } }, botName(id)));
-    }
-    $('targets').replaceChildren(...items);
-  }
-
-  let stickBottom = true;
-  function drawRoom() {
-    const box = $('thread');
-    stickBottom = stickBottom || box.scrollHeight - box.scrollTop - box.clientHeight < 80;
-    if (!rooms.msgs.length) { box.replaceChildren(h('p', { class: 'empty' }, tr('room.empty'))); return; }
-    box.replaceChildren(...rooms.msgs.map(m => h('div', { class: 'room-line' + (m.kind === 'human' ? ' mine' : '') },
-      h('span', { class: 'who' }, RM.label(m)), h('div', { class: 'bubble' + (m.kind === 'human' ? ' user' : '') }, String(m.text == null ? '' : m.text)))));
-    if (stickBottom) box.scrollTop = box.scrollHeight;
-    stickBottom = false;
-  }
-
-  function drawThread() {
-    const box = $('thread');
-    stickBottom = stickBottom || box.scrollHeight - box.scrollTop - box.clientHeight < 80;
-    const tasks = D.thread(S, ui.view);
-    if (!tasks.length) { box.replaceChildren(h('p', { class: 'empty' }, tr('thread.empty'))); return; }
-    box.replaceChildren(...tasks.map(taskBlock));
-    if (stickBottom) box.scrollTop = box.scrollHeight;
-    stickBottom = false;
-    tick();
-  }
-
-  function taskBlock(t) {
-    const head = h('div', { class: 'task-head' },
-      ui.view ? null : h('span', { class: 'who' }, botName(t.bot)),
-      h('span', null, word('state', t.state)),
-      t.claims ? h('span', { class: 'badge' + (t.claims.unverified ? ' bad' : '') }, tr('claims.verified', { a: t.claims.checked - t.claims.unverified, b: t.claims.checked })) : null);
-    return h('section', { class: 'task' }, head, t.entries.map(e => entry(t, e)), undoRow(t));
-  }
-
-  function entry(t, e) {
-    if (e.kind === 'user') return h('div', { class: 'bubble user' }, e.text);
-    if (e.kind === 'msg') return h('div', { class: 'bubble' + (e.live ? ' live' : '') }, e.text);
-    if (e.kind === 'note') return h('p', { class: 'note' }, e.text);
-    if (e.kind === 'tool') return toolChip(e);
-    if (e.kind === 'card') return cardView(S.cards[e.cardId]);
-    return null;
-  }
-
-  function toolChip(e) {
-    const open = ui.openChips.has(e.callId);
-    const label = tr(e.status === 'running' ? 'chip.running' : e.status === 'ok' ? 'chip.ok' : 'chip.failed');
-    const btn = h('button', { type: 'button', class: 'chip', 'data-status': e.status, 'aria-expanded': String(open),
-      onclick: () => { if (open) ui.openChips.delete(e.callId); else ui.openChips.add(e.callId); render(); } },
-      h('strong', null, e.tool), h('span', { class: 'sum' }, e.summary), h('span', { class: 'state' }, label));
-    if (!open) return btn;
-    return h('div', null, btn, h('div', { class: 'chip-detail' }, e.summary + (e.result ? '\n' + e.result : '')));
-  }
-
   function cardView(c) {
-    if (!c) return null;
-    if (c.status !== 'pending') {
-      const res = { yes: tr('card.approved'), no: tr('card.denied'), timeout: tr('card.timeout') }[c.status] || c.status;
-      return h('div', { class: 'card done' }, h('h3', null, c.tool || tr('card.approval')), c.summary ? h('p', { class: 'sum' }, c.summary) : null,
-        h('span', { class: 'result ' + c.status }, res));
-    }
     const busy = ui.busyCards.has(c.id);
     const answer = a => async () => {
       ui.busyCards.add(c.id); ui.cardMsg[c.id] = ''; render();
@@ -284,11 +366,11 @@
         if (r.status === 409) ui.cardMsg[c.id] = tr('card.err.understood');
         else if (!r.ok) ui.cardMsg[c.id] = tr('card.err.send', { status: r.status });
         else if (c.status === 'pending') { S.cards[c.id].status = a; }
-      } catch (err) { ui.cardMsg[c.id] = tr('card.err.net'); }
+      } catch (err) { ui.cardMsg[c.id] = isAuth(err) ? '' : tr('card.err.net'); }
       ui.busyCards.delete(c.id); render();
     };
     return h('div', { class: 'card' },
-      h('h3', null, tr('card.approve', { tool: c.tool || tr('card.action') })),
+      h('h3', null, (c.bot && S.bots[c.bot] ? botName(c.bot) + ': ' : '') + tr('card.approve', { tool: c.tool || tr('card.action') })),
       h('p', { class: 'sum' }, c.summary),
       h('span', null, tr('card.timeleft')), h('span', { class: 'cd', 'data-exp': c.expiresAt == null ? '' : String(c.expiresAt) }, ''),
       h('div', { class: 'btns' },
@@ -297,16 +379,21 @@
       ui.cardMsg[c.id] ? h('p', { class: 'hint', role: 'alert' }, ui.cardMsg[c.id]) : null);
   }
 
+  // Undo applies to the newest task of the open conversation that can still be undone.
+  function drawUndo() {
+    const c = curConv();
+    const tasks = D.thread(S, c.kind === 'bot' ? c.bot : null).filter(t => D.canUndo(t, S));
+    const t = tasks[tasks.length - 1];
+    $('undo').replaceChildren(...(t ? [undoRow(t)] : []));
+  }
   function undoRow(t) {
-    if (!D.canUndo(t, S)) return null;
     if (ui.confirmUndo !== t.id) return h('div', { class: 'undo-row' }, h('button', { type: 'button', onclick: () => { ui.confirmUndo = t.id; render(); } }, tr('undo')));
-    const last = t.undo[t.undo.length - 1];
+    const lastU = t.undo[t.undo.length - 1];
     return h('div', { class: 'undo-row' },
-      h('span', { class: 'ask' }, tr('undo.ask', { label: last && last.label ? ' (' + last.label + ')' : '' })),
+      h('span', { class: 'ask' }, tr('undo.ask', { label: lastU && lastU.label ? ' (' + lastU.label + ')' : '' })),
       h('button', { type: 'button', class: 'go', onclick: () => doUndo(t) }, tr('undo.yes')),
       h('button', { type: 'button', onclick: () => { ui.confirmUndo = null; render(); } }, tr('undo.cancel')));
   }
-
   async function doUndo(t) {
     ui.confirmUndo = null;
     let text;
@@ -319,9 +406,9 @@
         t.undo.pop();
         text = tr('undo.done', { to: r.body.restoredTo == null ? tr('undo.prev') : String(r.body.restoredTo) }) + (r.body.redoHint ? tr('undo.redo', { hint: r.body.redoHint }) : '');
       } else text = tr('undo.fail') + (r.body && r.body.error ? ': ' + r.body.error : ' (' + r.status + ')');
-    } catch (err) { text = tr('undo.fail.net'); }
-    t.entries.push({ kind: 'note', text });
-    stickBottom = true; render();
+    } catch (err) { text = isAuth(err) ? '' : tr('undo.fail.net'); }
+    if (text) t.entries.push({ kind: 'note', text });
+    render();
   }
 
   // ---- countdown: one timer updates the text of every pending card
@@ -334,35 +421,29 @@
   }
   setInterval(tick, 1000);
 
-  // ---- composer
-  $('composer').addEventListener('submit', async e => {
-    e.preventDefault();
+  // ---- sending: a bot conversation talks to that bot only, a group says it in that room, "All bots" broadcasts.
+  async function sendFrom(convId, text) {
     const msg = $('send-msg');
-    if (ui.room) {
-      const rb = RM.sayBody($('text').value);
-      if (!rb) { msg.textContent = tr('send.type'); return; }
-      $('send').disabled = true; msg.textContent = '';
-      const sentRoom = ui.room, sentGen = roomGen, sentText = $('text').value;
-      try {
-        const r = await post(RM.sayPath(ui.room), rb);
-        if (r.ok) { if (ui.room === sentRoom && roomGen === sentGen && $('text').value === sentText) $('text').value = ''; stickBottom = true; pollRoom(); } else msg.textContent = tr('send.fail') + (r.body && r.body.error ? ': ' + r.body.error : ' (' + r.status + ')');
-      } catch (err) { msg.textContent = tr('send.fail.net'); }
-      $('send').disabled = false;
-      return;
-    }
-    const body = D.chatBody(ui.all, ui.targets, $('text').value);
-    if (!body) { msg.textContent = $('text').value.trim() ? tr('send.pick') : tr('send.type'); return; }
-    $('send').disabled = true; msg.textContent = '';
+    const c = convs().find(x => x.id === convId);
+    if (!c) return;
+    msg.textContent = ''; msg.hidden = true;
+    // a failed send puts the text back in the box (unless the owner already typed something new)
+    const restore = () => { try { const ta = $('chat').shadowRoot.querySelector('textarea'); if (ta && !ta.value) { ta.value = text; ta.dispatchEvent(new Event('input', { bubbles: true })); } } catch (e) { /* no box yet */ } };
+    const fail = (r, err) => { restore(); if (err && err.auth) return; msg.textContent = err ? tr('send.fail.net') : tr('send.fail') + (r.body && r.body.error ? ': ' + r.body.error : ' (' + r.status + ')'); msg.hidden = false; };
     try {
+      if (c.kind === 'room') {
+        const rb = RM.sayBody(text);
+        if (!rb) return;
+        const r = await post(RM.sayPath(c.room.id), rb);
+        if (r.ok) pollRoom(); else fail(r);
+        return;
+      }
+      const body = c.kind === 'all' ? D.chatBody(true, new Set(), text) : D.chatBody(false, new Set([c.bot]), text);
+      if (!body) return;
       const r = await post('/api/chat', body);
-      if (r.ok) { $('text').value = ''; stickBottom = true; } else msg.textContent = tr('send.fail') + (r.body && r.body.error ? ': ' + r.body.error : ' (' + r.status + ')');
-    } catch (err) { msg.textContent = tr('send.fail.net'); }
-    $('send').disabled = false;
-  });
-  $('text').addEventListener('keydown', e => {
-    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); $('composer').requestSubmit(); }
-  });
-  $('waiting').addEventListener('click', () => selectView(null));
+      if (!r.ok) fail(r);
+    } catch (err) { fail(null, isAuth(err) ? { auth: true } : true); }
+  }
 
   // ---- SSE over fetch (EventSource cannot send the Authorization header)
   const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -415,7 +496,7 @@
           const r = await post('/m/question-cards/questions/' + encodeURIComponent(id) + '/answer', { choice: i + 1 });
           if (!r.ok) qs.msg[id] = tr('card.err.send', { status: r.status });
           else qs.list = qs.list.filter(x => x.question_id !== id);
-        } catch (e) { qs.msg[id] = tr('card.err.net'); }
+        } catch (e) { qs.msg[id] = isAuth(e) ? '' : tr('card.err.net'); }
         qs.busy.delete(id); render(); loadQuestions();
       };
       const ct = I.cardText(q, lang || 'en'); // the chosen language when the question carries it, else the default text
@@ -426,29 +507,68 @@
   }
   setInterval(loadQuestions, 5000);
 
-  // Start state: with nothing chosen, "main" (else the first bot) is preselected, once. Deselecting all later stays deselected.
-  let defaulted = false;
-  function defaultTarget() {
-    if (defaulted || !S.order.length) return;
-    defaulted = true;
-    if (!ui.all && !ui.targets.size && !ui.view) ui.targets.add(S.bots.main ? 'main' : S.order[0]);
+  // ---- "New group": a real button, not a model request. Roles come from /api/bots, the group is made by POST /m/roles/groups,
+  // then the room list is re-read and the new room is opened. A failure stays inside the dialog and keeps what was typed.
+  const ROLE_ID = /^r-[0-9a-f]{8}$/;
+  const grp = { busy: false };
+  function groupErr(msg) { const e = $('group-err'); e.textContent = msg || ''; e.hidden = !msg; }
+  function openGroupDlg() {
+    $('group-name').value = ''; groupErr('');
+    const roles = S.order.filter(id => ROLE_ID.test(id));
+    const list = $('group-list');
+    if (!roles.length) list.replaceChildren(h('p', { class: 'hint' }, tr('group.none')));
+    else list.replaceChildren(...roles.map(id => h('label', { class: 'pick' }, h('input', { type: 'checkbox', value: id }), h('span', null, S.bots[id].name))));
+    $('group-dlg').hidden = false; $('group-name').focus();
   }
+  function closeGroupDlg() { if (grp.busy) return; $('group-dlg').hidden = true; $('new-group').focus(); }
+  async function submitGroup(e) {
+    if (e) e.preventDefault();
+    if (grp.busy) return;
+    const name = $('group-name').value.trim();
+    const members = [...document.querySelectorAll('#group-list input:checked')].map(x => x.value);
+    if (!name || [...name].length > 40) return groupErr(tr('group.err.name'));
+    if (!members.length || members.length > 16) return groupErr(tr('group.err.members'));
+    grp.busy = true; groupErr(''); $('group-create').disabled = true; $('group-create').textContent = tr('group.creating');
+    let msg = '', made = null;
+    try {
+      const r = await post('/m/roles/groups', { name, members });
+      if (r.ok && r.body && typeof r.body.id === 'string') made = r.body;
+      else if (r.status === 403) msg = tr('group.err.forbidden');
+      else msg = (r.body && typeof r.body.error === 'string' && r.body.error) || tr('group.err.fail');
+    } catch (err) { msg = isAuth(err) ? '' : tr('group.err.fail'); }
+    grp.busy = false; $('group-create').disabled = false; $('group-create').textContent = tr('group.create');
+    if (!made) return groupErr(msg); // an empty msg (pairing screen open) shows nothing and keeps the input
+    $('group-dlg').hidden = true;
+    await loadRooms(true);
+    ui.cur = 'room:' + made.id; selectRoom(made.id);
+  }
+  $('new-group').addEventListener('click', openGroupDlg);
+  $('group-cancel').addEventListener('click', closeGroupDlg);
+  $('group-form').addEventListener('submit', submitGroup);
+  $('group-dlg').addEventListener('keydown', e => { if (e.key === 'Escape') closeGroupDlg(); });
 
   async function boot() {
     try {
       const [b, t, c] = await Promise.all([api('/api/bots'), api('/api/tasks?limit=50'), api('/api/cards?state=pending')]);
-      if (b.ok) { D.applyBots(S, b.body); defaultTarget(); }
+      if (b.ok) D.applyBots(S, b.body);
       if (t.ok) D.applyTasks(S, t.body);
       if (c.ok) D.applyCards(S, c.body);
     } catch (err) { /* unauthorized shows the token form; others retry via the stream */ }
     await loadRooms(); await loadQuestions();
-    render(); stream();
+    render();
+    stream().catch(err => console.error('chat-ui: the live stream stopped: ' + ((err && err.message) || err)));
   }
   // Refresh the roster: after each finished task, and every 15 s while the page is visible, so offline/busy
   // changes and bots that were added while the server runs (roles) show up.
-  async function refreshBots() {
+  // Many task_end events can arrive at once (the replay after a reload): they share one pending refresh.
+  let botsTimer = null;
+  function refreshBots() {
+    if (ui.needAuth || botsTimer) return;
+    botsTimer = setTimeout(() => { botsTimer = null; loadBots(); }, 250);
+  }
+  async function loadBots() {
     if (ui.needAuth) return;
-    try { const b = await api('/api/bots'); if (b.ok) { D.applyBots(S, b.body); defaultTarget(); render(); } } catch (err) { /* ignore */ }
+    try { const b = await api('/api/bots'); if (b.ok) { D.applyBots(S, b.body); render(); } } catch (err) { if (!isAuth(err)) console.warn('chat-ui: roster refresh failed: ' + ((err && err.message) || err)); }
   }
   setInterval(() => { if (document.visibilityState !== 'hidden') refreshBots(); }, 15000);
   // Re-read the room list every 5 s while visible, so a group made by asking in chat appears without a reload.
@@ -461,4 +581,4 @@
     paired.then(err => { if (err) { showAuth(); $('pair-msg').textContent = err; } boot(); });
   }
   if (lang) start(); else { afterLang = start; showLangGate(); }
-})();
+})();
