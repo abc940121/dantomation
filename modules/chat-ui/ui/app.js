@@ -95,7 +95,7 @@
       const ua = String((typeof navigator !== 'undefined' && navigator.userAgent) || '');
       const r = await fetch('/m/device-pairing/redeem', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: code, label: label || (/iPhone|iPad/.test(ua) ? 'iPhone' : /Android/.test(ua) ? 'Android phone' : 'browser') }) });
       const b = await r.json();
-      if (!r.ok || !b || !b.token) return (b && b.error) || tr('auth.pairfail');
+      if (!r.ok || !b || !b.token) return r.status === 401 ? tr('auth.err.bad') : r.status === 429 ? tr('auth.err.wait') : tr('auth.pairfail');
       token = b.token; setDevice(true);
       try { localStorage.setItem(TOKEN_KEY, token); } catch (e) { /* storage blocked: the token only lasts for this page */ }
       return null;
@@ -138,16 +138,20 @@
   $('auth-form').addEventListener('submit', e => {
     e.preventDefault();
     $('hs-expired').hidden = true;
-    const v = $('token').value.trim();
-    if (!v) return;
-    if (D.looksLikeCode(v)) { // a pairing code, not the owner token
-      redeemCode(v).then(err => { $('pair-msg').textContent = err || ''; if (!err) { $('token').value = ''; $('auth').hidden = true; ui.needAuth = false; boot(); } });
+    const done = () => { $('token').value = ''; $('token-adv').value = ''; $('auth').hidden = true; ui.needAuth = false; boot(); };
+    const adv = $('token-adv').value.trim();
+    if (adv) { // Advanced: a long code, or the owner key kept in this browser only
+      if (D.looksLikeCode(adv)) { redeemCode(adv).then(err => { $('pair-msg').textContent = err || ''; if (!err) done(); }); return; }
+      token = adv; setDevice(false);
+      try { localStorage.setItem(TOKEN_KEY, adv); } catch (err) { /* ignore */ }
+      done();
       return;
     }
-    token = v;
-    try { localStorage.setItem(TOKEN_KEY, v); } catch (err) { /* ignore */ }
-    $('token').value = ''; $('auth').hidden = true; ui.needAuth = false;
-    boot();
+    const v = $('token').value.trim();
+    if (!v) return;
+    const digits = v.replace(/[\s-]/g, '');
+    if (!/^\d{6}$/.test(digits) && !D.looksLikeCode(v)) { $('pair-msg').textContent = tr('auth.err.len'); return; }
+    redeemCode(digits.length === 6 && /^\d+$/.test(digits) ? digits : v).then(err => { $('pair-msg').textContent = err || ''; if (!err) done(); });
   });
 
   // ---- tiny DOM helper: strings become text nodes
@@ -845,6 +849,42 @@
       tick(); hsTimer = setInterval(tick, 1000);
     } catch (err) { if (!isAuth(err)) msg.textContent = tr('hs.fail'); }
     finally { btn.disabled = false; }
+  });
+  // "Connect a phone": mint a 10-minute 6-digit number on an already paired page. The number lives only in this dialog's
+  // text (never a URL, never logged, never stored); closing or expiry wipes it.
+  let phoneTimer = null, phoneUntil = 0, phoneDigits = '';
+  const phoneMsg = t => { const m = $('phone-msg'); m.textContent = t || ''; m.hidden = !t; };
+  function phoneWipe() {
+    if (phoneTimer) { clearInterval(phoneTimer); phoneTimer = null; }
+    phoneDigits = ''; phoneUntil = 0; $('phone-num').textContent = ''; $('phone-left').textContent = ''; $('phone-copy').disabled = true;
+  }
+  function phoneTick() {
+    const left = D.remainingSec(phoneUntil, Date.now());
+    if (left <= 0) { phoneWipe(); phoneMsg(tr('phone.expired')); return; }
+    $('phone-left').textContent = tr('phone.left', { time: D.fmtCountdown(left) });
+  }
+  function closePhone() { phoneWipe(); phoneMsg(''); $('phone-dlg').hidden = true; $('phone-btn').focus(); }
+  async function openPhone() {
+    const btn = $('phone-btn');
+    phoneWipe(); phoneMsg(tr('phone.busy')); $('phone-dlg').hidden = false; btn.disabled = true;
+    try {
+      const r = await post('/m/device-pairing/handoff', {});
+      if (!r.ok || !r.body || !/^\d{6}$/.test(String(r.body.short || ''))) {
+        phoneMsg(r.status === 429 ? tr('phone.limit') : tr('phone.fail')); $('phone-close').focus(); return;
+      }
+      const until = Date.parse(r.body.expiresAt);
+      phoneDigits = String(r.body.short); phoneUntil = Number.isFinite(until) ? until : Date.now() + 600000;
+      $('phone-num').textContent = phoneDigits.slice(0, 3) + ' ' + phoneDigits.slice(3);
+      $('phone-copy').disabled = false; phoneMsg(''); phoneTick(); phoneTimer = setInterval(phoneTick, 1000); $('phone-copy').focus();
+    } catch (err) { if (isAuth(err)) $('phone-dlg').hidden = true; else phoneMsg(tr('phone.fail')); }
+    finally { btn.disabled = false; }
+  }
+  $('phone-btn').addEventListener('click', openPhone);
+  $('phone-close').addEventListener('click', closePhone);
+  $('phone-dlg').addEventListener('keydown', e => { if (e.key === 'Escape') closePhone(); });
+  $('phone-copy').addEventListener('click', async () => {
+    if (!phoneDigits) return;
+    try { await navigator.clipboard.writeText(phoneDigits); phoneMsg(tr('phone.copied')); } catch (e) { /* the number is on screen and selectable */ }
   });
   async function boot() {
     try {

@@ -11,6 +11,7 @@ const J = require('../../lib/journal');
 
 const CODE_TTL_MS = 2 * 60 * 1000;   // a pairing code lives 2 minutes
 const MAX_FAILS = 5;                 // wrong guesses before every pending code is wiped
+const CODE_MAX_TRIES = 10;          // wrong guesses a handoff code survives in total, counted on the code itself (a new caller or an ordinary mint does not reset it)
 const LOCK_MS = 30 * 1000;           // redeem is refused this long after a lockout
 const DEVICE_TTL_MS = 30 * 24 * 3600 * 1000; // sliding: a device unused this long must pair again
 const SEEN_EVERY_MS = 60 * 1000;     // last-seen is written at most this often per device
@@ -105,8 +106,8 @@ function mintCode(now = Date.now()) { return withLock(() => mintLocked(now)); }
 function mintLocked(now) {
   return mintCodeLocked(now, null);
 }
-// opts null: an ordinary owner code (long + six digits, 2 minutes). opts {parent, ttl}: a handoff code, long form only,
-// tied to the device that asked for it. The six-digit slot gets a random digest nothing can match.
+// opts null: an ordinary owner code (long + six digits, 2 minutes). opts {parent, ttl}: a handoff code (long + six digits, 10 minutes),
+// tied to the device that asked for it. Both forms redeem the same single pairing through the same fail counter and lock.
 function mintCodeLocked(now, opts) {
   const p = pending();
   p.codes = p.codes.filter(c => c.exp > now);
@@ -114,11 +115,11 @@ function mintCodeLocked(now, opts) {
   let short;
   do { short = String(crypto.randomInt(0, 1000000)).padStart(6, '0'); } while (p.codes.some(c => same(Buffer.from(c.short, 'hex'), sha(short))));
   const code = 'pc_' + crypto.randomBytes(24).toString('base64url');
-  p.codes.push({ id: crypto.randomBytes(4).toString('hex'), long: sha(code).toString('hex'), short: opts ? crypto.randomBytes(32).toString('hex') : sha(short).toString('hex'), exp: now + ttl, ...(opts ? { handoff: true } : {}), ...(opts && opts.parent ? { parent: opts.parent } : {}) });
+  p.codes.push({ id: crypto.randomBytes(4).toString('hex'), long: sha(code).toString('hex'), short: sha(short).toString('hex'), exp: now + ttl, ...(opts ? { handoff: true } : {}), ...(opts && opts.parent ? { parent: opts.parent } : {}) });
   if (!opts) p.fails = 0; // a fresh pairing: the guess counter starts over (an active lockout still stands)
   write('pending.json', p);
   if (!opts) journal({ type: 'device_code_minted', expires_at: new Date(now + ttl).toISOString() });
-  return opts ? { code, expiresAt: new Date(now + ttl).toISOString() } : { code, short, expiresAt: new Date(now + ttl).toISOString() };
+  return { code, short, expiresAt: new Date(now + ttl).toISOString() };
 }
 
 // Caller: a paired device (by) or the owner (by null). -> { ok: true, code, expiresAt } or { ok: false, status, error }.
@@ -142,7 +143,7 @@ function handoffLocked(by, now) {
   for (const k of Object.keys(log)) if (k !== key) { log[k] = (Array.isArray(log[k]) ? log[k] : []).filter(t => now - t < HANDOFF_WINDOW_MS); if (!log[k].length) delete log[k]; }
   write('handoff.json', log);
   journal({ type: 'device_handoff_minted', device_id: key });
-  return { ok: true, code: m.code, expiresAt: m.expiresAt };
+  return { ok: true, code: m.code, short: m.short, expiresAt: m.expiresAt };
 }
 
 // Phone action. -> { ok: true, token, id, label } or { ok: false, status, error }.
@@ -175,6 +176,8 @@ function redeemLocked(code, label, now) {
 }
 function fail(p, now) {
   p.fails = (p.fails || 0) + 1;
+  // every wrong guess is also a guess against each live handoff code; the tally lives on the code, so it burns after CODE_MAX_TRIES in total
+  p.codes = p.codes.map(c => c.handoff ? { ...c, tries: (c.tries || 0) + 1 } : c).filter(c => !c.handoff || c.tries < CODE_MAX_TRIES);
   if (p.fails >= MAX_FAILS) { p.codes = []; p.fails = 0; p.lockedUntil = now + LOCK_MS; journal({ type: 'device_pair_lockout' }); }
   write('pending.json', p);
   return { ok: false, status: 401, error: 'wrong or expired code' };
@@ -265,4 +268,4 @@ const allows = (method, p) => ALLOW.some(([m, re]) => m === method && re.test(St
 // One journal line per state-changing call, naming the device (the owner's calls carry no such line).
 function audit(device, method, p) { journal({ type: 'device_action', device_id: device.id, label: device.label, method, path: String(p).slice(0, 200) }); }
 
-module.exports = { WAY_OUT, BUSY_MSG, withLock, mintCode, mintHandoff, HANDOFF_TTL_MS, HANDOFF_MAX, redeem, authenticate, list, revoke, allows, audit, CODE_TTL_MS, MAX_FAILS, LOCK_MS, DEVICE_TTL_MS, dir, _write: write, _reclaim: reclaim };
+module.exports = { WAY_OUT, BUSY_MSG, withLock, mintCode, mintHandoff, HANDOFF_TTL_MS, HANDOFF_MAX, redeem, authenticate, list, revoke, allows, audit, CODE_TTL_MS, MAX_FAILS, CODE_MAX_TRIES, LOCK_MS, DEVICE_TTL_MS, dir, _write: write, _reclaim: reclaim };

@@ -25,6 +25,7 @@
     <button id="edit-group" class="badge" type="button" data-i18n="group.edit" hidden>Edit group</button>
     <button id="arch-btn" class="badge" type="button" hidden></button>
     <button id="card-btn" class="badge" type="button" data-i18n="card.open" hidden>Role card</button>
+    <button id="phone-btn" class="badge" type="button" data-i18n="phone.open">Connect a phone</button>
     <button id="lang-btn" class="badge" type="button" aria-label="Change language" data-i18n="lang.change" data-i18n-aria-label="lang.change.aria">Language</button>
   </header>
   <section id="strip" aria-live="polite" aria-label="Needs you" data-i18n-aria-label="strip.aria" hidden>
@@ -76,6 +77,16 @@
       <div class="btns"><button id="edit-archive" type="button" data-i18n="group.archive">Archive group</button><button id="edit-cancel" type="button" data-i18n="group.cancel">Cancel</button><button id="edit-save" type="submit" data-i18n="group.save">Save</button></div>
     </form>
   </div>
+  <div id="phone-dlg" class="overlay" hidden>
+    <div id="phone-box" class="dlg" role="dialog" aria-modal="true" aria-labelledby="phone-title">
+      <h2 id="phone-title" data-i18n="phone.open">Connect a phone</h2>
+      <p id="phone-num" class="phone-num" role="status" aria-label="The 6 digit number" data-i18n-aria-label="phone.num.aria"></p>
+      <p id="phone-left" class="hint" role="timer"></p>
+      <p class="hint" data-i18n="phone.line">On the phone, open Taskmote and type this number</p>
+      <p id="phone-msg" class="hint" role="alert" hidden></p>
+      <div class="btns"><button id="phone-copy" type="button" data-i18n="phone.copy">Copy</button><button id="phone-close" type="button" data-i18n="phone.close">Close</button></div>
+    </div>
+  </div>
   <div id="arch-dlg" class="overlay" hidden>
     <div id="arch-box" class="dlg" role="dialog" aria-modal="true" aria-labelledby="arch-title">
       <h2 id="arch-title" data-i18n="arch.title">Archived groups</h2>
@@ -122,12 +133,17 @@
   </section>
   <section id="auth" hidden>
     <form id="auth-form">
-      <h2 data-i18n="auth.heading">Pair this device</h2>
-      <p class="hint" data-i18n="auth.hint">Type the six-digit pairing code from "node bin/harness.js device pair" (or scan its QR). The deprecated alternative is the owner token from "taskmote token new"; prefer pairing. Either is kept in this browser only.</p>
+      <h2 data-i18n="auth.heading">Connect this phone</h2>
+      <p class="hint" data-i18n="auth.step1">1. Where Taskmote already works (your computer or a browser), press Connect a phone</p>
+      <p class="hint" data-i18n="auth.step2">2. Type the 6 digits here</p>
       <p id="hs-expired" class="hint" role="status" data-i18n="hs.expired" hidden>The pairing of this icon expired. Open Taskmote in Safari, tap 'Add to Home Screen' again, and delete the old icon.</p>
       <p id="pair-msg" class="hint" role="status"></p>
-      <input id="token" type="password" autocomplete="off" aria-label="Token" data-i18n-aria-label="auth.token.aria">
-      <button type="submit" data-i18n="auth.save">Save</button>
+      <input id="token" type="text" inputmode="numeric" maxlength="12" autocomplete="one-time-code" aria-label="The 6 digits" data-i18n-aria-label="auth.num.aria">
+      <button type="submit" data-i18n="auth.save">Connect</button>
+      <details id="auth-adv"><summary data-i18n="auth.adv">Advanced</summary>
+        <p class="hint" data-i18n="auth.adv.hint">On the computer, run "node bin/harness.js device pair" and type the 6 digits it shows above, or paste its long code or the owner key here.</p>
+        <input id="token-adv" type="password" autocomplete="off" aria-label="Long code or owner key" data-i18n-aria-label="auth.adv.aria">
+      </details>
     </form>
   </section>
 </div>

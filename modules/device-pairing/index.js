@@ -61,11 +61,11 @@ module.exports = {
       handler: ctx => (byDevice(ctx) ? deny : S.revoke(ctx.params.id) ? { status: 200, json: { revoked: ctx.params.id } } : { status: 404, json: { error: 'no such device' } }) },
     { method: 'POST', path: '/redeem', access: 'public-post', description: 'phone: swap a pairing code {code, label} for a device token',
       handler: ctx => { const b = body(ctx), r = S.redeem(b.code, b.label); return r.ok ? { status: 200, json: { token: r.token, id: r.id, label: r.label } } : { status: r.status, json: { error: r.error } }; } },
-    { method: 'POST', path: '/handoff', description: 'paired device or owner: mint one 10-minute pairing code {code, expiresAt} to carry into the home-screen app (5 an hour per device; a device made from a handoff cannot ask)',
+    { method: 'POST', path: '/handoff', description: 'paired device or owner: mint one 10-minute pairing code {code, short (six digits), expiresAt} to carry into the home-screen app (5 an hour per device; a device made from a handoff cannot ask)',
       handler: ctx => {
         if (!ctx.actor || ctx.actor.kind !== 'owner') return deny; // fail closed: only a paired device or the owner
         const r = S.mintHandoff(byDevice(ctx) ? String(ctx.actor.id).slice(7) : null);
-        return r.ok ? { status: 200, json: { code: r.code, expiresAt: r.expiresAt } } : { status: r.status, json: { error: r.error } };
+        return r.ok ? { status: 200, json: { code: r.code, short: r.short, expiresAt: r.expiresAt } } : { status: r.status, json: { error: r.error } };
       } },
   ],
   commands: { device, pair, devices: list, revoke },

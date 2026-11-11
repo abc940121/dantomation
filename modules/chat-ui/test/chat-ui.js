@@ -515,7 +515,10 @@ async function pageTests() {
     check(lang + ' 401: no event stream is opened behind the sign-in screen', !r.calls.some(c => c.startsWith('/api/events')));
     r.get('token').value = 'abc'; r.get('auth-form').handlers.submit({ preventDefault() {} });
     await r.settle();
-    check(lang + ' 401: typing a token closes the sign-in screen and asks the server again', r.calls.filter(c => c.startsWith('/api/bots')).length >= 2);
+    check(lang + ' 401: letters in the number box are refused with the plain "type all 6 digits" line, no request', r.get('pair-msg').textContent === I.t(lang, 'auth.err.len') && r.get('auth').hidden === false && !r.calls.some(c => c.startsWith('/m/device-pairing/redeem')));
+    r.get('token-adv').value = 'abc'; r.get('auth-form').handlers.submit({ preventDefault() {} });
+    await r.settle();
+    check(lang + ' 401: under Advanced, an owner key closes the sign-in screen and asks the server again', r.calls.filter(c => c.startsWith('/api/bots')).length >= 2);
   }
 
   // 4. 403 from POST /m/roles/groups: the New group dialog says so, in both languages; another failure keeps its text
@@ -656,12 +659,68 @@ async function pageTests() {
   const again = await run('en', hsApi(false), '', { hash: '#h=' + CODE + '&lang=en', seed: { 'taskmote.token': 'kept-token', 'taskmote.token.device': '1' } });
   check('handoff: a second launch with a used code and a stored token never calls redeem and keeps the token', redeems(again).length === 0 && again.store.get('taskmote.token') === 'kept-token' && again.urls[0] === CLEAN && again.get('hs-expired').hidden === true, JSON.stringify(again.calls));
   const bad = await run('en', hsApi(false), '', { hash: '#h=' + CODE + '&lang=en' });
-  check('handoff: a used or expired code with no token shows the pairing screen and the expired line, one redeem', redeems(bad).length === 1 && bad.get('pair-msg').textContent === 'wrong or expired code' && bad.get('hs-expired').hidden === false && !bad.store.has('taskmote.token') && bad.urls[0] === CLEAN);
+  check('handoff: a used or expired code with no token shows the pairing screen and the expired line, one redeem', redeems(bad).length === 1 && bad.get('pair-msg').textContent === I.t('en', 'auth.err.bad') && bad.get('hs-expired').hidden === false && !bad.store.has('taskmote.token') && bad.urls[0] === CLEAN);
   await bad.poll(); await bad.poll();
   check('handoff: still one redeem after more ticks (no retry loop)', redeems(bad).length === 1);
   const plainP = await run('en', hsApi(), '', { hash: '#p=123456' });
   check('#p= pairing still redeems and is not treated as a handoff', redeems(plainP).length === 1 && plainP.store.get('taskmote.token') === 'dev-token-1' && plainP.get('hs-expired').hidden === true);
   check('handoff: a plain open makes no redeem call', redeems(await run('en', hsApi(), '', {})).length === 0);
+
+  // 7b. pair-plain: the typed six digits, the plain pairing screen, the "Connect a phone" dialog
+  const appSrc = fs.readFileSync(path.join(UI, 'app.js'), 'utf8'), cssSrc = fs.readFileSync(path.join(UI, 'style.css'), 'utf8');
+  const SIX = '482913', SIXFMT = '482 913', paired = { 'taskmote.token': 'dev-token-1', 'taskmote.token.device': '1' };
+  const pairApi = (st, exp = () => new Date(Date.now() + 600000).toISOString()) => u => {
+    if (u.startsWith('/m/device-pairing/redeem')) return json(st, st === 200 ? { token: 'dev-token-2' } : { error: 'wrong or expired code' });
+    if (u.startsWith('/m/device-pairing/handoff')) return json(st, st === 200 ? { code: CODE, short: SIX, expiresAt: exp() } : { error: 'x' });
+    if (u.startsWith('/api/bots')) return json(200, bots);
+    if (u.startsWith('/api/events')) return new Response('', { status: 200 });
+    return json(200, []);
+  };
+  const strip = s => s.replace(/<[^>]*>/g, ' ');
+  const mainScreen = lang => strip(/<section id="auth"[\s\S]*?<\/section>/.exec(html)[0].replace(/<details id="auth-adv">[\s\S]*?<\/details>/, '')) + ' ' + ['auth.heading', 'auth.step1', 'auth.step2', 'auth.save', 'auth.err.len', 'auth.err.bad', 'auth.err.wait', 'auth.pairfail', 'auth.num.aria'].map(k => I.t(lang, k)).join(' ');
+  const zh = (en, tw, lang) => (lang === 'en' ? en : tw);
+  for (const lang of ['en', 'zh-TW']) {
+    const t = k => I.t(lang, k), screen = mainScreen(lang);
+    check(lang + ' pairing screen: no command name and none of token / 權杖 / 密碼 on the main screen', !/harness|node bin|device pair|token|權杖|密碼/i.test(screen), screen.replace(/\s+/g, ' '));
+    check(lang + ' pairing screen: the CLI way is only inside the collapsed Advanced line', /<details id="auth-adv">(?:(?!<\/details>)[\s\S])*id="token-adv"/.test(html) && /node bin\/harness\.js device pair/.test(t('auth.adv.hint')) && !/<details id="auth-adv" open/.test(html));
+    check(lang + ' pairing screen: title, step 1, step 2 and Connect read as asked', t('auth.heading') === zh('Connect this phone', '連接這支手機', lang) && t('auth.step1').includes(zh('press Connect a phone', '按「連接手機」', lang)) && t('auth.step2') === zh('2. Type the 6 digits here', '2. 把畫面上的 6 位數字輸入這裡', lang) && t('auth.save') === zh('Connect', '連接', lang));
+    check(lang + ' pairing screen: the too-many-tries line says to wait 30 seconds', /30/.test(t('auth.err.wait')));
+    check(lang + ' condition 2: both the pairing and the phone screen say the exact expired line', t('phone.expired') === zh('Code expired, tap Connect a phone again', '數字已失效，請再按一次「連接手機」', lang) && t('auth.err.bad').includes(t('phone.expired')));
+    const wrong = await run(lang, pairApi(401));
+    wrong.get('token').value = SIXFMT; wrong.get('auth-form').handlers.submit({ preventDefault() {} }); await wrong.settle();
+    check(lang + ' condition 2: a refused number shows the expired line and keeps the screen; one redeem call', wrong.get('pair-msg').textContent === t('auth.err.bad') && wrong.get('auth').hidden === false && redeems(wrong).length === 1);
+    const lock = await run(lang, pairApi(429));
+    lock.get('token').value = SIX; lock.get('auth-form').handlers.submit({ preventDefault() {} }); await lock.settle();
+    check(lang + ' pairing screen: a 429 says wait 30 seconds', lock.get('pair-msg').textContent === t('auth.err.wait'));
+  }
+  check('pairing screen: the number box is numeric and one-time-code, paste is not blocked', /<input id="token" type="text" inputmode="numeric"[^>]*autocomplete="one-time-code"/.test(html) && !/id="token"[^>]*(onpaste|readonly)/.test(html));
+  check('phone: the button sits in the top bar before the language button and is 44 px tall', /id="phone-btn"[^>]*>[^<]*<\/button>\s*<button id="lang-btn"/.test(html) && /#phone-btn\s*\{[^}]*min-height:\s*44px/.test(cssSrc));
+  for (const lang of ['en', 'zh-TW']) {
+    const t = k => I.t(lang, k);
+    const ph = await run(lang, pairApi(200), '', { seed: paired }); await ph.settle();
+    check(lang + ' phone: the entry is always in the page, not hidden, labelled in this language', ph.get('phone-btn').hidden !== true && ph.stat.some(e => e.key === 'phone.open' && e.textContent === t('phone.open')));
+    await ph.get('phone-btn').handlers.click(); await ph.settle();
+    check(lang + ' phone: one POST to /m/device-pairing/handoff, number shown as "482 913" in large type', ph.calls.filter(c => c === '/m/device-pairing/handoff POST').length === 1 && ph.get('phone-dlg').hidden === false && ph.get('phone-num').textContent === SIXFMT && /\.phone-num\s*\{[^}]*font-size:\s*2\.6rem/.test(cssSrc), ph.get('phone-num').textContent);
+    check(lang + ' phone: a 10 minute countdown and the "' + t('phone.line') + '" line', /(9:5\d|10:00)/.test(ph.get('phone-left').textContent) && ph.stat.some(e => e.key === 'phone.line' && e.textContent === t('phone.line')), ph.get('phone-left').textContent);
+    check(lang + ' condition 3: the digits are in no URL, no storage and no request', !ph.urls.some(u => u.includes(SIX)) && ![...ph.store.values()].some(v => String(v).includes(SIX)) && !ph.calls.some(c => c.includes(SIX)));
+    ph.get('phone-close').handlers.click();
+    check(lang + ' phone: Close hides the dialog and wipes the number', ph.get('phone-dlg').hidden === true && ph.get('phone-num').textContent === '');
+    const gone = await run(lang, pairApi(200, () => new Date(Date.now() - 5000).toISOString()), '', { seed: paired });
+    await gone.get('phone-btn').handlers.click(); await gone.settle();
+    check(lang + ' condition 2: an expired number is wiped and the dialog says the expired line', gone.get('phone-num').textContent === '' && gone.get('phone-msg').textContent === t('phone.expired') && gone.get('phone-msg').hidden === false);
+    const no = await run(lang, pairApi(403), '', { seed: paired });
+    await no.get('phone-btn').handlers.click(); await no.settle();
+    check(lang + ' phone: a 403 (a page that cannot mint, e.g. a child device) shows the plain "cannot make a number" line, no digits', no.get('phone-msg').textContent === t('phone.fail') && no.get('phone-num').textContent === '');
+    const lim = await run(lang, pairApi(429), '', { seed: paired });
+    await lim.get('phone-btn').handlers.click(); await lim.settle();
+    check(lang + ' phone: a 429 (5 an hour) says try again later', lim.get('phone-msg').textContent === t('phone.limit'));
+    const copied = [], cp = await run(lang, pairApi(200), '', { seed: paired, nav: { clipboard: { writeText: async s => { copied.push(s); } } } });
+    await cp.get('phone-btn').handlers.click(); await cp.settle(); await cp.get('phone-copy').handlers.click(); await cp.settle();
+    check(lang + ' phone: Copy puts the six digits (no space) on the clipboard and says copied', copied.length === 1 && copied[0] === SIX && cp.get('phone-msg').textContent === t('phone.copied'));
+  }
+  check('condition 3: the phone code in app.js is never logged, stored or put in a URL', (() => { const seg = /let phoneTimer[\s\S]*?async function boot/.exec(appSrc)[0]; return !/console\.|localStorage|sessionStorage|history\.|location|encodeURIComponent/.test(seg); })());
+  check('phone strings exist in both languages, with no command name or token / 權杖 / 密碼', ['phone.open', 'phone.line', 'phone.left', 'phone.copy', 'phone.copied', 'phone.close', 'phone.busy', 'phone.expired', 'phone.fail', 'phone.limit'].every(k => I.t('en', k) !== k && I.t('zh-TW', k) !== k && !/harness|token|權杖|密碼/i.test(I.t('en', k) + I.t('zh-TW', k))));
+  check('phone: Esc and Close both close the dialog (wipe on close)', /phone-dlg'\)\.addEventListener\('keydown'[^\n]*Escape[^\n]*closePhone/.test(appSrc) && /phone-close'\)\.addEventListener\('click', closePhone/.test(appSrc));
 
   // the banner: a paired device, a touch screen, not standalone, not dismissed
   const seedDev = { 'taskmote.token': 'dev-token-1', 'taskmote.token.device': '1' };

@@ -317,8 +317,11 @@ const req = (port, method, p, body, token, extra) => new Promise((res, rej) => {
     const hAnon = await req(port, 'POST', hUrl, {}), hBad = await req(port, 'POST', hUrl, {}, 'dvt_00000000.' + 'x'.repeat(43)), hOldDev = await req(port, 'POST', hUrl, {}, dev);
     check('handoff: anonymous, an unknown device token and a revoked device token are all 401 and mint nothing', hAnon.status === 401 && hBad.status === 401 && hOldDev.status === 401 && !journal2().some(r => r.type === 'device_handoff_minted'), [hAnon.status, hBad.status, hOldDev.status].join());
     const h1 = await req(port, 'POST', hUrl, {}, hp.token);
-    check('handoff: a paired device gets { code, expiresAt } (a long pc_ code, about 10 minutes)', h1.status === 200 && /^pc_/.test(h1.json.code) && Object.keys(h1.json).sort().join() === 'code,expiresAt' && Math.abs(Date.parse(h1.json.expiresAt) - Date.now() - 600000) < 30000, h1.raw);
+    check('handoff: a paired device gets { code, expiresAt } (a long pc_ code, six digits, about 10 minutes)', h1.status === 200 && /^pc_/.test(h1.json.code) && Object.keys(h1.json).sort().join() === 'code,expiresAt,short' && /^[0-9]{6}$/.test(h1.json.short) && Math.abs(Date.parse(h1.json.expiresAt) - Date.now() - 600000) < 30000, h1.raw);
+    check('handoff: the six digits are not in the journal', !JSON.stringify(journal2()).includes(h1.json.short));
     check('handoff: the owner can mint one too', (await req(port, 'POST', hUrl, {}, owner)).status === 200);
+    const hShort = await req(port, 'POST', hUrl, {}, owner), hsr = await req(port, 'POST', '/m/device-pairing/redeem', { code: hShort.json.short, label: 'typed' });
+    check('handoff: the six digits redeem over HTTP like the long code, and only once', hsr.status === 200 && /^dvt_/.test(hsr.json.token) && (await req(port, 'POST', '/m/device-pairing/redeem', { code: hShort.json.short })).status === 401);
     const hr = await req(port, 'POST', '/m/device-pairing/redeem', { code: h1.json.code, label: 'phone app' });
     check('handoff: the code redeems to a normal device token, once only', hr.status === 200 && /^dvt_/.test(hr.json.token) && (await req(port, 'POST', '/m/device-pairing/redeem', { code: h1.json.code })).status === 401);
     const hl = (await req(port, 'GET', '/m/device-pairing/devices', undefined, owner)).json;
@@ -362,6 +365,42 @@ const req = (port, method, p, body, token, extra) => new Promise((res, rej) => {
       const T1 = T0 + 200 * MIN; // past the 30 s lockout the failed redeems above may have set
       const plain = S.mintCode(T1), pr = JSON.parse(fs.readFileSync(path.join(S.dir(), 'pending.json'), 'utf8')).codes.find(c => c.exp === T1 + 2 * MIN);
       check('handoff store: ordinary owner codes are unchanged (2 minutes, six digits, no parent)', Date.parse(plain.expiresAt) === T1 + 2 * MIN && /^[0-9]{6}$/.test(plain.short) && !!pr && !('parent' in pr) && S.redeem(plain.short, 'plain', T1 + MIN).ok === true, plain.short);
+    }
+    // the six digits of a handoff: the typed way for a phone, same path and same rules as the long code
+    {
+      const T2 = Date.UTC(2029, 0, 1), MIN = 60000;
+      const par = S.redeem(S.mintCode(T2).code, 'p', T2);
+      const a = S.mintHandoff(par.id, T2 + MIN), b = S.mintHandoff(par.id, T2 + 2 * MIN);
+      const ra = S.redeem(' ' + a.short.slice(0, 3) + ' ' + a.short.slice(3) + ' ', 'phone', T2 + 3 * MIN);
+      check('handoff short: six digits (typed with spaces) redeem a handoff to a device that records its parent', /^[0-9]{6}$/.test(a.short) && a.short !== b.short && ra.ok === true && S.list().find(d => d.id === ra.id).parent === par.id);
+      check('handoff short: single use, and the long code of the same record is spent with it', S.redeem(a.short, 'again', T2 + 4 * MIN).status === 401 && S.redeem(a.code, 'again', T2 + 4 * MIN).status === 401);
+      check('handoff short: alive at 9m59s, dead after 10 minutes', S.redeem(b.short, 'late', T2 + 2 * MIN + 10 * MIN + 1000).status === 401 && S.mintHandoff(par.id, T2 + 20 * MIN).ok === true);
+      const c = S.mintHandoff(par.id, T2 + 30 * MIN), rc = S.redeem(c.short, 'c', T2 + 30 * MIN + 9 * MIN + 59000);
+      check('handoff short: a code at 9 minutes still redeems', rc.ok === true);
+      check('handoff short: a child made from the six digits cannot mint (403)', S.mintHandoff(rc.id, T2 + 45 * MIN).status === 403);
+      S.mintCode(T2 + 57 * MIN); // an ordinary mint starts the guess counter over, so the 3 wrong redeems above do not count
+      const c2 = S.mintHandoff(par.id, T2 + 58 * MIN);
+      const w = []; for (let i = 0; i < 5; i++) w.push(S.redeem(String(100000 + i), 'x', T2 + 60 * MIN + i).status);
+      check('handoff short: 5 wrong numbers lock for 30 s (429), the pending handoff is wiped, then the number is dead', w.join() === '401,401,401,401,401' && S.redeem(c2.short, 'x', T2 + 60 * MIN + 10).status === 429 && S.redeem(c2.short, 'x', T2 + 61 * MIN).status === 401);
+      const d = S.mintHandoff(par.id, T2 + 70 * MIN); S.revoke(par.id);
+      check('handoff short: revoking the parent kills its children and the unredeemed number', S.redeem(d.short, 'x', T2 + 71 * MIN).status === 401 && S.authenticate(rc.token, T2 + 72 * MIN) === null);
+      const lim = []; const par2 = S.redeem(S.mintCode(T2 + 100 * MIN).code, 'p2', T2 + 100 * MIN);
+      for (let i = 0; i < 5; i++) lim.push(S.mintHandoff(par2.id, T2 + 101 * MIN + i).ok);
+      const six = S.mintHandoff(par2.id, T2 + 110 * MIN);
+      check('handoff short: the 5 an hour limit is the same, and a refused mint gives no number', lim.every(x => x) && six.status === 429 && !('short' in six) && !('code' in six));
+      // the guess tally lives on the code: 10 wrong tries in total burn it, and neither an ordinary mint nor a new caller starts it over
+      const T3 = Date.UTC(2029, 6, 1), wrong = (n, at) => { const o = []; for (let i = 0; i < n; i++) o.push(S.redeem('000000', 'g' + i, at + i).status); return o; };
+      const par3 = S.redeem(S.mintCode(T3).code, 'p3', T3);
+      const live = S.mintHandoff(par3.id, T3 + MIN), dead = S.mintHandoff(par3.id, T3 + MIN + 1);
+      wrong(4, T3 + 2 * MIN); S.mintCode(T3 + 3 * MIN); // an ordinary mint resets the lock counter, not the tally on the code
+      wrong(4, T3 + 4 * MIN); S.mintCode(T3 + 5 * MIN);
+      const w9 = wrong(1, T3 + 6 * MIN);
+      const okAt9 = S.redeem(live.short, 'nine', T3 + 7 * MIN);
+      check('handoff burn: 9 wrong tries in total leave the code alive and it redeems', w9[0] === 401 && okAt9.ok === true);
+      const w10 = wrong(1, T3 + 8 * MIN);
+      check('handoff burn: the 10th wrong try burns the other code for good, even with time left and a correct number', w10[0] === 401 && S.redeem(dead.short, 'late', T3 + 9 * MIN).status === 401 && S.redeem(dead.code, 'late', T3 + 9 * MIN).status === 401);
+      const pend = files();
+      check('handoff burn: the store keeps only hashes of the number and the long code, and the journal has neither', !pend.includes(live.short) && !pend.includes(dead.short) && !pend.includes(dead.code) && !JSON.stringify(journal2()).includes(dead.short) && !JSON.stringify(journal2()).includes(dead.code));
     }
     // review round: revoke is one write and repairs itself; a child needs a live parent; a device made from a handoff cannot mint;
     // a handoff redeem leaves the wrong-guess counter alone; the child keeps its own sliding expiry
