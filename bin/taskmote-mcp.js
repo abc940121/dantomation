@@ -23,6 +23,7 @@ const { spawn } = require('child_process');
 const J = require('../lib/journal');
 const C = require('../lib/config');
 const M = require('../lib/modules');
+const T = require('../lib/mcp-tiers');
 
 const NAME = 'taskmote';
 const PROTOCOL = '2024-11-05';
@@ -222,20 +223,25 @@ function searchJournal(a) {
 }
 
 const TOOLS = [
-  { name: 'ask_owner', description: 'Ask the owner a question on their phone (a question card) and wait for the answer. Returns {answered:true, choice, option, text} or, if no answer arrives in time, {answered:false}. Never an error because the owner is away.',
+  { name: 'ask_owner', when: 'Need an answer from the owner before going on', tier: 1, category: 'tasks', description: 'Ask the owner a question on their phone (a question card) and wait for the answer. Returns {answered:true, choice, option, text} or, if no answer arrives in time, {answered:false}. Never an error because the owner is away.',
     inputSchema: { type: 'object', properties: { question: { type: 'string', description: 'The question.' }, choices: { type: 'array', items: { type: 'string' }, minItems: 2, maxItems: 6, description: '2 to 6 short answers.' }, timeout_s: { type: 'number', description: 'How long to wait, in seconds (default 1800). The card stays open after.' } }, required: ['question', 'choices'] } },
-  { name: 'queue_task', description: 'Queue a task for Taskmote to run, the way `taskmote do` does. Returns the task id. cwd is the folder the task works in (an existing folder; default: the bot folder).',
+  { name: 'queue_task', when: 'Start a separate task in a folder, like taskmote do', tier: 1, category: 'tasks', description: 'Queue a task for Taskmote to run, the way `taskmote do` does. Returns the task id. cwd is the folder the task works in (an existing folder; default: the bot folder).',
     inputSchema: { type: 'object', properties: { request: { type: 'string', description: 'What to do.' }, cwd: { type: 'string', description: 'Working directory for the task.' } }, required: ['request'] } },
-  { name: 'task_status', description: 'Status of one task, or of the recent tasks, from the journal.',
+  { name: 'task_status', when: 'Check how one task or the recent tasks are going', tier: 1, category: 'tasks', description: 'Status of one task, or of the recent tasks, from the journal.',
     inputSchema: { type: 'object', properties: { task_id: { type: 'string' }, limit: { type: 'number', description: 'How many recent tasks (default 10, max 50).' } } } },
-  { name: 'undo_task', description: 'Undo a task: put its workdir back to before the agent changed it. Undoes immediately, then sends the owner an informational card on their phone. If a task is running it changes nothing and returns {blocked:true}.',
+  { name: 'undo_task', when: 'Roll a task back: restore its folder to before it ran', tier: 2, category: 'tasks', description: 'Undo a task: put its workdir back to before the agent changed it. Undoes immediately, then sends the owner an informational card on their phone. If a task is running it changes nothing and returns {blocked:true}.',
     inputSchema: { type: 'object', properties: { task_id: { type: 'string' } }, required: ['task_id'] } },
-  { name: 'digest', description: 'The while-you-were-away summary of the journal as JSON. Card titles are left out when the digest module has include_titles off.',
+  { name: 'digest', when: 'Summarize what happened while the owner was away', tier: 2, category: 'journal', description: 'The while-you-were-away summary of the journal as JSON. Card titles are left out when the digest module has include_titles off.',
     inputSchema: { type: 'object', properties: { since: { type: 'string', description: 'ISO date/time or a span like 30m, 12h, 2d. Default: the digest module default.' } } } },
-  { name: 'search_journal', description: 'Full-text search over past tasks, messages and room transcripts.',
+  { name: 'search_journal', when: 'Find something said or done in past tasks or chats', tier: 1, category: 'journal', description: 'Full-text search over past tasks, messages and room transcripts.',
     inputSchema: { type: 'object', properties: { query: { type: 'string' }, limit: { type: 'number' } }, required: ['query'] } },
 ];
-const IMPL = { ask_owner: askOwner, queue_task: queueTask, task_status: taskStatus, undo_task: undoTask, digest, search_journal: searchJournal };
+const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k); // own keys only: "constructor" and "__proto__" are not tools
+const IMPL = { ask_owner: askOwner, queue_task: queueTask, task_status: taskStatus, undo_task: undoTask, digest, search_journal: searchJournal, expand_tools: expandTools };
+const CORE_CATEGORIES = {
+  tasks: { title: 'Tasks', when: 'ask the owner, queue, check or undo a task' },
+  journal: { title: 'Journal', when: 'search the journal, or a while-you-were-away summary' },
+};
 
 // Tools that enabled modules offer through api.mcpTools: [{name, description, inputSchema, run(args, ctx)}].
 // ctx is the same module ctx the other module-backed tools get. Core tool names win a clash; a module tool is
@@ -250,17 +256,61 @@ function moduleTools() {
     for (const t of api.mcpTools) {
       if (!t || typeof t.name !== 'string' || typeof t.run !== 'function' || Object.prototype.hasOwnProperty.call(IMPL, t.name) || out.some(o => o.name === t.name)) { const k = `${name}/${t && t.name}`; if (!droppedTools.has(k)) { droppedTools.add(k); process.stderr.write(`taskmote-mcp: module ${name} tool dropped (bad shape or name taken): ${String(t && t.name).slice(0, 60)}
 `); } continue; }
-      out.push({ name: t.name, description: t.description, inputSchema: t.inputSchema, run: t.run, module: name });
+      out.push({ name: t.name, description: t.description, inputSchema: t.inputSchema, run: t.run, module: name, tier: t.tier, category: t.category, when: t.when });
     }
   }
   return out;
 }
 
-
-async function callTool(name, args, reqId, modTool) {
+// ---- tiers (lib/mcp-tiers.js) ----
+// Tier 1 tools are listed; tier 2 are folded into the expand_tools menu; tier 3 are reachable by exact name only.
+// expanded = tools this session has asked to see (listed from then on). tools/call works for any registered tool, listed or not;
+// the client's own permission rules apply to it. A tool shown by expand_tools reaches the client through tools/list (list_changed).
+const expanded = new Set();
+const notes = []; // notifications waiting to be written after the next reply
+const extraTools = []; // test seam: more core-like tools, never used in production
+const warn = msg => process.stderr.write('taskmote-mcp: ' + msg + String.fromCharCode(10));
+const allTools = () => [...TOOLS.map(t => ({ ...t, module: 'core' })), ...extraTools, ...moduleTools()];
+function categoryMap() {
+  const out = { ...CORE_CATEGORIES }, L = loaded();
+  if (L.err) return out;
+  for (const name of L.meta.keys()) {
+    const api = M.apiOf(L.mods, name), mc = api && api.mcpCategories;
+    if (!mc || typeof mc !== 'object') continue;
+    for (const id of Object.keys(mc)) if (mc[id] && typeof mc[id].title === 'string') out[id] = { title: mc[id].title, when: typeof mc[id].when === 'string' ? mc[id].when : '' };
+  }
+  return out;
+}
+const listPublic = () => T.listTools(allTools(), { categories: categoryMap(), expanded, warn });
+const taskIdNow = () => process.env.HARNESS_TASK_ID || null;
+function expandTools(a) {
+  const tools = allTools(), r = T.expand(tools, a, categoryMap(), warn);
+  if (r.error) throw new ToolError(r.error);
+  let grew = false;
+  for (const x of r.reveal) {
+    if (x.tier === 3) J.append({ type: 'tool_expand', tool: x.name, tier: 3, task_id: taskIdNow() });
+    if (!expanded.has(x.name)) { expanded.add(x.name); grew = true; }
+  }
+  if (grew) notes.push({ jsonrpc: '2.0', method: 'notifications/tools/list_changed' });
+  const out = { tools: r.tools, hint: 'Call these by their own name; they are listed from now on.' };
+  if (r.categories) out.categories = r.categories;
+  if (r.matches) out.matches = r.matches;
+  return out;
+}
+// Runs any registered tool by name (the same code path as tools/call). Tier 3 calls are journaled.
+async function runTool(name, a, reqId) {
+  const t = T.find(allTools(), name);
+  if (!t && has(IMPL, name)) return IMPL[name](a, reqId);
+  if (!t) throw new ToolError(`unknown tool ${clip(name, 40)}`);
+  if (T.tierOf(allTools(), name, warn) === 3) J.append({ type: 'tool_call', tool: name, tier: 3, task_id: taskIdNow() });
+  if (t.module === 'core') return has(IMPL, name) ? IMPL[name](a, reqId) : t.run(a, reqId);
+  if (!t.module) return t.run(a, reqId); // in-process test seam (extraTools)
+  return t.run(a, need(t.module).ctx);
+}
+async function callTool(name, args, reqId) {
   try {
     const a = args && typeof args === 'object' ? args : {};
-    const out = modTool ? await modTool.run(a, need(modTool.module).ctx) : await IMPL[name](a, reqId);
+    const out = await runTool(name, a, reqId);
     return { content: [{ type: 'text', text: JSON.stringify(out) }] };
   } catch (e) {
     return { isError: true, content: [{ type: 'text', text: e instanceof ToolError ? e.message : 'tool failed: ' + clip((e && e.message) || e, 300) }] };
@@ -273,14 +323,12 @@ async function handle(msg) {
   if (id === undefined) return null; // other notifications: no reply
   try {
     let result;
-    if (method === 'initialize') result = { protocolVersion: params.protocolVersion || PROTOCOL, capabilities: { tools: {} }, serverInfo: { name: NAME, version: '1' } };
+    if (method === 'initialize') result = { protocolVersion: params.protocolVersion || PROTOCOL, capabilities: { tools: { listChanged: true } }, serverInfo: { name: NAME, version: '1' } };
     else if (method === 'ping') result = {};
-    else if (method === 'tools/list') result = { tools: [...TOOLS, ...moduleTools().map(({ name, description, inputSchema }) => ({ name, description, inputSchema }))] };
+    else if (method === 'tools/list') result = { tools: listPublic() };
     else if (method === 'tools/call') {
-      const core = Object.prototype.hasOwnProperty.call(IMPL, params.name);
-      const modTool = core ? null : moduleTools().find(t => t.name === params.name);
-      if (!core && !modTool) throw Object.assign(new Error(`unknown tool ${clip(params.name, 40)}`), { code: -32602 });
-      result = await callTool(params.name, params.arguments, id, modTool);
+      if (!has(IMPL, params.name) && !T.find(allTools(), params.name)) throw Object.assign(new Error(`unknown tool ${clip(params.name, 40)}`), { code: -32602 });
+      result = await callTool(params.name, params.arguments, id);
     } else throw Object.assign(new Error(`method not found: ${clip(method, 40)}`), { code: -32601 });
     return { jsonrpc: '2.0', id, result };
   } catch (e) { return { jsonrpc: '2.0', id, error: { code: e.code || -32603, message: e.message } }; }
@@ -297,11 +345,11 @@ function serve(inp = process.stdin, out = process.stdout) {
       if (!line) continue;
       let msg;
       try { msg = JSON.parse(line); } catch { out.write(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'parse error' } }) + '\n'); continue; }
-      handle(msg).then(res => { if (res) out.write(JSON.stringify(res) + '\n'); });
+      handle(msg).then(res => { if (res) out.write(JSON.stringify(res) + '\n'); while (notes.length) out.write(JSON.stringify(notes.shift()) + '\n'); });
     }
   });
   inp.on('end', () => { setTimeout(() => process.exit(0), 50); });
 }
 
 if (require.main === module) serve();
-module.exports = { handle, serve, TOOLS, taskViews };
+module.exports = { handle, serve, TOOLS, taskViews, extraTools, notes, allTools };

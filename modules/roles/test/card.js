@@ -65,6 +65,13 @@ const put = (name, buf) => { const f = path.join(work, name); fs.mkdirSync(path.
     check('role_list rows name the card fields only', rowA && rowA.card === undefined && rowA.card_fields.join() === 'voice,talking,working', JSON.stringify(rowA));
     check('role_list row without a card has no card_fields', !('card_fields' in ls.roles.find(r => r.id === old.id)));
     check('role_list {id} by name works, unknown id refused', tools.role_list.run({ id: 'captain' }, ctx).role.id === a.id && /no role/.test(throws(() => tools.role_list.run({ id: 'nobody' }, ctx)) || ''));
+    // both forms after the merge with the id form: a page of the list (total / offset / more) and one role with its whole card
+    const pg = tools.role_list.run({ limit: 1 }, ctx);
+    check('role_list without id is a page: total, offset, more, one row, card_fields kept', pg.total === ls.total && pg.roles.length === 1 && pg.offset === 0 && pg.more === (pg.total > 1) && typeof pg.opencode_go_turns_today === 'number', JSON.stringify(pg));
+    const pq = tools.role_list.run({ query: 'captain' }, ctx);
+    check('role_list query finds the role and its row still names the card fields', pq.roles.length >= 1 && pq.roles.every(r => r.card === undefined) && pq.roles.some(r => r.id === a.id && r.card_fields.length > 0), JSON.stringify(pq));
+    const pi = tools.role_list.run({ id: a.id, limit: 1, offset: 5, query: 'zzz' }, ctx);
+    check('role_list with id ignores the paging arguments and returns only that role', pi.role && pi.role.id === a.id && pi.roles === undefined && pi.total === undefined, JSON.stringify(pi));
 
     // update: merge, clear
     const u = tools.role_update.run({ role: a.id, card: { voice: 'bright' } }, ctx);

@@ -10,6 +10,8 @@ const K = require('./cards');
 const DEFAULTS = require('./default-risky.json').rules;
 
 const clip = (s, n) => { s = String(s || '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 3) + '...' : s; };
+// Same limit, but cut in the middle (head + '...' + tail) so the start and the end (a file name) both show.
+const { clipMid } = require('../../lib/clip');
 // Ids are 6 hex digits, 12 after repeated collisions (cards.js reserveId).
 const ID_RE = /\bcard-(?:[0-9a-f]{12}|[0-9a-f]{6})\b/i;
 
@@ -89,6 +91,8 @@ const whereOf = cwd => (cwd ? path.resolve(String(cwd)) : null);
 // ['allow:card', ...] uses up the owner's yes; ['approval_card', ...] blocks while a card waits or after a no;
 // ['ask:<rule>', ...] only when promptTool (the prompt tool raises its own live card).
 async function cardFor(io, task, tool, ti, rule, settings, promptTool, cwd) {
+  const big = K.tooBig(ti);
+  if (big) return ['card_input_too_big', big];
   await K.sweep(io);
   const hash = K.hashOf(tool, ti || {}), where = whereOf(cwd);
   const mine = [...K.fold(io.J.readAll().records).values()].filter(c => c.task_id === task && c.sha256 === hash && (c.cwd || null) === where);
@@ -107,7 +111,7 @@ async function cardFor(io, task, tool, ti, rule, settings, promptTool, cwd) {
   if (promptTool) return ['ask:' + rule.id, rule.summary || rule.id];
   const wait = mine.find(c => c.state === 'pending' && !K.isExpired(c));
   const card = wait || await K.create(io, { task_id: task, tool, input: ti || {}, rule: rule.id, cwd: where,
-    summary: `${rule.summary || rule.id}: ${clip(isShell(tool) ? ti.command : ti.url || JSON.stringify(ti), 160)}${where ? ` (in ${clip(where, 80)})` : ''}` }, settings);
+    summary: `${rule.summary || rule.id}: ${clipMid(isShell(tool) ? ti.command : ti.url || JSON.stringify(ti), 160)}${where ? ` (in ${clipMid(where, 80)})` : ''}` }, settings);
   return ['approval_card', `waiting for approval card ${card.card_id} (${card.summary}); stop and end your turn, tell the owner the card id, and do not retry or reword the call`];
 }
 
@@ -180,7 +184,7 @@ function statusLines(Jn) {
 
 // Routes (mounted at /m/approval-cards/...). The server that calls them is S1;
 // who may reach them (the owner only) is the server's job, not this module's.
-const view = c => ({ decision: c.decision || null, card_id: c.card_id, task_id: c.task_id, summary: c.summary, rule: c.rule, created_at: c.created_at, expires_at: c.expires_at, live: !!c.live, unclear: c.unclear });
+const view = c => ({ decision: c.decision || null, card_id: c.card_id, task_id: c.task_id, tool: c.tool, input: c.input, summary: c.summary, rule: c.rule, created_at: c.created_at, expires_at: c.expires_at, live: !!c.live, unclear: c.unclear });
 async function listCards(ctx) {
   const io = ioOf(ctx), j = io.J;
   await K.sweep(io);

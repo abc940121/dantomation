@@ -85,12 +85,12 @@ const owner = { kind: 'owner', id: 'test' };
     check('device: a journal failure is a 500 with a short error', dFail.status === 500 && typeof dFail.json.error === 'string' && dFail.json.error.length < 200, JSON.stringify(dFail));
     check('device: a journal failure creates no group', groupsNow().length === n1 && !groupsNow().some(g => g.name === 'Phone Fail'));
     const oFail = await post({ name: 'Owner Best Effort', members: [ann.id] }, owner);
-    check('owner: a journal failure is still a 201 (best effort)', oFail.status === 201 && groupsNow().some(g => g.id === oFail.json.id), JSON.stringify(oFail));
+    check('owner: a journal failure is a 500 and creates no group (same path as a phone)', oFail.status === 500 && groupsNow().length === n1 && !groupsNow().some(g => g.name === 'Owner Best Effort'), JSON.stringify(oFail));
     const c0 = lines('group_created').length;
     J.append = rec => { if (rec && rec.type === 'group_created') seen = rec; return realAppend.call(J, rec); };
     const dBad = await post({ name: 'Phone Bad', members: ['r-00000000'] }, phone);
     const dDup = await post({ name: 'phone order', members: [ann.id] }, phone);
-    check('device: an invalid request is a 400 and writes no group_created line', dBad.status === 400 && dDup.status === 400 && lines('group_created').length === c0 && groupsNow().length === n1 + 1, JSON.stringify([dBad, dDup]));
+    check('device: an invalid request is a 400 and writes no group_created line', dBad.status === 400 && dDup.status === 400 && lines('group_created').length === c0 && groupsNow().length === n1, JSON.stringify([dBad, dDup]));
     J.append = realAppend;
     await jobs.stop();
   } catch (e) { console.log('FAIL crashed:', e && e.stack); results.push(false); }

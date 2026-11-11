@@ -22,6 +22,7 @@
     <span id="conn" class="conn" data-state="connecting">connecting</span>
     <button id="new-role" class="badge" type="button" data-i18n="role.new">New role</button>
     <button id="new-group" class="badge" type="button" data-i18n="group.new">New group</button>
+    <button id="edit-group" class="badge" type="button" data-i18n="group.edit" hidden>Edit group</button>
     <button id="card-btn" class="badge" type="button" data-i18n="card.open" hidden>Role card</button>
     <button id="lang-btn" class="badge" type="button" aria-label="Change language" data-i18n="lang.change" data-i18n-aria-label="lang.change.aria">Language</button>
   </header>
@@ -62,6 +63,16 @@
       <fieldset id="group-members"><legend data-i18n="group.members">Members</legend><div id="group-list"></div></fieldset>
       <p id="group-err" class="hint" role="alert" hidden></p>
       <div class="btns"><button id="group-cancel" type="button" data-i18n="group.cancel">Cancel</button><button id="group-create" type="submit" data-i18n="group.create">Create</button></div>
+    </form>
+  </div>
+  <div id="edit-dlg" class="overlay" hidden>
+    <form id="edit-form" class="dlg" role="dialog" aria-modal="true" aria-labelledby="edit-title" novalidate>
+      <h2 id="edit-title" data-i18n="group.edit.title">Edit group</h2>
+      <label for="edit-name" data-i18n="group.name">Group name</label>
+      <input id="edit-name" type="text" maxlength="40" autocomplete="off">
+      <fieldset id="edit-members"><legend data-i18n="group.members">Members</legend><div id="edit-list"></div></fieldset>
+      <p id="edit-err" class="hint" role="alert" hidden></p>
+      <div class="btns"><button id="edit-archive" type="button" data-i18n="group.archive">Archive group</button><button id="edit-cancel" type="button" data-i18n="group.cancel">Cancel</button><button id="edit-save" type="submit" data-i18n="group.save">Save</button></div>
     </form>
   </div>
   <div id="role-dlg" class="overlay" hidden>

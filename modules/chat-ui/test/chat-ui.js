@@ -434,6 +434,7 @@ async function pageTests() {
     return o;
   };
   const run = async (lang, answer, search = '', opt = {}) => {
+    const ticked = Array.isArray(opt) ? opt : (opt.ticked || ['r-11111111']); if (Array.isArray(opt)) opt = {};
     const els = new Map(), store = new Map([...(lang ? [[I.KEY, lang]] : []), ...Object.entries(opt.seed || {})]), calls = [], timers = [], handlers = {}, raf = [], ints = [], urls = [];
     // the static texts of index.html (data-i18n) as elements, so applyStatic() has something real to fill
     const stat = [...html.matchAll(/data-i18n="([^"]+)"/g)].map(m => { const e = el(); e.key = m[1]; e.getAttribute = a => (a === 'data-i18n' ? m[1] : null); return e; });
@@ -442,7 +443,7 @@ async function pageTests() {
     const win = { DantoI18n: I, DantoState: D, DantoRooms: require(path.join(UI, 'rooms.js')), DantoClean: require(path.join(UI, 'clean.js')), DantoCardForm: require(path.join(UI, 'cardform.js')), addEventListener: (ev, f) => { handlers[ev] = f; } };
     const ctx = { window: win, DantoState: D, location: { hash: opt.hash || '', pathname: '/m/chat-ui/ui/index.html', search, origin: 'http://127.0.0.1:1', href: 'http://127.0.0.1:1/m/chat-ui/ui/' }, history: { replaceState(a, b, u) { urls.push(u); const i = String(u).indexOf('#'); ctx.location.hash = i < 0 ? '' : String(u).slice(i); } },
       localStorage: { getItem: k => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)) },
-      document: { getElementById: get, createElement: () => el(), createTextNode: t => ({ textContent: String(t) }), title: '', querySelectorAll: s => (s === '[data-i18n]' ? stat : s.includes('input:checked') ? [{ value: 'r-11111111' }] : []), documentElement: {}, addEventListener() {}, body: el(), visibilityState: 'visible' },
+      document: { getElementById: get, createElement: () => el(), createTextNode: t => ({ textContent: String(t) }), title: '', querySelectorAll: s => (s === '[data-i18n]' ? stat : s.includes('input:checked') ? ticked.map(value => ({ value })) : []), documentElement: {}, addEventListener() {}, body: el(), visibilityState: 'visible' },
       fetch: (u, o) => { calls.push(String(u) + ' ' + ((o && o.method) || 'GET')); return Promise.resolve(answer(String(u), o || {})); },
       requestAnimationFrame: f => { raf.push(f); return raf.length; }, setTimeout: f => { timers.push(f); return timers.length; }, setInterval: f => { ints.push(f); return ints.length; }, clearTimeout() {}, clearInterval() {},
       console: { log() {}, error() {}, warn() {}, info() {} }, btoa: s => Buffer.from(s, 'latin1').toString('base64'), AbortController, TextDecoder, URL, navigator: opt.nav || {} };
@@ -664,6 +665,73 @@ async function pageTests() {
   const ph = s => (String(s).match(/\{\w+\}/g) || []).join();
   check('i18n: the home-screen strings exist in both languages, zh-TW is translated and keeps the placeholders', hsKeys.length >= 12 && hsKeys.every(k => I.TABLE['zh-TW'][k] && I.TABLE['zh-TW'][k] !== I.TABLE.en[k] && ph(I.TABLE.en[k]) === ph(I.TABLE['zh-TW'][k])) && /\{time\}/.test(I.TABLE.en['hs.step4']), hsKeys.join());
   check('i18n: every hs.* key used in index.html exists in both languages', [...html.matchAll(/data-i18n="(hs\.[^"]+)"/g)].every(m => I.TABLE.en[m[1]] && I.TABLE['zh-TW'][m[1]]));
+
+  // 8. Edit group: one PATCH with only what changed, 403 / 404 / last-member handled, archive needs a second tap
+  const EDIT_KEYS = ['group.edit', 'group.edit.title', 'group.save', 'group.saving', 'group.archive', 'group.archive.confirm', 'group.archiving', 'group.err.last', 'group.err.edit_fail', 'group.err.edit_forbidden'];
+  check('edit group: index.html has the button and the dialog (name, list, error line, archive, cancel, save)', ['edit-group', 'edit-dlg', 'edit-form', 'edit-name', 'edit-list', 'edit-err', 'edit-archive', 'edit-cancel', 'edit-save'].every(id => html.includes('id="' + id + '"')) && /id="edit-err"[^>]*role="alert"/.test(html));
+  check('edit group: every new key exists in en and zh-TW with different texts', EDIT_KEYS.every(k => I.t('en', k) !== k && I.t('zh-TW', k) !== k && I.t('en', k) !== I.t('zh-TW', k)));
+  const G = 'g-aaaaaaaa', ANN = 'r-11111111', BOB = 'r-22222222';
+  const mem = (...ids) => ids.map(id => ({ id, name: id }));
+  const editRun = async (lang, members, patchAnswer, ticked, search = '?room=' + G) => {
+    const sent = [];
+    const r = await run(lang, (u, o) => {
+      if (o.method === 'PATCH') { sent.push({ u, body: JSON.parse(o.body) }); return patchAnswer(); }
+      if (u === '/m/rooms/rooms') return json(200, { rooms: [{ id: G, name: 'Alpha', members }, { id: 'plain', name: 'Plain', members }] });
+      if (u.startsWith('/api/bots')) return json(200, bots);
+      if (u.startsWith('/api/events')) return new Response('', { status: 200 });
+      return json(200, []);
+    }, search, ticked);
+    await r.settle(); await r.frame();
+    r.sent = sent;
+    return r;
+  };
+  const okView = () => json(200, { id: G, name: 'Crew', members: mem('main', ANN) });
+  const submitEdit = async (r, name) => { r.get('edit-group').handlers.click(); if (name !== undefined) r.get('edit-name').value = name; await r.get('edit-form').handlers.submit({ preventDefault() {} }); await r.settle(); };
+  {
+    const inGroup = await editRun('en', mem('main', ANN), okView, [ANN]);
+    const noRoom = await editRun('en', mem('main', ANN), okView, [ANN], '');
+    const plain = await editRun('en', mem('main', ANN), okView, [ANN], '?room=plain');
+    check('edit group: the button shows in a group room only (hidden with no room or in a non-group room)', inGroup.get('edit-group').hidden === false && noRoom.get('edit-group').hidden === true && plain.get('edit-group').hidden === true);
+    inGroup.get('edit-group').handlers.click();
+    check('edit group: the dialog opens with the current name', inGroup.get('edit-dlg').hidden === false && inGroup.get('edit-name').value === 'Alpha');
+    const renameOnly = await editRun('en', mem('main', ANN), okView, [ANN]);
+    await submitEdit(renameOnly, '  Crew ');
+    check('edit group: a rename sends PATCH {name} and nothing else', renameOnly.sent.length === 1 && renameOnly.sent[0].u === '/m/roles/groups/' + G && JSON.stringify(renameOnly.sent[0].body) === '{"name":"Crew"}', JSON.stringify(renameOnly.sent));
+    check('edit group: success closes the dialog and re-reads the room list', renameOnly.get('edit-dlg').hidden === true && renameOnly.calls.filter(c => c === '/m/rooms/rooms GET').length >= 2);
+    const addOnly = await editRun('en', mem('main'), okView, [ANN]);
+    await submitEdit(addOnly);
+    check('edit group: a newly ticked role sends only add', addOnly.sent.length === 1 && JSON.stringify(addOnly.sent[0].body) === JSON.stringify({ add: [ANN] }), JSON.stringify(addOnly.sent));
+    const rmOnly = await editRun('en', mem('main', ANN, BOB), okView, [ANN]);
+    await submitEdit(rmOnly);
+    check('edit group: an unticked role sends only remove', rmOnly.sent.length === 1 && JSON.stringify(rmOnly.sent[0].body) === JSON.stringify({ remove: [BOB] }), JSON.stringify(rmOnly.sent));
+    const none = await editRun('en', mem('main', ANN), okView, [ANN]);
+    await submitEdit(none);
+    check('edit group: nothing changed sends nothing', none.sent.length === 0 && none.get('edit-dlg').hidden === true);
+  }
+  for (const lang of ['en', 'zh-TW']) {
+    const empty = await editRun(lang, mem('main', ANN), okView, []);
+    await submitEdit(empty);
+    check(lang + ' edit group: unticking every member is refused here with the translated text, nothing sent', empty.sent.length === 0 && empty.get('edit-err').textContent === I.t(lang, 'group.err.last') && empty.get('edit-err').hidden === false && empty.get('edit-dlg').hidden === false);
+    const forb = await editRun(lang, mem('main', ANN), () => json(403, { error: 'forbidden' }), [ANN]);
+    await submitEdit(forb, 'Crew');
+    check(lang + ' edit group 403: shows the forbidden text, keeps the dialog and the typed name', forb.get('edit-err').textContent === I.t(lang, 'group.err.edit_forbidden') && forb.get('edit-err').hidden === false && forb.get('edit-dlg').hidden === false && forb.get('edit-name').value === 'Crew' && forb.sent.length === 1);
+    const bad = await editRun(lang, mem('main', ANN), () => json(400, { error: 'a group with that name exists' }), [ANN]);
+    await submitEdit(bad, 'Crew');
+    check(lang + ' edit group 400: shows the server text and keeps the dialog', bad.get('edit-err').textContent === 'a group with that name exists' && bad.get('edit-dlg').hidden === false);
+    const gone = await editRun(lang, mem('main', ANN), () => json(404, { error: 'no such group' }), [ANN]);
+    const n0 = gone.calls.filter(c => c === '/m/rooms/rooms GET').length;
+    await submitEdit(gone, 'Crew');
+    check(lang + ' edit group 404: closes the dialog and re-reads the room list', gone.get('edit-dlg').hidden === true && gone.calls.filter(c => c === '/m/rooms/rooms GET').length > n0);
+  }
+  {
+    const ar = await editRun('en', mem('main', ANN), () => json(200, { id: G, name: 'Alpha', members: mem('main', ANN), archived_at: 'now' }), [ANN]);
+    ar.get('edit-group').handlers.click();
+    await ar.get('edit-archive').handlers.click(); await ar.settle();
+    check('edit group: the first Archive tap only asks for confirmation (nothing sent)', ar.sent.length === 0 && ar.get('edit-archive').textContent === I.t('en', 'group.archive.confirm') && ar.get('edit-dlg').hidden === false);
+    await ar.get('edit-archive').handlers.click(); await ar.settle();
+    check('edit group: the second tap sends PATCH {archived:true}', ar.sent.length === 1 && JSON.stringify(ar.sent[0].body) === '{"archived":true}', JSON.stringify(ar.sent));
+    check('edit group: archived closes the dialog', ar.get('edit-dlg').hidden === true);
+  }
 }
 
 (async () => {

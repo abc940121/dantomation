@@ -71,22 +71,22 @@ async function main() {
   check('ping answers', (await s.call('ping', {})).result !== undefined);
   const list = await s.call('tools/list', {});
   const names = (list.result.tools || []).map(t => t.name).sort();
-  check('tools/list: the six tools, each with an inputSchema', JSON.stringify(names) === JSON.stringify(['ask_owner', 'digest', 'queue_task', 'search_journal', 'task_status', 'undo_task']) && list.result.tools.every(t => t.inputSchema && t.inputSchema.type === 'object' && t.description), names);
+  check('tools/list: the tier 1 tools (digest and undo_task are folded), each with an inputSchema', JSON.stringify(names) === JSON.stringify(['ask_owner', 'expand_tools', 'queue_task', 'search_journal', 'task_status']) && list.result.tools.every(t => t.inputSchema && t.inputSchema.type === 'object' && t.description), names);
   const unk = await s.call('tools/call', { name: 'nope', arguments: {} });
   check('unknown tool: JSON-RPC error -32602', unk.error && unk.error.code === -32602, unk);
   const unm = await s.call('nope', {});
   check('unknown method: JSON-RPC error -32601', unm.error && unm.error.code === -32601, unm);
 
   // no flag, old flags: every tool is always listed
-  const ALL = ['ask_owner', 'digest', 'queue_task', 'search_journal', 'task_status', 'undo_task'];
+  const ALL = ['ask_owner', 'expand_tools', 'queue_task', 'search_journal', 'task_status'];
   const ro = startServer(env);
   const roNames = ((await ro.call('tools/list', {})).result.tools || []).map(t => t.name).sort();
-  check('no flag: all six tools listed', JSON.stringify(roNames) === JSON.stringify(ALL), roNames);
+  check('no flag: all tier 1 tools listed', JSON.stringify(roNames) === JSON.stringify(ALL), roNames);
   ro.stop();
   for (const [label, argv, e2] of [['--no-ask', ['--no-ask'], env], ['env TASKMOTE_MCP_WRITE=1', [], { ...env, TASKMOTE_MCP_WRITE: '1' }]]) {
     const x = startServer(e2, argv);
     const xn = ((await x.call('tools/list', {})).result.tools || []).map(t => t.name).sort();
-    check(`${label} is accepted and changes nothing: all six tools`, JSON.stringify(xn) === JSON.stringify(ALL), xn);
+    check(`${label} is accepted and changes nothing: all tier 1 tools`, JSON.stringify(xn) === JSON.stringify(ALL), xn);
     x.stop();
   }
 
@@ -183,7 +183,9 @@ async function main() {
   const rl = mkEnv('roles', { roles: true });
   const rs = startServer(rl.env);
   const rnames = ((await rs.call('tools/list', {})).result.tools || []).map(t => t.name).sort();
-  check('module tools: the six plus the role and group tools, each with a schema', JSON.stringify(rnames) === JSON.stringify([...ALL, 'group_create', 'group_list', 'group_remove', 'group_update', 'role_ask', 'role_create', 'role_list', 'role_remove', 'role_update'].sort()), rnames);
+  check('module tools: the tier 1 tools plus role_ask and role_list (role_create / role_update / role_remove are folded)', JSON.stringify(rnames) === JSON.stringify([...ALL, 'role_ask', 'role_list'].sort()), rnames);
+  const rex = await rs.tool('expand_tools', { category: 'roles' });
+  check('module tools: the role and group tools are folded, and expand_tools category roles returns them all', !rex.err && rex.json && ['group_create', 'group_list', 'group_remove', 'group_update', 'role_create', 'role_remove', 'role_update'].every(n => (rex.json.tools || []).some(t => t.name === n)), rex);
   const rcr = await rs.tool('role_create', { name: 'Captain', persona: 'You are a calm ship captain.' });
   check('role_create: returns the role', !rcr.err && rcr.json && /^r-[0-9a-f]{8}$/.test(rcr.json.id) && rcr.json.name === 'Captain', rcr);
   const rfile = path.join(rl.env.HARNESS_STATE_DIR, 'm', 'roles', 'roles.json');

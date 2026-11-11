@@ -27,6 +27,7 @@ const ROOT = path.resolve(__dirname, '..');
 const J = require(path.join(ROOT, 'lib', 'journal'));
 const K = require(path.join(ROOT, 'modules', 'approval-cards', 'cards'));
 const A = require(path.join(ROOT, 'bin', 'approve-mcp'));
+const MODS = require(path.join(ROOT, 'lib', 'modules'));
 
 const results = [];
 const check = (label, ok, info) => { results.push(!!ok); console.log(`${ok ? 'PASS' : 'FAIL'} ${label}${!ok && info !== undefined ? ': ' + String(typeof info === 'string' ? info : JSON.stringify(info)).slice(0, 300) : ''}`); };
@@ -336,6 +337,32 @@ async function main() {
     await byId(c1.card_id, 'yes');
     const r1 = await p1;
     check('two cards: a yes on the first allows the first call unchanged; only that card is used', r1.behavior === 'allow' && r1.updatedInput.command === 'winget install first' && recs().some(x => x.type === 'card_used' && x.card_id === c1.card_id) && !recs().some(x => x.type === 'card_used' && x.card_id === c2.card_id), r1);
+  }
+
+  // item 2: a card for a call whose serialized input is over 256 KB is refused with a clear reason; no card, no journal record
+  {
+    const OVER = { command: 'winget install ' + 'z'.repeat(256 * 1024) }, UNDER = { command: 'winget install ' + 'z'.repeat(200 * 1024) };
+    const RAISE = require(path.join(ROOT, 'modules', 'approval-cards')).api.raise;
+    const n0 = recs().filter(r => r.type === 'card').length;
+    const r1 = await RAISE(io, { task_id: 'tc1', tool: 'Bash', ti: OVER, kind: 'redline', reason: 'needs a yes' });
+    check('card cap: hook-only, an input over 256 KB is blocked with a clear reason and no card is created', r1 && r1[0] === 'card_input_too_big' && /256 KB/.test(r1[1]) && /no card was raised/.test(r1[1]) && recs().filter(r => r.type === 'card').length === n0, r1 && r1[1]);
+    const r2 = await RAISE(io, { task_id: 'tc2', tool: 'Bash', ti: UNDER, kind: 'redline', reason: 'needs a yes' });
+    check('card cap: hook-only, an input under the cap still gets its card', r2 && r2[0] === 'approval_card' && !!cardOf('tc2'), r2);
+    const d1 = await A.decide({ tool_name: 'Bash', input: OVER }, { io, task_id: 'tc3', classify: async () => ['ask', 'redline', 'needs a yes'], beat: () => true });
+    check('card cap: prompt tool, an input over 256 KB is denied with a clear reason and no card', d1.behavior === 'deny' && /256 KB/.test(d1.message) && /needs a yes/.test(d1.message) && !cardOf('tc3') && recs().filter(r => r.type === 'card').length === n0 + 1, d1);
+    let thrown = null; try { await K.create(io, { task_id: 'tc4', tool: 'Bash', input: OVER, summary: 's', rule: 'r' }, {}); } catch (e) { thrown = e; }
+    check('card cap: K.create itself refuses an over-cap input and journals nothing', thrown && /256 KB/.test(thrown.message) && !cardOf('tc4'), thrown && thrown.message);
+  }
+
+  // review finding 5: the cap counts the bytes that are stored (UTF-8), not UTF-16 code units
+  {
+    const WIDE = { command: 'winget install demo', pad: '漢'.repeat(100000) };
+    const RAISE2 = require(path.join(ROOT, 'modules', 'approval-cards')).api.raise;
+    const n1 = recs().filter(r => r.type === 'card').length;
+    const w1 = await RAISE2(io, { task_id: 'tc5', tool: 'Bash', ti: WIDE, kind: 'redline', reason: 'needs a yes' });
+    check('card cap: a wide-character input over 256 KB in UTF-8 bytes is blocked, no card', w1 && w1[0] === 'card_input_too_big' && recs().filter(r => r.type === 'card').length === n1, w1 && w1[1]);
+    const w2 = await A.decide({ tool_name: 'Bash', input: WIDE }, { io, task_id: 'tc6', classify: async () => ['ask', 'redline', 'needs a yes'], beat: () => true });
+    check('card cap: prompt tool, a wide-character input over 256 KB in UTF-8 bytes is denied', w2.behavior === 'deny' && !cardOf('tc6'), w2);
   }
 
   fs.rmSync(tmp, { recursive: true, force: true });

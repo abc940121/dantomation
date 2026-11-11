@@ -132,6 +132,7 @@
   // api() throws Error('unauthorized') after opening the pairing screen: callers show no network error for it.
   const isAuth = err => !!err && err.message === 'unauthorized';
   const post = (path, data) => api(path, { method: 'POST', body: JSON.stringify(data || {}) });
+  const patch = (path, data) => api(path, { method: 'PATCH', body: JSON.stringify(data || {}) });
 
   function showAuth() { ui.needAuth = true; $('auth').hidden = false; }
   $('auth-form').addEventListener('submit', e => {
@@ -302,6 +303,11 @@
       container: { border: 'none', borderRadius: '0', boxShadow: 'none' },
       message: { backgroundMe: isDark ? '#1f3a66' : '#dbe8ff', background: isDark ? '#23282e' : '#f0f2f5', colorUsername: accent } };
   }
+  // The rooms prop must list a conversation before room-id points at it, or the component throws on roomId.
+  function syncRooms() {
+    const ro = JSON.stringify(roomObjects());
+    if (last.rooms !== ro) { last.rooms = ro; setProp(chat, 'rooms', ro); chat.setAttribute('rooms-loaded', 'true'); }
+  }
   function drawChat() {
     if (!chat) return;
     const th = dark() ? 'dark' : 'light';
@@ -311,8 +317,7 @@
       IS_ONLINE: tr('vac.IS_ONLINE'), LAST_SEEN: tr('vac.LAST_SEEN'), IS_TYPING: tr('vac.IS_TYPING'), CANCEL_SELECT_MESSAGE: tr('vac.CANCEL_SELECT_MESSAGE') });
     if (last.tm !== tm) { last.tm = tm; setProp(chat, 'textMessages', tm); }
     const c = curConv();
-    const ro = JSON.stringify(roomObjects());
-    if (last.rooms !== ro) { last.rooms = ro; setProp(chat, 'rooms', ro); chat.setAttribute('rooms-loaded', 'true'); }
+    syncRooms();
     const ms = JSON.stringify(messagesOf(c));
     const sig = c.id + '\n' + ms;
     if (last.msgs !== sig) { last.msgs = sig; setProp(chat, 'messages', ms); chat.setAttribute('messages-loaded', 'true'); }
@@ -320,7 +325,7 @@
     else if (!last.cur) { const fo = D.firstOpen(window.innerWidth > 600, booted, ui.mainRole); if (fo !== null) { last.cur = c.id; if (fo) chat.setAttribute('room-id', c.id); } }
   }
   // Open a conversation from code (the "waiting" button); on a phone this also leaves the list pane.
-  function openConv(id) { setCurrent(id); last.cur = id; chat.setAttribute('room-id', id); render(); }
+  function openConv(id) { setCurrent(id); syncRooms(); last.cur = id; chat.setAttribute('room-id', id); render(); }
   function setCurrent(id) {
     ui.cur = id; last.msgs = '';
     if (id.indexOf('room:') === 0) selectRoom(id.slice(5)); else { ui.room = null; roomGen++; rooms.msgs = []; urlRoom(); }
@@ -399,7 +404,7 @@
   let queued = false;
   function render() { if (!queued) { queued = true; requestAnimationFrame(() => { queued = false; draw(); }); } }
   function draw() {
-    drawTop(); drawQuestions(); drawCards(); drawUndo(); drawCardBtn();
+    drawTop(); drawQuestions(); drawCards(); drawUndo(); drawCardBtn(); drawEditBtn();
     $('strip').hidden = !($('questions').childNodes.length || $('cards').childNodes.length || $('undo').childNodes.length);
     $('send-msg').hidden = !$('send-msg').textContent;
     drawChat();
@@ -629,12 +634,73 @@
     if (!made) return groupErr(msg); // an empty msg (pairing screen open) shows nothing and keeps the input
     $('group-dlg').hidden = true;
     await loadRooms(true);
-    ui.cur = 'room:' + made.id; selectRoom(made.id);
+    syncRooms(); ui.cur = 'room:' + made.id; selectRoom(made.id); last.cur = ui.cur; chat.setAttribute('room-id', ui.cur); render();
   }
   $('new-group').addEventListener('click', openGroupDlg);
   $('group-cancel').addEventListener('click', closeGroupDlg);
   $('group-form').addEventListener('submit', submitGroup);
   $('group-dlg').addEventListener('keydown', e => { if (e.key === 'Escape') closeGroupDlg(); });
+
+  // ---- "Edit group": rename, add or remove members, archive. One PATCH with only what changed; archive needs a second tap.
+  const edt = { busy: false, id: '', orig: [], armed: false };
+  const curGroup = () => (ui.room && /^g-[0-9a-f]{8}$/.test(ui.room) && rooms.list.find(r => r.id === ui.room)) || null;
+  function drawEditBtn() { $('edit-group').hidden = !curGroup(); }
+  function editErr(msg) { const e = $('edit-err'); e.textContent = msg || ''; e.hidden = !msg; }
+  function disarm() { edt.armed = false; $('edit-archive').classList.remove('armed'); $('edit-archive').textContent = tr('group.archive'); }
+  function openEditDlg() {
+    const g = curGroup(); if (!g) return;
+    edt.id = g.id; edt.orig = (g.memberIds || []).filter(id => ROLE_ID.test(id)); edt.armed = false;
+    $('edit-name').value = g.name; editErr(''); disarm();
+    const roles = S.order.filter(id => ROLE_ID.test(id));
+    const list = $('edit-list');
+    list.replaceChildren(...roles.map(id => { const i = h('input', { type: 'checkbox', value: id }); i.checked = edt.orig.includes(id); return h('label', { class: 'pick' }, i, h('span', null, S.bots[id].name)); }));
+    $('edit-dlg').hidden = false; $('edit-name').focus();
+  }
+  function closeEditDlg() { if (edt.busy) return; $('edit-dlg').hidden = true; $('edit-group').focus(); }
+  // Sends the PATCH; true when the group changed. Failures stay in the dialog (403 and 400 keep the input); a 404 means the group is gone.
+  async function sendEdit(body, busyBtn, busyKey, doneKey) {
+    edt.busy = true; editErr(''); const btn = $(busyBtn); btn.disabled = true; btn.textContent = tr(busyKey);
+    let msg = '', done = false, gone = false;
+    try {
+      const r = await patch('/m/roles/groups/' + edt.id, body);
+      if (r.ok) done = true;
+      else if (r.status === 403) msg = tr('group.err.edit_forbidden');
+      else if (r.status === 404) gone = true;
+      else msg = (r.body && typeof r.body.error === 'string' && r.body.error) || tr('group.err.edit_fail');
+    } catch (err) { msg = isAuth(err) ? '' : tr('group.err.edit_fail'); }
+    edt.busy = false; btn.disabled = false; btn.textContent = tr(doneKey);
+    if (gone) { $('edit-dlg').hidden = true; await loadRooms(true); render(); return false; }
+    if (!done) { editErr(msg); return false; }
+    $('edit-dlg').hidden = true;
+    await loadRooms(true); render();
+    return true;
+  }
+  async function submitEdit(e) {
+    if (e) e.preventDefault();
+    if (edt.busy) return;
+    const g = curGroup(); if (!g) return;
+    const name = $('edit-name').value.trim();
+    const now = [...document.querySelectorAll('#edit-list input:checked')].map(x => x.value);
+    if (!name || [...name].length > 40) return editErr(tr('group.err.name'));
+    if (!now.length) return editErr(tr('group.err.last'));
+    const body = {}, add = now.filter(id => !edt.orig.includes(id)), remove = edt.orig.filter(id => !now.includes(id));
+    if (name !== g.name) body.name = name;
+    if (add.length) body.add = add;
+    if (remove.length) body.remove = remove;
+    if (!Object.keys(body).length) { $('edit-dlg').hidden = true; return; }
+    await sendEdit(body, 'edit-save', 'group.saving', 'group.save');
+  }
+  async function archiveEdit() {
+    if (edt.busy) return;
+    if (!edt.armed) { edt.armed = true; $('edit-archive').classList.add('armed'); $('edit-archive').textContent = tr('group.archive.confirm'); return; }
+    const ok = await sendEdit({ archived: true }, 'edit-archive', 'group.archiving', 'group.archive');
+    if (ok) { edt.armed = false; $('edit-archive').classList.remove('armed'); ui.room = null; ui.cur = null; rooms.msgs = []; roomGen++; urlRoom(); render(); } else disarm();
+  }
+  $('edit-group').addEventListener('click', openEditDlg);
+  $('edit-cancel').addEventListener('click', closeEditDlg);
+  $('edit-form').addEventListener('submit', submitEdit);
+  $('edit-archive').addEventListener('click', archiveEdit);
+  $('edit-dlg').addEventListener('keydown', e => { if (e.key === 'Escape') closeEditDlg(); });
 
   // The roles module names the main role (and makes the default one on first use); 404 = module off, keep the config main bot.
   // No main role yet is {id:null} (an old server answers 404, module off too); either is remembered for 5 minutes, so the roster refresh does not ask again and again.
@@ -675,7 +741,7 @@
     if (!made) return roleErr(msg);
     $('role-dlg').hidden = true;
     await loadBots();
-    if (S.bots[made.id]) openConv(made.id);
+    if (S.bots[made.id]) openConv('bot:' + made.id);
   }
   $('new-role').addEventListener('click', openRoleDlg);
   $('role-cancel').addEventListener('click', closeRoleDlg);

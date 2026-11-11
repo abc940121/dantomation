@@ -37,6 +37,7 @@ const CORE_SUITES = [
   ['raw-route', 'test/raw-route.js', [], true],
   ['approve-mcp', 'test/approve-mcp.js', []],
   ['taskmote-mcp', 'test/taskmote-mcp.js', []],
+  ['mcp-tiers', 'test/mcp-tiers.js', []],
   ['entry', 'test/entry.js', ['guard-base', 'checkpoint']],
   ['journal-prompt', 'test/journal-prompt.js', []],
   ['lock-race', 'test/lock-race.js', []],

@@ -103,6 +103,10 @@ Windows 上 `bin\taskmote.cmd` 效果相同；把 `bin` 加入 PATH 就能直接
 - **語音**（`voice`、`voice-chat`）。
 - **第二台機器**（`worker`，只用對外 HTTP）。
 
+## 工具分層（MCP）
+
+MCP 伺服器只列出第 1 層的常用工具，所以工具再多，代理的提示大小也不會變；其餘工具收在 `expand_tools` 的簡短選單裡（標題加一行「何時用我」），需要時再展開。第 3 層（少用或危險）不進選單，只能用確切名稱取得，每次展開與呼叫都會寫入日誌。展開後的工具會出現在伺服器的 `tools/list`（並送出 `notifications/tools/list_changed`），以真實名稱直接呼叫，由用戶端自己的權限系統判斷；第 3 層同樣須以確切名稱直接呼叫。詳見 [docs/MODULES.md](docs/MODULES.md)（英文）。
+
 ## Modules
 
 模組是你加在主幹上的東西。手機審核（`approval-cards` 搭配 `chat-ui`/`app-ui` 和 `device-pairing`）只是其中一列，不是整個產品。除了兩個安全模組 `guard-base` 和 `checkpoint`，所有模組預設都關閉。完整表格（含「能碰到什麼」欄位）見[英文版](README.md#modules)。

@@ -111,7 +111,16 @@ function reserveId(io) {
 
 // opts.live: no deadline (expires_at null), see the card record above. opts.pid: the process waiting on a live card
 // (the startup sweep closes the card once that process is gone).
+// The journal keeps a card's whole input, so a card for a call whose serialized input is over INPUT_MAX bytes (UTF-8, as stored) is refused
+// (the call is blocked, no card): tooBig(input) -> a block reason, or null.
+const INPUT_MAX = 256 * 1024;
+const tooBig = input => {
+  let n; try { n = Buffer.byteLength(JSON.stringify(input === undefined ? {} : input), 'utf8'); } catch { n = Infinity; }
+  return n > INPUT_MAX ? `its input is ${Number.isFinite(n) ? Math.ceil(n / 1024) + ' KB' : 'not serializable'}, over the ${INPUT_MAX / 1024} KB limit for an approval card, so no card was raised and the call is refused; send a smaller input (e.g. write big content to a file in the work folder first)` : null;
+};
 async function create(io, { task_id, tool, input, summary, rule, cwd }, settings, opts) {
+  const big = tooBig(input);
+  if (big) throw new Error('approval card refused: ' + big);
   const card_id = reserveId(io);
   const t = now();
   const live = !!(opts && opts.live);
@@ -200,4 +209,4 @@ function closeLive(append, records, task_id, why) {
   return out;
 }
 
-module.exports = { claim, closeLive, closeCard, source, sourceText, decisionLabel, denyMessage, systemDeny, WHO, WHERE, DEFAULT_TIMEOUT_MIN, fold, create, sweep, answered, pending, note, mirror, hashOf, isExpired, now, timeoutMs, canon };
+module.exports = { claim, closeLive, closeCard, source, sourceText, decisionLabel, denyMessage, systemDeny, WHO, WHERE, DEFAULT_TIMEOUT_MIN, fold, create, sweep, answered, pending, note, mirror, hashOf, isExpired, now, timeoutMs, canon, tooBig, INPUT_MAX };

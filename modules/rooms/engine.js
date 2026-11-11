@@ -48,11 +48,18 @@ function normalize(rooms) {
   return { rooms: out, problems, voiceOwner: owner };
 }
 
-function createEngine({ rooms, store, deliver, now = Date.now, humanLabel = 'human', maxHopTargets = 3 }) {
+function createEngine({ rooms, store, deliver, now = Date.now, humanLabel = 'human', maxHopTargets = 3, freshRooms = null }) {
   let norm = normalize(rooms);
   const st = new Map();
   const state = id => { if (!st.has(id)) st.set(id, { queue: [], current: null, gen: 0, drain: null, inflight: new Set(), budget: createBudget(now), floorUntil: 0 }); return st.get(id); };
   const room = id => norm.rooms[id] || null;
+  // The one authority on who is in a room NOW. With freshRooms (id -> the room as its source holds it today) the answer
+  // is read again at every call, never from the captured room object or this engine's table; a source that throws or no
+  // longer has the room means "nobody" (fail closed). Without freshRooms it is this engine's own table.
+  const current = id => {
+    if (typeof freshRooms !== 'function') return room(id);
+    try { const raw = freshRooms(id); return raw && typeof raw === 'object' ? normalize({ [id]: raw }).rooms[id] || null : null; } catch { return null; }
+  };
   const canUse = (voice, roomId, memberId) => !norm.voiceOwner.has(voice) || norm.voiceOwner.get(voice) === roomId + '/' + memberId;
   // Text of members flagged journalText:false lives only here, in this process; the store keeps metadata.
   const live = new Map();
@@ -68,11 +75,14 @@ function createEngine({ rooms, store, deliver, now = Date.now, humanLabel = 'hum
 
   const refuseBase = (member, reason, extra) => ({ posted: false, reason, member: member.id, ...extra });
 
-  async function runTurn(r, s, turn) {
-    const member = r.members.find(m => m.id === turn.member);
-    if (!member || turn.gen !== s.gen) return null;
+  async function runTurn(r0, s, turn) {
+    if (turn.gen !== s.gen) return null;
     // A turn that is not posted leaves a small record (no text) so drops are visible.
-    const refuse = (m, reason, extra) => { store.append({ type: 'room_turn_skipped', room: r.id, member: m.id, reason }); return refuseBase(m, reason, extra); };
+    const refuse = (m, reason, extra) => { store.append({ type: 'room_turn_skipped', room: r0.id, member: m.id, reason }); return refuseBase(m, reason, extra); };
+    // Check 1 of 3 (turn start): the member must be in the room as it is now, not as drain saw it.
+    let r = current(r0.id);
+    const member = r && r.members.find(m => m.id === turn.member);
+    if (!member) return r0.members.some(m => m.id === turn.member) ? refuse({ id: turn.member }, 'removed') : null;
     const msgs = transcript(r.id);
     const trigger = msgs.find(m => m.id === turn.trigger);
     const summaries = store.all().filter(x => x.type === 'room_summary' && x.room === r.id);
@@ -81,11 +91,14 @@ function createEngine({ rooms, store, deliver, now = Date.now, humanLabel = 'hum
     store.append({ type: 'room_seen', room: r.id, member: member.id, ids: ctx.seen });
     let raw;
     const ac = new AbortController();
+    ac.member = member.id;
     s.inflight.add(ac);
     try {
       // While the owner is still speaking (floor held), no bot takes the floor.
       while (now() < s.floorUntil && turn.gen === s.gen) await sleep(25);
       if (turn.gen !== s.gen) return refuse(member, 'stale');
+      // The group may have changed during the wait: read it again, so a removed member is not run at all.
+      { const rNow = current(r0.id); if (!rNow || !rNow.members.some(m => m.id === member.id)) return refuse(member, 'removed'); }
       raw = await deliver({ room: r.id, member, prompt: ctx.prompt, messages: ctx.messages, lines: ctx.lines, mentions: ctx.mentions, trigger: ctx.trigger, via: turn.via || (turn.hop ? 'hop' : null), signal: ac.signal });
     } catch (e) {
       if (turn.gen === s.gen && e && e.unavailable) {
@@ -94,11 +107,16 @@ function createEngine({ rooms, store, deliver, now = Date.now, humanLabel = 'hum
       }
       return refuse(member, 'delivery failed');
     } finally { s.inflight.delete(ac); }
+    if (ac.dropped) return refuse(member, 'removed');
     // The owner may have started speaking while the reply was coming: wait (bounded) for the floor, then recheck gen.
     const floorT0 = now();
     while (now() < s.floorUntil && turn.gen === s.gen && now() - floorT0 < 20000) await sleep(25);
     // A dropped engine reply leaves a journal record (never its text) so the member's side can see it was dropped.
-    const dropped = (reason, why) => { if (member.engine) store.append({ type: 'room_event', kind: 'reply_dropped', event: 'reply_dropped', room: r.id, member: member.id, reason: why, at: new Date(now()).toISOString() }); return refuse(member, reason); };
+    const dropped = (reason, why) => { if (member.engine) store.append({ type: 'room_event', kind: 'reply_dropped', event: 'reply_dropped', room: r0.id, member: member.id, reason: why, at: new Date(now()).toISOString() }); return refuse(member, reason); };
+    if (ac.dropped) return refuse(member, 'removed');
+    // Check 2 of 3 (right before the post, after the floor wait): dropTurns is best effort, this is the rule.
+    r = current(r0.id);
+    if (!r || !r.members.some(m => m.id === member.id)) return dropped('removed', 'removed');
     if (now() < s.floorUntil && turn.gen === s.gen) return dropped('floor', 'floor_held');
     if (turn.gen !== s.gen) return dropped('stale', 'human_spoke'); // the human spoke meanwhile: nothing stale is delivered
     let cue = null;
@@ -126,7 +144,9 @@ function createEngine({ rooms, store, deliver, now = Date.now, humanLabel = 'hum
     if (!keep) { live.set(rec.id, text); if (live.size > 200) live.delete(live.keys().next().value); }
     s.budget.record(member.id, text);
     if (turn.hop === 0) { // at most one follow-up hop: replies to a hop turn wake nobody
-      const hop = route(text, r, { sender: member.id, fromBot: true }).ids.slice(0, maxHopTargets);
+      // Check 3 of 3 (hop routing): route over the room as it is now, so a member removed meanwhile is never queued again.
+      const nowRoom = current(r0.id);
+      const hop = nowRoom ? route(text, nowRoom, { sender: member.id, fromBot: true }).ids.slice(0, maxHopTargets) : [];
       for (const id of hop) s.queue.push({ member: id, trigger: rec.id, hop: 1, via: 'hop', gen: s.gen });
     }
     return { posted: true, id: rec.id, member: member.id };
@@ -188,6 +208,18 @@ function createEngine({ rooms, store, deliver, now = Date.now, humanLabel = 'hum
     setSummary(roomId, text) {
       if (!room(roomId)) throw new Error('unknown room');
       return store.append({ type: 'room_summary', room: roomId, text: scrub(String(text)).slice(0, 4000) });
+    },
+    // A member left the room (or the room is gone): its queued turns are removed and a running one is cancelled. members = null drops every turn.
+    dropTurns(roomId, members) {
+      const s = st.get(roomId);
+      if (!s) return 0;
+      const all = members === null || members === undefined, set = new Set(members || []);
+      const hit = id => all || set.has(id);
+      const before = s.queue.length;
+      s.queue = s.queue.filter(t => !hit(t.member));
+      let n = before - s.queue.length;
+      for (const ac of s.inflight) if (hit(ac.member)) { ac.dropped = true; ac.abort(); n++; }
+      return n;
     },
     seenIds: (roomId, memberId) => new Set(store.all().filter(x => x.type === 'room_seen' && x.room === roomId && x.member === memberId).flatMap(x => x.ids)),
     // What may be stored as this member's memory.

@@ -176,6 +176,14 @@ check('with the module off: a paid-API call is not held, "do yes" is just a requ
   offPush.status === 0 && !/approval card/.test(offStatus.stdout) && cards().length === nCards, `push exit ${offPush.status}`);
 check('with the module off: do "<request>" with an open task still refuses; no card record is written', offDo.status !== 0 && /still open/.test(offDo.stdout + offDo.stderr) && cards().length === nCards);
 
+// last:  a long call: the card summary keeps the 160 limit but cuts in the middle, so the start and the file name both show
+const LONG = 'deploy-site /srv/releases/' + 'nested-directory/'.repeat(14) + 'final-report-NAME.txt';
+const rl = hook(LONG, 't1');
+const cl = cards().find(c => c.card_id === cardId(rl)) || {};
+const body = String(cl.summary || '').replace(/ [(]in .*$/, '').replace(/^[^:]*: /, '');
+check('long command: the card summary body stays at 160 characters and shows both the start and the file name',
+  rl.status === 2 && LONG.length > 160 && body.length === 160 && body.startsWith('deploy-site /srv/releases/') && body.endsWith('final-report-NAME.txt') && body.includes('...'), JSON.stringify(body));
+
 const nOk = results.filter(Boolean).length;
 console.log(`\nresult: ${nOk}/${results.length}`);
 fs.rmSync(tmp, { recursive: true, force: true });

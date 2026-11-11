@@ -27,6 +27,7 @@ const cardView = r => {
 };
 const groupsOfCtx = ctx => createGroups(() => ctx.state.dir, storeOfCtx(ctx));
 const needRooms = ctx => { if (!roomsOn(ctx)) throw new Error(bi('群組聊天需要先開啟 rooms 模組（在設定裡把 modules.rooms 設為 true，並重新啟動一次）。', 'Group chats need the rooms module to be on (set modules.rooms to true in the config and restart once).')); };
+const showv = v => (typeof v === 'string' ? v : typeof v === 'number' || typeof v === 'boolean' ? String(v) : v === null || v === undefined ? '' : typeof v).slice(0, 60); // a request value in an error, never through its own toString
 const MAX_GROUP_MEMBERS = 16; // the most role members a group made through the route may have
 const groupNote = (ctx, type, g, more) => { try { ctx.state.append({ type, id: g.id, name: g.name, ...more }); } catch { /* best effort */ } };
 const GROUP_KEY = { type: 'string', description: 'Group id (g-...) or its current name.' };
@@ -55,46 +56,56 @@ const asError = e => (e instanceof RoleError ? new Error(e.message) : e);
 const guard = fn => (args, ctx) => { try { return fn(args && typeof args === 'object' ? args : {}, ctx); } catch (e) { throw asError(e); } };
 const roleKey = a => { if (typeof a.role !== 'string' || !a.role.trim()) throw new Error('role is required (a role id or name)'); return a.role; };
 
+// Long lists stay short in the agent's context: a total, the newest few, and query / limit / offset to reach the rest.
+const PAGE_PROPS = { query: { type: 'string', description: 'Only entries whose name or id contains this text.' }, limit: { type: 'number', description: 'How many to return (default 10, max 50).' }, offset: { type: 'number', description: 'Skip this many (newest first), to page on.' } };
+function page(list, a, key, text) {
+  const q = typeof a.query === 'string' ? a.query.trim().toLowerCase() : '';
+  const all = list.filter(x => !q || text(x).toLowerCase().includes(q)).reverse();
+  const n = Number(a.limit), o = Number(a.offset);
+  const limit = Number.isFinite(n) && n >= 1 ? Math.min(50, Math.floor(n)) : 10, offset = Number.isFinite(o) && o >= 0 ? Math.floor(o) : 0;
+  const items = all.slice(offset, offset + limit);
+  return { total: all.length, offset, more: offset + items.length < all.length, [key]: items };
+}
 const mcpTools = [
-  { name: 'role_create',
+  { name: 'role_create', when: 'Owner wants a new role or character',
     description: 'Create a custom role (a named persona the owner can pick in the chat page and talk to as its own separate conversation). Use when the owner asks to create or add a role or character, e.g. "make a role called X who is ..." in any language. The role appears in the chat page within seconds. It keeps all tools; the persona changes only voice and character.',
     inputSchema: { type: 'object', properties: { name: { type: 'string', description: 'Short name, 1-40 characters, any language. Must be unique among roles.' }, persona: { type: 'string', description: 'The persona text: who the role is and how it speaks and behaves (max 4000 characters).' }, engine: ENGINE_PROP, model: MODEL_PROP, card: CARD_PROP }, required: ['name', 'persona'] },
     run: guard((a, ctx) => { const r = storeOfCtx(ctx).create({ name: a.name, persona: a.persona, engine: a.engine, model: a.model, card: a.card }); note(ctx, 'role_created', r); return pub(r); }) },
-  { name: 'role_update',
+  { name: 'role_update', when: 'Owner wants to change an existing role',
     description: 'Change the name, persona, engine, model and/or character card (voice, way of talking, way of working, avatar) of an existing role. Use when the owner asks to rename a role, to change its personality, voice or instructions, or to move it to GPT / Codex / OpenAI (engine "codex"), to OpenCode (engine "opencode", optional model) or back to Claude (engine "claude"). The role is an id (from role_list) or its current name. Main makes it the main role. Its conversation history is kept.',
     inputSchema: { type: 'object', properties: { role: { type: 'string', description: 'Role id or current name.' }, name: { type: 'string', description: 'New name (optional).' }, persona: { type: 'string', description: 'New persona text, replacing the old one (optional).' }, engine: ENGINE_PROP, model: MODEL_PROP, card: CARD_PROP, main: { type: 'boolean', description: 'true makes this role the main role (the chief of staff the owner talks to first); the old main role is unmarked. Exactly one role is main, so false is refused. Optional.' } }, required: ['role'] },
     run: guard((a, ctx) => { const r = storeOfCtx(ctx).update(roleKey(a), { name: a.name, persona: a.persona, engine: a.engine, model: a.model, card: a.card, main: a.main }); note(ctx, 'role_updated', r); return pub(r); }) },
-  { name: 'role_remove',
+  { name: 'role_remove', when: 'Owner wants a role deleted',
     description: 'Remove a role from the chat page. Use when the owner asks to delete or remove a role. Nothing is deleted: the role is only hidden (archived) and its conversation is kept. The role is an id or its name.',
     inputSchema: { type: 'object', properties: { role: { type: 'string', description: 'Role id or name.' } }, required: ['role'] },
     run: guard((a, ctx) => { const r = storeOfCtx(ctx).archive(roleKey(a)); note(ctx, 'role_archived', r); return { id: r.id, name: r.name, archived: true }; }) },
-  { name: 'role_list',
-    description: 'List the current roles with id, name, persona, engine (claude, codex or opencode) and model, plus card_fields (the names of the fields on its character card, when it has one) and opencode_go_turns_today (how many OpenCode Go plan turns all roles used today). Use before changing or removing a role, or when the owner asks which roles exist. With id (a role id or name) it returns only that role with its full character card.',
-    inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'Role id or name: return just this role with its whole card (optional).' } } },
+  { name: 'role_list', when: 'See which roles exist, or find one by name', tier: 1,
+    description: 'List the current roles (newest first) with id, name, persona, engine (claude, codex or opencode) and model, plus card_fields (the names of the fields on its character card, when it has one): total, the newest 10, and more:true when there are others (use query, limit, offset to reach them), plus opencode_go_turns_today (how many OpenCode Go plan turns all roles used today). Use before changing or removing a role, or when the owner asks which roles exist. With id (a role id or name) it returns only that role with its full character card.',
+    inputSchema: { type: 'object', properties: { ...PAGE_PROPS, id: { type: 'string', description: 'Role id or name: return just this role with its whole card (optional). Without it, a page of the list.' } } },
     run: guard((a, ctx) => {
       if (a.id !== undefined) { const r = storeOfCtx(ctx).get(a.id); if (!r || r.archived_at) throw new Error(`no role "${String(a.id).slice(0, 60)}"`); return { role: pub(r) }; }
-      return { roles: storeOfCtx(ctx).list().map(row), opencode_go_turns_today: limits.goCount(ctx.state.dir) };
+      return { ...page(storeOfCtx(ctx).list().map(row), a, 'roles', r => `${r.name} ${r.id}`), opencode_go_turns_today: limits.goCount(ctx.state.dir) };
     }) },
-  { name: 'role_ask',
+  { name: 'role_ask', when: 'Ask a role a question in its own conversation', tier: 1,
     description: 'Send a message to another role (or "main", the owner\'s main bot) and get its answer later, whatever engine either one runs on. It does NOT wait: it returns at once with queued:true, and the answer arrives as a new message in your own conversation when the other role has finished its turn. After calling it, end your turn right away: do not wait, do not poll, do not invent the answer. The role is an id or name from role_list. Refused for an unknown or archived role, yourself, a role already in the ask chain, or when the chain is too deep or too long; then answer with what you have. Only usable inside a role conversation, not from outside one.',
     inputSchema: { type: 'object', properties: { role: { type: 'string', description: 'Role id or name, or "main".' }, message: { type: 'string', description: 'What to say or ask. Give the other role all the context it needs; it does not see your conversation.' } }, required: ['role', 'message'] },
     run: guard((a, ctx) => ask.ask(a, ctx, askDeps)) },
-  { name: 'group_create',
+  { name: 'group_create', when: 'Owner wants several roles to talk together',
     description: 'Create a group chat (a room) the owner can pick in the chat page, like making a group in a messaging app. Use when the owner asks to make or start a group chat with some roles, in any language. members are role names or ids (from role_list; create the roles first if they do not exist). The main bot is always in the group and is its lead: a message with no @mention goes to it, "@everyone" wakes all, "@<role id>" wakes one role. Each role answers with its own persona, engine and conversation. The group appears in the chat page within seconds. Needs the rooms module to be on.',
     inputSchema: { type: 'object', properties: { name: { type: 'string', description: 'The group name the owner chose, 1-40 characters, any language. Must be unique among groups.' }, members: ROLE_LIST('Role names or ids to put in the group (at least one).') }, required: ['name', 'members'] },
     run: guard((a, ctx) => { needRooms(ctx); const g = groupsOfCtx(ctx).create({ name: a.name, members: a.members }, ctx); groupNote(ctx, 'group_created', g); return g; }) },
-  { name: 'group_update',
+  { name: 'group_update', when: 'Owner wants to change a group of roles',
     description: 'Rename a group chat and/or add roles to it and/or remove roles from it. Use when the owner asks to rename a group, to add someone to it or to take someone out. The group is an id (from group_list) or its current name. The main bot cannot be removed. The conversation history is kept. Needs the rooms module to be on.',
     inputSchema: { type: 'object', properties: { group: GROUP_KEY, name: { type: 'string', description: 'New name (optional).' }, add: ROLE_LIST('Role names or ids to add (optional).'), remove: ROLE_LIST('Role names or ids to take out (optional).') }, required: ['group'] },
     run: guard((a, ctx) => { needRooms(ctx); if (typeof a.group !== 'string' || !a.group.trim()) throw new Error('group is required (a group id or name)'); const g = groupsOfCtx(ctx).update(a.group, { name: a.name, add: a.add, remove: a.remove }, ctx); groupNote(ctx, 'group_updated', g); return g; }) },
-  { name: 'group_remove',
+  { name: 'group_remove', when: 'Owner wants a group deleted',
     description: 'Remove a group chat from the chat page. Use when the owner asks to delete or close a group. Nothing is deleted: the group is only hidden (archived) and its transcript is kept. The group is an id or its name.',
     inputSchema: { type: 'object', properties: { group: GROUP_KEY }, required: ['group'] },
     run: guard((a, ctx) => { needRooms(ctx); if (typeof a.group !== 'string' || !a.group.trim()) throw new Error('group is required (a group id or name)'); const g = groupsOfCtx(ctx).archive(a.group, ctx); groupNote(ctx, 'group_archived', g); return { id: g.id, name: g.name, archived: true }; }) },
-  { name: 'group_list',
-    description: 'List the group chats with id, name, lead and members (id and name). Use before changing or removing a group, or when the owner asks which groups exist. Needs the rooms module to be on.',
-    inputSchema: { type: 'object', properties: {} },
-    run: guard((a, ctx) => { needRooms(ctx); return { groups: groupsOfCtx(ctx).list(ctx) }; }) },
+  { name: 'group_list', when: 'See which groups exist, or find one by name',
+    description: 'List the group chats (newest first) with id, name, lead and members (id and name): total, the newest 10, and more:true when there are others (use query, limit, offset). Use before changing or removing a group, or when the owner asks which groups exist. Needs the rooms module to be on.',
+    inputSchema: { type: 'object', properties: PAGE_PROPS },
+    run: guard((a, ctx) => { needRooms(ctx); return page(groupsOfCtx(ctx).list(ctx), a, 'groups', g => `${g.name} ${g.id}`); }) },
 ];
 
 // The bot of a task, as bot-persona finds it: the task_start record, else HARNESS_BOT, else the default bot.
@@ -165,23 +176,51 @@ module.exports = {
         const store = storeOfCtx(ctx), ids = [];
         for (const k of b.members) {
           const r = typeof k === 'string' ? store.get(k) : null;
-          if (!r || r.archived_at || r.id !== k) return bad(bi(`找不到角色 id「${String(k).slice(0, 60)}」`, `no such role id "${String(k).slice(0, 60)}"`));
+          if (!r || r.archived_at || r.id !== k) return bad(bi(`找不到角色 id「${showv(k)}」`, `no such role id "${showv(k)}"`));
           if (!ids.includes(r.id)) ids.push(r.id);
         }
         const by = ctx.actor && ctx.actor.id;
-        // a phone caller: the audit line comes first and must land, or nothing is created
-        if (String(by || '').startsWith('device:')) {
-          const groups = groupsOfCtx(ctx);
-          let id;
-          try { needRooms(ctx); groups.check({ name, members: ids }); id = groups.newId(); }
-          catch (e) { return bad(String(e && e.message || 'could not create the group').slice(0, 300)); }
-          try { ctx.state.append({ type: 'group_created', id, name, members: ids, by }); }
-          catch { return { status: 500, json: { error: 'could not write the audit line, nothing was created' } }; }
-          try { return { status: 201, json: groups.create({ name, members: ids, id }, ctx) }; }
-          catch { groupNote(ctx, 'group_create_failed', { id, name }, { members: ids, by }); return { status: 500, json: { error: 'could not create the group' } }; }
-        }
-        try { needRooms(ctx); const g = groupsOfCtx(ctx).create({ name, members: ids }, ctx); groupNote(ctx, 'group_created', g, { members: ids, by }); return { status: 201, json: g }; }
+        // the owner's own call takes the same path: audit line first, nothing is created when it cannot be written
+        const groups = groupsOfCtx(ctx);
+        let id;
+        try { needRooms(ctx); groups.check({ name, members: ids }); id = groups.newId(); }
         catch (e) { return bad(String(e && e.message || 'could not create the group').slice(0, 300)); }
+        try { ctx.state.append({ type: 'group_created', id, name, members: ids, by }); }
+        catch { return { status: 500, json: { error: 'could not write the audit line, nothing was created' } }; }
+        try { return { status: 201, json: groups.create({ name, members: ids, id }, ctx) }; }
+        catch { groupNote(ctx, 'group_create_failed', { id, name }, { members: ids, by }); return { status: 500, json: { error: 'could not create the group' } }; }
+      } },
+    // Edit or archive a group from the chat page {name?, add?:[role id], remove?:[role id]} or {archived:true}. The audit line is written first and must land.
+    { method: 'PATCH', path: '/groups/:id', access: 'owner', description: 'rename a group, add or remove members ({name?, add?, remove?}: role ids) or archive it ({archived: true}); answers 200 with the group; 404 for an unknown or archived id; a group never ends with no member',
+      handler(ctx) {
+        const bad = error => ({ status: 400, json: { error } });
+        const id = String((ctx.params && ctx.params.id) || '');
+        const b = ctx.body && typeof ctx.body === 'object' && !Array.isArray(ctx.body) ? ctx.body : {};
+        const groups = groupsOfCtx(ctx), g = /^g-[0-9a-f]{8}$/.test(id) ? groups.get(id, ctx) : null;
+        if (!g || g.archived_at) return { status: 404, json: { error: bi('找不到這個群組', 'no such group') } };
+        const by = (ctx.actor && ctx.actor.id) || 'owner';
+        const archive = b.archived === true;
+        if (b.archived !== undefined && !archive) return bad(bi('archived 只能是 true', 'archived can only be true'));
+        const store = storeOfCtx(ctx), ids = {};
+        if (archive && (b.name !== undefined || b.add !== undefined || b.remove !== undefined)) return bad(bi('封存群組時不能同時改其他欄位', 'archive cannot be combined with other changes'));
+        for (const k of ['add', 'remove']) {
+          if (b[k] === undefined) continue;
+          if (!Array.isArray(b[k]) || !b[k].length || b[k].length > MAX_GROUP_MEMBERS) return bad(bi(`${k} 要是 1-${MAX_GROUP_MEMBERS} 個角色 id 的清單`, `${k} must be a list of 1-${MAX_GROUP_MEMBERS} role ids`));
+          ids[k] = [];
+          for (const x of b[k]) {
+            const r = typeof x === 'string' ? store.get(x) : null;
+            if (!r || r.id !== x || (k === 'add' && r.archived_at)) return bad(bi(`找不到角色 id「${showv(x)}」`, `no such role id "${showv(x)}"`));
+            if (!ids[k].includes(r.id)) ids[k].push(r.id);
+          }
+        }
+        const fields = { name: typeof b.name === 'string' ? b.name.trim() : b.name, add: ids.add, remove: ids.remove, max: MAX_GROUP_MEMBERS };
+        if (!archive && b.name === undefined && !ids.add && !ids.remove) return bad(bi('請給新名稱、要加入的角色（add）或要移出的角色（remove）', 'give a new name, roles to add and/or roles to remove'));
+        try { needRooms(ctx); if (!archive) groups.checkUpdate(id, fields); }
+        catch (e) { return bad(String(e && e.message || 'could not change the group').slice(0, 300)); }
+        try { ctx.state.append({ type: archive ? 'group_remove_started' : 'group_update_started', group: id, by, via: 'route' }); }
+        catch { return { status: 500, json: { error: 'could not write the audit line, nothing was changed' } }; }
+        try { const r = archive ? groups.archive(id, ctx) : groups.update(id, fields, ctx); groupNote(ctx, archive ? 'group_archived' : 'group_updated', r, { by }); return { status: 200, json: r }; }
+        catch (e) { return bad(String(e && e.message || 'could not change the group').slice(0, 300)); }
       } },
     // The chat page asks which role is the main one. The owner token and a paired device make the default main role on first use (the same fixed content, once); any other caller only reads it (200 {id:null} until it exists, so the page's polling is not a 404).
     { method: 'GET', path: '/main', description: 'the main role {id, name}; for the owner and for a paired device it creates the default chief-of-staff role when none is marked main (fixed content, once); any other caller is read-only ({id:null} with status 200 until then)',
@@ -282,5 +321,6 @@ module.exports = {
     update(key, v) { return storeOf(this).update(key, v); },
     archive(key) { return storeOf(this).archive(key); },
     mcpTools,
+    mcpCategories: { roles: { title: 'Roles and groups', when: 'create, rename or remove a role or group chat' } },
   },
 };

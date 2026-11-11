@@ -110,7 +110,9 @@ async function decide(params, deps = {}) {
   // No heartbeat, no card: the server could not tell this waiter from a dead one and would close its card.
   if (!(deps.beat || J.waiterBeat)(process.pid, J.staleFor(POLL_MS())))
     return deny(`red line (${c[1]}): ${c[2]}. Taskmote could not record that this approval is being waited on (its state folder is not writable), so it cannot be approved; skip this step and tell the person.`);
-  const card = await K.create(io, { task_id, tool, input, rule: 'redline:' + c[1], cwd: where, summary: `${c[2]}: ${what}${where ? ` (in ${clip(where, 80)})` : ''}` }, io.settings, { live: true, pid: process.pid });
+  let card;
+  try { card = await K.create(io, { task_id, tool, input, rule: 'redline:' + c[1], cwd: where, summary: `${c[2]}: ${what}${where ? ` (in ${clip(where, 80)})` : ''}` }, io.settings, { live: true, pid: process.pid }); }
+  catch (e) { if (/^approval card refused: /.test(e && e.message)) { if (!WAITING.size) J.waiterDone(); return deny(`red line (${c[1]}): ${c[2]}. ${e.message.slice(25)}`); } throw e; }
   WAITING.set(card.card_id, { io, card, K });
   try { return await waitOn(K, io, card, input, c, task_id, now, wait, deps.cancelled || (() => false)); }
   finally { WAITING.delete(card.card_id); if (!WAITING.size) J.waiterDone(); }

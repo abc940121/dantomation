@@ -10,7 +10,7 @@
     // The module is on only when the list call succeeds with a rooms array; anything else hides the picker.
     parseRooms(resp) {
       if (!resp || !resp.ok || !resp.body || !Array.isArray(resp.body.rooms)) return [];
-      return resp.body.rooms.filter(r => r && typeof r.id === 'string').map(r => ({ id: r.id, name: typeof r.name === 'string' && r.name ? r.name : r.id, members: Array.isArray(r.members) ? r.members.length : 0 }));
+      return resp.body.rooms.filter(r => r && typeof r.id === 'string').map(r => ({ id: r.id, name: typeof r.name === 'string' && r.name ? r.name : r.id, members: Array.isArray(r.members) ? r.members.length : 0, memberIds: Array.isArray(r.members) ? r.members.map(m => (typeof m === 'string' ? m : m && m.id)).filter(x => typeof x === 'string') : [] }));
     },
     listOk: resp => !!(resp && resp.ok && resp.body && Array.isArray(resp.body.rooms)),
     // Merge new transcript lines into the list by id (duplicates dropped, order kept).

@@ -137,7 +137,7 @@ The trunk gives you the first two points; the rest are modules you switch on.
 
 `bin/taskmote-mcp.js` is an MCP stdio server. Any Claude Code session, or other MCP client, can then call what Claude Code does not have: cards to your phone, the task queue, undo and the journal.
 
-Every tool is listed and works with no flag. The only things that still stop for your answer are the product red lines: spending money, deleting outside the task folder and touching secrets. Install it for every project of yours (user-wide) or for one project (the default scope):
+Only the tier 1 tools are listed, so the prompt stays the same size however many tools exist; the rest are folded under a short menu in `expand_tools`. Every tool works with no flag, listed or not: after `expand_tools` the server lists the tools it returns (it sends `notifications/tools/list_changed`) and you call each one by its own name, so your client's own permission system judges it. Claude Code already defers MCP tool schemas itself (tool search), so for Claude sessions the flat prompt comes from that; the tiers matter most for engines that list every tool in full, and for the ordering of the short list. The only things that still stop for your answer are the product red lines: spending money, deleting outside the task folder and touching secrets. Install it for every project of yours (user-wide) or for one project (the default scope):
 
 ```sh
 # user-wide
@@ -152,12 +152,13 @@ claude mcp add taskmote -- node <path-to-repo>/bin/taskmote-mcp.js
 
 | Tool | What it does | Needs module | Listed |
 |---|---|---|---|
-| `ask_owner` | Ask a question with 2 to 6 choices on your phone and wait. No answer in time returns `{"answered":false}`, never an error. | `question-cards` | always |
-| `task_status` | One task, or the recent tasks, from the journal. | none | always |
-| `digest` | The while-you-were-away summary as JSON (honours `include_titles`). | `digest` | always |
-| `search_journal` | Full-text search over past tasks, messages and rooms. | `search` | always |
-| `queue_task` | Queue a task the way `taskmote do` does and return its id. `cwd` applies only when no server is running. | none | always |
-| `undo_task` | Put a task's folder back, like the Undo button, at once, then sends you an info card. If a task is running it returns `blocked` and changes nothing. | `checkpoint` (`question-cards` for the notice) | always |
+| `expand_tools` | Show the folded tools: `category`, `name` or `query`; no arguments lists the groups. Returns schemas. | none | tier 1 (always) |
+| `ask_owner` | Ask a question with 2 to 6 choices on your phone and wait. No answer in time returns `{"answered":false}`, never an error. | `question-cards` | tier 1 (always) |
+| `task_status` | One task, or the recent tasks, from the journal. | none | tier 1 (always) |
+| `digest` | The while-you-were-away summary as JSON (honours `include_titles`). | `digest` | folded (tasks / journal) |
+| `search_journal` | Full-text search over past tasks, messages and rooms. | `search` | tier 1 (always) |
+| `queue_task` | Queue a task the way `taskmote do` does and return its id. `cwd` applies only when no server is running. | none | tier 1 (always) |
+| `undo_task` | Put a task's folder back, like the Undo button, at once, then sends you an info card. If a task is running it returns `blocked` and changes nothing. | `checkpoint` (`question-cards` for the notice) | folded (tasks / journal) |
 
 A tool whose module is off answers with text naming the module to turn on. The separate `bin/approve-mcp.js` permission-prompt server is unchanged.
 

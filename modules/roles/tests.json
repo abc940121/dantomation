@@ -16,6 +16,26 @@
       "needs": []
     },
     {
+      "label": "roles-group-edit",
+      "file": "test/group-edit.js",
+      "needs": []
+    },
+    {
+      "label": "roles-group-edit-turns",
+      "file": "test/group-edit-turns.js",
+      "needs": []
+    },
+    {
+      "label": "roles-group-edit-fresh",
+      "file": "test/group-edit-fresh.js",
+      "needs": []
+    },
+    {
+      "label": "roles-main-route",
+      "file": "test/main-route.js",
+      "needs": []
+    },
+    {
       "label": "roles-chief",
       "file": "test/chief.js",
       "needs": []

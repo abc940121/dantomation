@@ -26,7 +26,7 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: .9em; }
 #send-msg { flex: none; margin: 0; padding: 6px calc(12px + env(safe-area-inset-right)) calc(6px + env(safe-area-inset-bottom)) calc(12px + env(safe-area-inset-left)); background: var(--warn-bg); color: var(--warn); font-size: .9rem; }
 #top { display: flex; align-items: center; gap: 8px; padding: calc(8px + env(safe-area-inset-top)) calc(12px + env(safe-area-inset-right)) 8px calc(12px + env(safe-area-inset-left)); background: var(--panel); border-bottom: 1px solid var(--line); }
 #top h1 { font-size: 1.1rem; margin: 0; flex: 1; }
-.badge { display: inline-flex; align-items: center; min-height: 32px; padding: 0 10px; border-radius: 16px; background: var(--user); font-size: .85rem; border: 0; }
+.badge { display: inline-flex; align-items: center; min-height: 40px; padding: 0 12px; border-radius: 20px; background: var(--user); font-size: .85rem; border: 0; }
 .badge.warn { background: var(--warn-bg); color: var(--warn); font-weight: 600; }
 .badge.bad { background: var(--bad); color: #fff; }
 .conn { font-size: .8rem; color: var(--muted); }
@@ -83,8 +83,10 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: .9em; }
 .dlg fieldset { margin: 0; padding: 8px; border: 1px solid var(--line); border-radius: 10px; min-width: 0; }
 .dlg .pick { display: flex; align-items: center; gap: 10px; min-height: 44px; overflow-wrap: anywhere; }
 .dlg .pick input { width: 22px; height: 22px; flex: none; }
-.dlg .btns { display: flex; gap: 8px; justify-content: flex-end; }
-.dlg #group-create, .dlg #role-create { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+.dlg .btns { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+.dlg #edit-archive { margin-right: auto; min-height: 44px; }
+.dlg #edit-archive.armed { background: #b3261e; color: #fff; border-color: #b3261e; }
+.dlg #edit-save, .dlg #group-create, .dlg #role-create { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
 /* role card dialog: a full-screen sheet on a phone, a centred box on a wide screen */
 #card-dlg { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(0,0,0,.45); z-index: 9; padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left)); }
 #card-dlg[hidden] { display: none; }

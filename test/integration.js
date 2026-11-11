@@ -85,6 +85,22 @@ async function main() {
     const pend = await waitFor(() => events.find(e => e.type === 'card_pending' && e.card && e.card.id === card.card_id), 10000);
     note('card: card_pending event has the fields the page reads', pend && ['id', 'task', 'bot', 'tool', 'summary', 'expiresAt'].every(k => pend.card[k]), JSON.stringify(pend));
     note('card: GET /api/cards?state=pending lists it as {id,...}', (await req(port, 'GET', '/api/cards?state=pending', undefined, token)).body.some(c => c.id === card.card_id));
+    // a long call: the card list shows the tool name and the whole args, not a cut summary
+    const longIn = { to: 'x', pad: 'a'.repeat(400), tail: 'ENDMARK' };
+    const lc = (() => { const cm = require('../modules/approval-cards/cards'), id = 'card-' + require('crypto').randomBytes(3).toString('hex'), t = Date.now(), tool = 'mcp__taskmote-tools__send_out'; return require('../lib/journal').append({ type: 'card', card_id: id, task_id: ids[0], tool, input: longIn, sha256: cm.hashOf(tool, longIn), summary: 'send_out ' + JSON.stringify(longIn), rule: 'test', created_at: new Date(t).toISOString(), expires_at: new Date(t + 600000).toISOString() }); })();
+    const lv = (await req(port, 'GET', '/api/cards?state=pending', undefined, token)).body.find(c => c.id === lc.card_id);
+    note('card: a long call shows its tool name, its whole summary and its whole args (nothing cut)', !!lv && lv.tool === 'mcp__taskmote-tools__send_out' && lv.summary.endsWith('ENDMARK"}') && !('input' in lv), JSON.stringify(lv && { tool: lv.tool, s: lv.summary.length, i: lv.input && lv.input.length }));
+    // a 1 MB argument: the owner view is capped at a fixed size (head and tail kept), never the whole megabyte
+    const hugeIn = { to: 'x', pad: 'a'.repeat(1024 * 1024), tail: 'ENDMARK' };
+    const hc = (() => { const cm = require('../modules/approval-cards/cards'), id = 'card-' + require('crypto').randomBytes(3).toString('hex'), t = Date.now(), tool = 'mcp__taskmote-tools__send_out'; return require('../lib/journal').append({ type: 'card', card_id: id, task_id: ids[0], tool, input: hugeIn, sha256: cm.hashOf(tool, hugeIn), summary: 'send_out ' + JSON.stringify(hugeIn), rule: 'test', created_at: new Date(t).toISOString(), expires_at: new Date(t + 600000).toISOString() }); })();
+    const hv = (await req(port, 'GET', '/api/cards?state=pending', undefined, token)).body.find(c => c.id === hc.card_id);
+    note('card: a 1 MB argument is capped in the owner view (summary <= 1600, no input field) and keeps its head and tail', !!hv && hv.summary.length <= 1600 && !('input' in hv) && hv.summary.startsWith('send_out {"to":"x"') && hv.summary.endsWith('ENDMARK"}'), JSON.stringify(hv && { s: hv.summary.slice(0, 40) + "|" + hv.summary.slice(-20), k: Object.keys(hv || {}).join() }));
+    // the card list never carries the call input (a header such as Authorization could sit in it), only the clipped summary
+    const secIn = { url: 'http://x', headers: { Authorization: 'Basic c2VjcmV0LXNlbnRpbmVs' } };
+    const sc = (() => { const cm = require('../modules/approval-cards/cards'), id = 'card-' + require('crypto').randomBytes(3).toString('hex'), t = Date.now(), tool = 'mcp__taskmote-tools__send_out'; return require('../lib/journal').append({ type: 'card', card_id: id, task_id: ids[0], tool, input: secIn, sha256: cm.hashOf(tool, secIn), summary: 'send_out', rule: 'test', created_at: new Date(t).toISOString(), expires_at: new Date(t + 600000).toISOString() }); })();
+    const scr = await req(port, 'GET', '/api/cards?state=pending', undefined, token);
+    const sv = scr.body.find(c => c.id === sc.card_id);
+    note('card: the cards API response has no input key and no secret-looking header text', !!sv && !('input' in sv) && scr.body.every(c => !('input' in c)) && !/c2VjcmV0LXNlbnRpbmVs/.test(scr.raw), JSON.stringify(sv));
     const yes = await req(port, 'POST', '/api/cards/' + card.card_id, { answer: 'yes' }, token);
     note('card: yes -> 200', yes.status === 200, yes.raw);
     note('card: card_resolved event', await waitFor(() => events.find(e => e.type === 'card_resolved' && e.cardId === card.card_id && e.answer === 'yes'), 10000));

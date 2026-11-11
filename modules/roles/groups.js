@@ -12,6 +12,10 @@ const { RoleError, checkName } = require('./store');
 const ID_RE = /^g-[0-9a-f]{8}$/;
 const bi = (zh, en) => `${zh}\n${en}`;
 const lc = s => String(s).toLowerCase();
+// a value from a request shown in an error: never calls the value's own toString (it may be null or throw)
+// A member who left (or an archived group) gets no more room work: queued turns go, a running one is cancelled. Best effort when rooms is off.
+const stopTurns = (ctx, id, members) => { try { const r = ctx && typeof ctx.api === 'function' ? ctx.api('rooms') : null; if (r && typeof r.dropTurns === 'function') r.dropTurns(id, members); } catch { /* rooms not running: nothing to stop */ } };
+const show = v => (typeof v === 'string' ? v : typeof v === 'number' || typeof v === 'boolean' ? String(v) : Array.isArray(v) ? 'list' : v === null || v === undefined ? '' : typeof v).slice(0, 60);
 const mainId = config => { const b = config && config.bots; return Array.isArray(b) && b.length && b[0] && b[0].id ? String(b[0].id) : 'main'; };
 // The one lead: the main role (made by ensureMain) when it exists, else the configured main bot.
 const leadOf = (config, rolesStore) => { const m = rolesStore && rolesStore.getMain && rolesStore.getMain(); return m ? { id: m.id, name: m.name, role: true } : { id: mainId(config), name: mainId(config), role: false }; };
@@ -42,7 +46,7 @@ function createGroups(dirOf, rolesStore) {
     for (const k of keys) {
       if (typeof k === 'string' && k.trim().toLowerCase() === 'main') continue;
       const r = rolesStore.get(k);
-      if (!r || r.archived_at) throw new RoleError(bi(`找不到角色「${String(k).slice(0, 60)}」（或已封存）。請先用 role_list 查看。`, `No such role "${String(k).slice(0, 60)}" (or it is archived). Check role_list first.`));
+      if (!r || r.archived_at) throw new RoleError(bi(`找不到角色「${show(k)}」（或已封存）。請先用 role_list 查看。`, `No such role "${show(k)}" (or it is archived). Check role_list first.`));
       if (!out.includes(r.id)) out.push(r.id);
     }
     return out;
@@ -55,6 +59,36 @@ function createGroups(dirOf, rolesStore) {
     return { id: g.id, name: g.name, lead: lead.id, members: members.filter(m => m.id !== lead.id), ...(g.archived_at ? { archived_at: g.archived_at } : {}) };
   };
   const copy = g => ({ ...g, members: g.members.slice() });
+  // how many of these ids a person would see as members: not the lead (the main role), not an archived or missing role
+  const seen = ids => { const leadId = leadOf(null, rolesStore).id; return ids.filter(id => id !== leadId && (r => r && !r.archived_at)(rolesStore.get(id))).length; };
+
+  const plan = (key, { name, add, remove, max } = {}) => {
+    const gs = read(), g = need(gs, key);
+    if (name === undefined && add === undefined && remove === undefined) throw new RoleError(bi('請給新名稱、要加入的角色（add）或要移出的角色（remove）', 'give a new name, roles to add and/or roles to remove'));
+    const n = name === undefined ? g.name : checkName(name);
+    if (taken(gs, n, g.id)) throw new RoleError(bi(`已經有名為「${n}」的群組`, `a group named "${n}" already exists`));
+    let members = g.members.slice();
+    if (add !== undefined) for (const id of roleIds(add, 'add')) if (!members.includes(id)) members.push(id);
+    if (remove !== undefined) {
+      // a removed role may be archived already, so match it by id or by the name it has now
+      const all = rolesStore.all();
+      const gone = new Set();
+      if (!Array.isArray(remove)) throw new RoleError(bi('remove 必須是角色名稱或 id 的清單', 'remove must be a list of role names or ids'));
+      for (const k of remove) {
+        const s = show(k).trim();
+        const hit = all.find(r => r.id === s) || all.find(r => !r.archived_at && lc(r.name) === lc(s));
+        if (!hit && s.toLowerCase() !== 'main') throw new RoleError(bi(`找不到角色「${s.slice(0, 60)}」`, `No such role "${s.slice(0, 60)}"`));
+        if (hit) gone.add(hit.id);
+      }
+      members = members.filter(id => !gone.has(id));
+    }
+    // a group is never left without a role member (archived or missing roles do not count)
+    // the main role may be stored among the members but is never a visible one, so it does not count
+    const visible = seen(members);
+    if (Number.isInteger(max) && visible > max && visible > seen(g.members)) throw new RoleError(bi(`群組最多 ${max} 個成員`, `a group may have at most ${max} members`));
+    if (!visible) throw new RoleError(bi('群組至少要有一個角色成員（主機器人一定在群組裡）', 'a group needs at least one role member (the main bot is always in it)'));
+    return { gs, g, n, members };
+  };
 
   return {
     list: ctx => live(read()).map(g => view(g, ctx)),
@@ -62,14 +96,14 @@ function createGroups(dirOf, rolesStore) {
     // the same checks create() makes, with nothing written; lets a caller refuse a bad request before it acts
     check({ name, members } = {}) {
       const n = checkName(name), ids = roleIds(members, 'members');
-      if (!ids.length) throw new RoleError(bi('群組至少要有一個角色成員（主機器人一定在群組裡）', 'a group needs at least one role member (the main bot is always in it)'));
+      if (!seen(ids)) throw new RoleError(bi('群組至少要有一個角色成員（主機器人一定在群組裡）', 'a group needs at least one role member (the main bot is always in it)'));
       if (taken(read(), n)) throw new RoleError(bi(`已經有名為「${n}」的群組`, `a group named "${n}" already exists`));
     },
     // a fresh group id in the store's own format, so a caller can journal it before create({ id })
     newId() { const gs = read(); let id; do { id = 'g-' + crypto.randomBytes(4).toString('hex'); } while (gs.some(g => g.id === id)); return id; },
     create({ name, members, id: given } = {}, ctx) {
       const n = checkName(name), ids = roleIds(members, 'members');
-      if (!ids.length) throw new RoleError(bi('群組至少要有一個角色成員（主機器人一定在群組裡）', 'a group needs at least one role member (the main bot is always in it)'));
+      if (!seen(ids)) throw new RoleError(bi('群組至少要有一個角色成員（主機器人一定在群組裡）', 'a group needs at least one role member (the main bot is always in it)'));
       const gs = read();
       if (taken(gs, n)) throw new RoleError(bi(`已經有名為「${n}」的群組`, `a group named "${n}" already exists`));
       let id = given;
@@ -80,34 +114,21 @@ function createGroups(dirOf, rolesStore) {
       gs.push(rec); write(gs);
       return view(rec, ctx);
     },
-    update(key, { name, add, remove } = {}, ctx) {
-      const gs = read(), g = need(gs, key);
-      if (name === undefined && add === undefined && remove === undefined) throw new RoleError(bi('請給新名稱、要加入的角色（add）或要移出的角色（remove）', 'give a new name, roles to add and/or roles to remove'));
-      const n = name === undefined ? g.name : checkName(name);
-      if (taken(gs, n, g.id)) throw new RoleError(bi(`已經有名為「${n}」的群組`, `a group named "${n}" already exists`));
-      let members = g.members.slice();
-      if (add !== undefined) for (const id of roleIds(add, 'add')) if (!members.includes(id)) members.push(id);
-      if (remove !== undefined) {
-        // a removed role may be archived already, so match it by id or by the name it has now
-        const all = rolesStore.all();
-        const gone = new Set();
-        if (!Array.isArray(remove)) throw new RoleError(bi('remove 必須是角色名稱或 id 的清單', 'remove must be a list of role names or ids'));
-        for (const k of remove) {
-          const s = String(k == null ? '' : k).trim();
-          const hit = all.find(r => r.id === s) || all.find(r => !r.archived_at && lc(r.name) === lc(s));
-          if (!hit && s.toLowerCase() !== 'main') throw new RoleError(bi(`找不到角色「${s.slice(0, 60)}」`, `No such role "${s.slice(0, 60)}"`));
-          if (hit) gone.add(hit.id);
-        }
-        members = members.filter(id => !gone.has(id));
-      }
+    // the same checks update() makes, with nothing written
+    checkUpdate(key, fields = {}) { plan(key, fields); },
+    update(key, fields = {}, ctx) {
+      const { gs, g, n, members } = plan(key, fields);
+      const left = g.members.filter(id => !members.includes(id));
       Object.assign(g, { name: n, members, updated_at: new Date().toISOString() });
       write(gs);
+      if (left.length) stopTurns(ctx, g.id, left);
       return view(g, ctx);
     },
     archive(key, ctx) {
       const gs = read(), g = need(gs, key);
       g.archived_at = new Date().toISOString();
       write(gs);
+      stopTurns(ctx, g.id, null);
       return view(g, ctx);
     },
     // A map shaped like settings.rooms, for the rooms module. Never throws: a damaged file adds no rooms.

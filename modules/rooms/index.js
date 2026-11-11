@@ -9,6 +9,8 @@ const J = require('../../lib/journal');
 const { createEngine } = require('./engine');
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+// a sleep that ends early when the signal aborts, so a cancelled turn stops its bot task now, not at the next poll
+const nap = (ms, signal) => new Promise(res => { const done = () => { clearTimeout(t); if (signal) signal.removeEventListener('abort', done); res(); }; const t = setTimeout(done, ms); if (signal) { if (signal.aborted) done(); else signal.addEventListener('abort', done, { once: true }); } });
 const TERMINAL = new Set(['done', 'failed', 'stopped']);
 
 // Engine modules (e.g. chat-endpoint) register a deliverer by name; a member with `engine` is answered
@@ -44,20 +46,23 @@ function engineFor(ctx) {
   const stopTask = async id => { try { await ctx.tasks.cancel(id); } catch { /* already over, or no such task */ } };
   const deliver = async (args) => {
     const { member, prompt, signal } = args;
+    // Is this member still in this group (read from the store now, not from what the engine captured)? A removal or an
+    // archive may come from another process or after the engine was replaced, so the running task checks on every tick.
+    const stillIn = () => { const r = allRooms(ctx)[args.room]; return !!r && r.members.some(m => m.id === member.id); };
     if (member.engine) {
       const d = deliverers.get(member.engine);
       if (!d) throw Object.assign(new Error(`${member.name} is unavailable`), { unavailable: true });
       return d(args);
     }
-    if (signal && signal.aborted) return '';
+    if ((signal && signal.aborted) || !stillIn()) return '';
     const t = await ctx.tasks.enqueue(member.bot, prompt);
     const deadline = Date.now() + s.reply_timeout_s * 1000;
     let view = null;
     while (Date.now() < deadline) {
-      if (signal && signal.aborted) { await stopTask(t.id); return ''; }
+      if ((signal && signal.aborted) || !stillIn()) { await stopTask(t.id); return ''; }
       view = await ctx.tasks.get(t.id);
       if (view && TERMINAL.has(view.state)) break;
-      await sleep(s.poll_ms);
+      await nap(s.poll_ms, signal);
     }
     if (signal && signal.aborted) { await stopTask(t.id); return ''; }
     if (!view || !TERMINAL.has(view.state)) { await stopTask(t.id); return ''; }
@@ -74,11 +79,11 @@ function engineFor(ctx) {
       if (job) return job.result.reply;
       let lastStart = -1; recs.forEach((r, i) => { if (r.type === 'engine_start') lastStart = i; });
       if (recs.some((r, i) => i > lastStart && r.type === 'engine_exit') || Date.now() >= graceEnd) return '';
-      if (signal && signal.aborted) return '';
-      await sleep(s.poll_ms);
+      if ((signal && signal.aborted) || !stillIn()) return '';
+      await nap(s.poll_ms, signal);
     }
   };
-  const engine = createEngine({ rooms, store, deliver, humanLabel: s.human_label });
+  const engine = createEngine({ rooms, store, deliver, humanLabel: s.human_label, freshRooms: id => allRooms(ctx)[id] });
   cached = { key, engine, roomsKey };
   return engine;
 }
@@ -127,5 +132,7 @@ module.exports = {
     reply_grace_s: { type: 'number', default: 15, min: 0, max: 120, description: 'after a bot task is done, wait up to this many seconds for its reply record' },
     poll_ms: { type: 'number', default: 500, min: 10, description: 'how often to check a member task' },
   },
-  api: { createEngine, registerDeliverer, registerRoomSource },
+  api: { createEngine, registerDeliverer, registerRoomSource,
+    // A group changed: drop the pending turns of removed members (members = null: all of them). Nothing to do before the first say.
+    dropTurns(roomId, members) { return cached && cached.engine ? cached.engine.dropTurns(roomId, members) : 0; } },
 };

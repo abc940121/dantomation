@@ -9,6 +9,11 @@
       "label": "reply-race",
       "file": "test/reply-race.js",
       "needs": []
+    },
+    {
+      "label": "rooms-fresh-membership",
+      "file": "test/fresh-membership.js",
+      "needs": []
     }
   ]
 }
