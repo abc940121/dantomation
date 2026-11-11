@@ -46,6 +46,12 @@ function write(name, v) {
 // exclusive file, store.lock.reclaim, which is never reclaimed automatically; under it the lock is
 // re-read and removed only if it is still the dead holder we saw. A lock that cannot be parsed fails
 // closed with an error naming the file. Release removes the file only while it still holds our nonce.
+// The way out of a stuck lock, in plain words and without any path (the same text reaches CLI output and may reach an HTTP reply).
+const WAY_OUT = 'stop the server, then remove store.lock and any leftover store.lock.reclaim in the state dir';
+const BUSY_MSG = `device-pairing store is busy: ${WAY_OUT}`;
+// The HTTP reply stays generic; the server log gets the full line, with the state dir.
+const logLockError = e => { try { process.stderr.write(`device-pairing: ${e && e.message} (state dir: ${dir()})
+`); } catch { /* ignore */ } };
 const LOCK_WAIT_MS = 3 * 1000;
 const nap = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 const pidDead = pid => { try { process.kill(pid, 0); return false; } catch (e) { return e.code === 'ESRCH'; } };
@@ -69,16 +75,16 @@ function withLock(fn) {
       try { fs.linkSync(tmp, lock); break; }
       catch (e) {
         if (e.code !== 'EEXIST' && e.code !== 'EPERM' && e.code !== 'EACCES') throw e;
-        if (Date.now() - t0 > LOCK_WAIT_MS) throw new Error('device-pairing store is busy');
+        if (Date.now() - t0 > LOCK_WAIT_MS) throw new Error(BUSY_MSG);
         let info;
         try { info = JSON.parse(fs.readFileSync(lock, 'utf8')); } catch (e2) { if (e2.code === 'ENOENT') continue; info = null; }
-        if (!info || !Number.isInteger(info.pid) || typeof info.nonce !== 'string') throw new Error(`device-pairing store lock ${lock} cannot be read; remove it once no taskmote process is running`);
+        if (!info || !Number.isInteger(info.pid) || typeof info.nonce !== 'string') throw new Error(`device-pairing store lock store.lock cannot be read: ${WAY_OUT}`);
         if (pidDead(info.pid)) { reclaim(lock, info); continue; }
         nap(wait);
       }
     }
   } finally { try { fs.unlinkSync(tmp); } catch { /* ignore */ } }
-  if (Date.now() - t0 > LOCK_WAIT_MS) { release(); throw new Error('device-pairing store is busy'); }
+  if (Date.now() - t0 > LOCK_WAIT_MS) { release(); throw new Error(BUSY_MSG); }
   const prev = heldLock;
   heldLock = mine;
   try { return fn(); } finally { heldLock = prev; release(); }
@@ -119,7 +125,7 @@ function mintCodeLocked(now, opts) {
 // A device that was itself made from a handoff cannot make another (depth 1). The code is never logged or journaled.
 function mintHandoff(by, now = Date.now()) {
   try { return withLock(() => handoffLocked(by, now)); }
-  catch { return { ok: false, status: 503, error: 'pairing is busy; try again' }; }
+  catch (e) { logLockError(e); return { ok: false, status: 503, error: 'pairing is busy; try again' }; }
 }
 function handoffLocked(by, now) {
   const key = by ? String(by) : 'owner';
@@ -142,7 +148,7 @@ function handoffLocked(by, now) {
 // Phone action. -> { ok: true, token, id, label } or { ok: false, status, error }.
 function redeem(code, label, now = Date.now()) {
   try { return withLock(() => redeemLocked(code, label, now)); }
-  catch { return { ok: false, status: 503, error: 'pairing is busy; try again' }; }
+  catch (e) { logLockError(e); return { ok: false, status: 503, error: 'pairing is busy; try again' }; }
 }
 function redeemLocked(code, label, now) {
   const p = pending();
@@ -255,4 +261,4 @@ const allows = (method, p) => ALLOW.some(([m, re]) => m === method && re.test(St
 // One journal line per state-changing call, naming the device (the owner's calls carry no such line).
 function audit(device, method, p) { journal({ type: 'device_action', device_id: device.id, label: device.label, method, path: String(p).slice(0, 200) }); }
 
-module.exports = { withLock, mintCode, mintHandoff, HANDOFF_TTL_MS, HANDOFF_MAX, redeem, authenticate, list, revoke, allows, audit, CODE_TTL_MS, MAX_FAILS, LOCK_MS, DEVICE_TTL_MS, dir, _write: write, _reclaim: reclaim };
+module.exports = { WAY_OUT, BUSY_MSG, withLock, mintCode, mintHandoff, HANDOFF_TTL_MS, HANDOFF_MAX, redeem, authenticate, list, revoke, allows, audit, CODE_TTL_MS, MAX_FAILS, LOCK_MS, DEVICE_TTL_MS, dir, _write: write, _reclaim: reclaim };

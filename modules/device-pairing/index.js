@@ -34,6 +34,11 @@ async function revoke(args) {
   return { handled: true, code: ok ? 0 : 1 };
 }
 async function device(args) {
+  try { return await deviceRun(args); }
+  catch (e) { console.error(`taskmote device: ${(e && e.message) || e}
+state dir: ${S.dir()}`); return { handled: true, code: 1 }; }
+}
+async function deviceRun(args) {
   const [sub, ...a] = args;
   if (sub === 'pair' && !a.length) return pair();
   if (sub === 'list' && !a.length) return list();

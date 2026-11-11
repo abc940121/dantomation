@@ -433,6 +433,19 @@ const req = (port, method, p, body, token, extra) => new Promise((res, rej) => {
       putLock({ pid: process.pid, nonce: 'live-holder' }, 11 * 1000);
       const busy = S.redeem('123456', 'x', T + 7 * MIN);
       check('lock: a live holder\'s 11 s old lock is not stolen (the caller gets busy, 503)', busy.status === 503 && fs.existsSync(lockFile) && JSON.parse(fs.readFileSync(lockFile, 'utf8')).nonce === 'live-holder', JSON.stringify(busy));
+      // the busy text names the way out in plain words, without any path; the HTTP-facing reply stays generic
+      putLock({ pid: process.pid, nonce: 'live-holder' }, 1000);
+      let bmsg = ''; const errWrite = process.stderr.write.bind(process.stderr); let logged = ''; process.stderr.write = c => { logged += c; return true; };
+      try { S.withLock(() => 0); } catch (e) { bmsg = e.message; }
+      const h503 = S.redeem('123456', 'x', T + 7 * MIN);
+      process.stderr.write = errWrite;
+      check('lock: the busy error says: stop the server, remove store.lock and any leftover store.lock.reclaim in the state dir', bmsg === 'device-pairing store is busy: stop the server, then remove store.lock and any leftover store.lock.reclaim in the state dir', bmsg);
+      check('lock: the busy error carries no state path', !bmsg.includes(S.dir()) && !/[\/]/.test(bmsg), bmsg);
+      check('lock: the HTTP-facing reply stays generic (no way-out text, no path), the server log gets the full line with the state dir', h503.status === 503 && h503.error === 'pairing is busy; try again' && logged.includes(bmsg) && logged.includes(S.dir()), JSON.stringify(h503) + logged);
+      clean();
+      fs.writeFileSync(lockFile, '');
+      let umsg = ''; try { S.withLock(() => 0); } catch (e) { umsg = e.message; }
+      check('lock: an unreadable lock error also names the way out and no path', /stop the server, then remove store.lock and any leftover store.lock.reclaim/.test(umsg) && !umsg.includes(S.dir()), umsg);
       clean();
       clean();
       // a pid that exists but cannot be signalled (EPERM) is a live holder: never stolen from
@@ -486,6 +499,11 @@ const req = (port, method, p, body, token, extra) => new Promise((res, rej) => {
     const tm = (...args) => spawnSync(process.execPath, [path.join(ROOT, 'bin', 'taskmote.js'), ...args], { env, cwd: base, encoding: 'utf8', timeout: 30000, windowsHide: true });
     let p = tm('device', 'list');
     check('cli: taskmote device list shows the revoked device, no token', p.status === 0 && p.stdout.includes(redeem.json.id) && /revoked/.test(p.stdout) && !p.stdout.includes(dev) && !/note:/.test(p.stderr), p.stdout + p.stderr);
+    // a stuck lock: the CLI prints the way out and the state dir, exit 1
+    { const st3 = path.join(base, 'st-busy'), dd = path.join(st3, 'm', 'device-pairing'); fs.mkdirSync(dd, { recursive: true });
+      fs.writeFileSync(path.join(dd, 'store.lock'), JSON.stringify({ pid: process.pid, nonce: 'cli-live' }));
+      const q = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'taskmote.js'), 'device', 'pair'], { env: { ...env, HARNESS_STATE_DIR: st3 }, cwd: base, encoding: 'utf8', timeout: 30000, windowsHide: true });
+      check('cli: a stuck store lock prints the way out and the state dir, exit 1', q.status === 1 && /stop the server, then remove store.lock and any leftover store.lock.reclaim in the state dir/.test(q.stderr) && q.stderr.includes(dd), q.stdout + q.stderr); }
     p = tm('device', 'pair');
     check('cli: taskmote device pair prints a six-digit code', p.status === 0 && /single use\): \d{6}/.test(p.stdout));
     p = tm('device', 'revoke', 'ffffffff');
